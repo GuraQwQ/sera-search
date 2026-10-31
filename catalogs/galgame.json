@@ -1,0 +1,49 @@
+{
+  "sites": {
+    "ymgal": {
+      "domains": ["ymgal.games", "ymgal.com"],
+      "label": "月幕 Galgame",
+      "description": "中文 Galgame 社区；作品档案、专栏、感想和制作组动态。"
+    },
+    "cngal": {
+      "domains": ["cngal.org"],
+      "label": "CnGal 中文 Galgame 资料站",
+      "description": "国内制作与中文化作品的介绍、攻略、评测、制作组资料及官方合作信息。"
+    },
+    "2dfan": {
+      "domains": ["2dfan.com"],
+      "label": "2DFan",
+      "description": "美少女游戏条目、攻略、感想与小组讨论；按作品名定位资料与版本。"
+    },
+    "fuwanovel": {
+      "domains": ["forums.fuwanovel.moe"],
+      "label": "Fuwanovel Forums",
+      "description": "英文视觉小说讨论、推荐、攻略、技术问题、翻译与原创项目交流。"
+    },
+    "lemmasoft": {
+      "domains": ["lemmasoft.renai.us"],
+      "label": "Lemma Soft Forums",
+      "description": "视觉小说制作、Ren'Py 技术、创作与原创项目开发者社区。"
+    },
+    "vndb": {
+      "domains": ["vndb.org"],
+      "label": "VNDB",
+      "description": "视觉小说作品、发行版本、制作方、人物资料及作品讨论；结构化记录可另选 vndb 来源。"
+    },
+    "bangumi": {
+      "domains": ["bgm.tv", "bangumi.tv"],
+      "label": "Bangumi 游戏条目与讨论",
+      "description": "游戏条目、角色、评论、日志与小组；查询时包含 Galgame 或具体作品名。"
+    },
+    "itch-vn": {
+      "domains": ["itch.io"],
+      "label": "itch.io 视觉小说创作者社区",
+      "description": "视觉小说作品页、开发日志、游戏 Jam 与讨论；按作品名、visual novel 或 NaNoRenO 聚焦。"
+    },
+    "steam-vn": {
+      "domains": ["steamcommunity.com"],
+      "label": "Steam 视觉小说讨论",
+      "description": "指定视觉小说或制作工具的讨论、公告、评测和攻略；优先包含作品名或 App ID。"
+    }
+  }
+}

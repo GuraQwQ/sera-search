@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">SERA 放大镜</title>
+  <desc id="description">奶油白底上的放大镜，墨绿色圆形镜框包围薄荷色镜片，搭配琥珀色手柄与两道白色反光。</desc>
+  <rect width="512" height="512" rx="112" fill="#FFF7E4"/>
+  <path d="m301 297 103 103" fill="none" stroke="#234C4D" stroke-width="60" stroke-linecap="round"/>
+  <path d="m301 297 103 103" fill="none" stroke="#F4B965" stroke-width="40" stroke-linecap="round"/>
+  <path d="m327 310 77 77" fill="none" stroke="#FFDB9A" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="210" cy="206" r="120" fill="#DDF2E8" stroke="#234C4D" stroke-width="24"/>
+  <path d="M137 181a80 80 0 0 1 64-54" fill="none" stroke="#FFFEF8" stroke-width="17" stroke-linecap="round"/>
+  <path d="M130 211v8" fill="none" stroke="#FFFEF8" stroke-width="10" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,16 @@
+export { Engine, mergeHits, searchSchema, commentsSchema, imagesSchema, readSchema, focusSchema, researchSchema, researchStateSchema } from './core.js';
+export { loadConfig, install } from './config.js';
+export { EvidenceStore, canonicalUrl, publisher, contentHash, focusText } from './evidence.js';
+export { createHttpSources } from './providers/http.js';
+export { createPlatformSources } from './providers/platform.js';
+export { createWebSources } from './providers/web-apis.js';
+export { createAcademicSources } from './providers/academic.js';
+export { createCatalogSources } from './providers/catalog-apis.js';
+export { createSocialSources } from './providers/social-apis.js';
+export { createActionSources } from './providers/comments-images.js';
+export { createDiscoverySources } from './providers/discovery.js';
+export { createArchiveSources } from './providers/archives.js';
+export { createForumSources } from './providers/forums.js';
+export { createEntitySources } from './providers/entities.js';
+export { login, logout, authStatus } from './auth.js';
+export * from './types.js';

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.cache/
+.sera/
+*.tgz
+config.local.json
+config.json
+credentials/
+migrations/
+tests/
+test/
+docs/research.md
+docs/benchmarks/

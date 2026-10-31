@@ -1,0 +1,21 @@
+{
+  "wiki": {
+    "sites": {
+      "terraria": {
+        "apiUrl": "https://terraria.wiki.gg/api.php",
+        "pageBaseUrl": "https://terraria.wiki.gg/wiki/",
+        "label": "Terraria Wiki"
+      },
+      "minecraft": {
+        "apiUrl": "https://minecraft.wiki/api.php",
+        "pageBaseUrl": "https://minecraft.wiki/w/",
+        "label": "Minecraft Wiki"
+      },
+      "thbwiki": {
+        "apiUrl": "https://thwiki.cc/api.php",
+        "pageBaseUrl": "https://thwiki.cc/",
+        "label": "THBWiki／东方同人"
+      }
+    }
+  }
+}

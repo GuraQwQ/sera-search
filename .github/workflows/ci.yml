@@ -1,0 +1,39 @@
+name: 跨平台验证
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Node.js 22 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      npm_config_cache: ${{ github.workspace }}/.cache/npm
+      SERA_HOME: ${{ github.workspace }}/.sera
+    steps:
+      - name: 获取源码
+        uses: actions/checkout@v7
+      - name: 设置 Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: 安装依赖
+        run: npm ci --cache ./.cache/npm --no-audit --no-fund
+      - name: 检查类型
+        run: npm run check
+      - name: 构建
+        run: npm run build
+      - name: 检查 CLI
+        run: node dist/cli.js capabilities --home ./.sera --sources bing,wiki --json
+      - name: 检查发布包
+        run: npm pack --ignore-scripts --dry-run

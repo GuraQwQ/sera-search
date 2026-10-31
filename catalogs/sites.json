@@ -1,0 +1,21 @@
+{
+  "sites": {
+    "linuxdo": { "domains": ["linux.do"], "label": "LinuxDo 代码与开发者社区" },
+    "heybox": { "domains": ["xiaoheihe.cn"], "label": "小黑盒帖子公开页面" },
+    "reddit": { "domains": ["reddit.com"], "label": "Reddit 公开页面" },
+    "twitch": { "domains": ["twitch.tv"], "label": "Twitch 公开频道与视频" },
+    "discord": { "domains": ["discord.com"], "label": "Discord 公开网页与社区入口", "description": "服务器消息使用授权 Discord 来源查询" },
+    "instagram": { "domains": ["instagram.com"], "label": "Instagram 公开页面" },
+    "skills": { "domains": ["skills.sh"], "label": "Agent 技能" },
+    "bangumi": { "domains": ["bgm.tv"], "label": "Bangumi 作品与讨论" },
+    "pixiv": { "domains": ["pixiv.net"], "label": "Pixiv 作品与作者" },
+    "douban": { "domains": ["douban.com"], "label": "豆瓣作品与评论" },
+    "steam": { "domains": ["store.steampowered.com", "steamcommunity.com"], "label": "Steam 商店与社区" },
+    "music": { "domains": ["musicbrainz.org", "last.fm", "listenbrainz.org"], "label": "音乐作品与发行资料" },
+    "anime": { "domains": ["anilist.co", "myanimelist.net", "bgm.tv"], "label": "动画资料" },
+    "manga": { "domains": ["mangadex.org", "anilist.co", "bgm.tv"], "label": "漫画作品资料" },
+    "wikidata": { "domains": ["wikidata.org"], "label": "百科实体关系" },
+    "sogou-images": { "domains": ["pic.sogou.com"], "label": "搜狗图片公开入口" },
+    "baidu-images": { "domains": ["image.baidu.com"], "label": "百度图片公开入口" }
+  }
+}

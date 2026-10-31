@@ -1,0 +1,56 @@
+{
+  "name": "sera-search",
+  "version": "0.1.0",
+  "description": "搜索一切：面向 Agent 的多来源检索、原文读取与证据核验工具包",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "sera": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "skills",
+    "catalogs",
+    "docs/assets",
+    "docs/cli.md",
+    "docs/configuration.md",
+    "docs/evidence.md",
+    "docs/mcp.md",
+    "docs/readme",
+    "README.md",
+    "LICENSE",
+    "config.example.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
+    "undici": "^7.30.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^7.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GuraQwQ/sera-search.git"
+  },
+  "homepage": "https://github.com/GuraQwQ/sera-search#readme",
+  "bugs": {
+    "url": "https://github.com/GuraQwQ/sera-search/issues"
+  }
+}
