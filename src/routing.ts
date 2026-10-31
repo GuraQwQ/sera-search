@@ -1,10 +1,12 @@
 import type { Config, Intent, SourceName } from './types.js';
 import { defaultWikiSites } from './providers/academic.js';
 import { canonicalUrl } from './evidence.js';
+import { steamTarget } from './providers/entities.js';
 
 export const webSearchOrder: SourceName[] = ['exa', 'tavily', 'brave', 'zhipu', 'doubao', 'bing'];
 
 export function specificSource(value: string, config: Config): SourceName | undefined {
+  if (steamTarget(value)) return 'steam';
   const host = new URL(value).hostname.replace(/^www\./, '');
   if (host === 'github.com' || host === 'raw.githubusercontent.com') return 'github';
   if (/(^|\.)bilibili\.com$/.test(host) || host === 'b23.tv') return 'bilibili';
@@ -13,7 +15,7 @@ export function specificSource(value: string, config: Config): SourceName | unde
   if (['openalex.org', 'api.openalex.org'].includes(host)) return 'openalex';
   if (host === 'pubmed.ncbi.nlm.nih.gov') return 'pubmed';
   if (Object.values({ ...defaultWikiSites, ...config.wiki?.sites }).some(site => new URL(site.pageBaseUrl).hostname === host)) return 'wiki';
-  return ({ 'web.archive.org': 'wayback', 'archive.org': 'archive', 'linux.do': 'linuxdo', 'xiaoheihe.cn': 'heybox', 'store.steampowered.com': 'steam', 'steamcommunity.com': 'steam', 'nicovideo.jp': 'nicovideo', 'skills.sh': 'skills', 'bgm.tv': 'bangumi', 'bangumi.tv': 'bangumi', 'anilist.co': 'anilist', 'myanimelist.net': 'jikan', 'mangadex.org': 'mangadex', 'vndb.org': 'vndb', 'musicbrainz.org': 'musicbrainz', 'youtube.com': 'youtube', 'youtu.be': 'youtube', 'music.163.com': 'netease', 'twitch.tv': 'twitch', 'discord.com': 'discord', 'instagram.com': 'instagram' } as Record<string, SourceName>)[host];
+  return ({ 'web.archive.org': 'wayback', 'archive.org': 'archive', 'linux.do': 'linuxdo', 'xiaoheihe.cn': 'heybox', 'nicovideo.jp': 'nicovideo', 'skills.sh': 'skills', 'bgm.tv': 'bangumi', 'bangumi.tv': 'bangumi', 'anilist.co': 'anilist', 'myanimelist.net': 'jikan', 'mangadex.org': 'mangadex', 'vndb.org': 'vndb', 'musicbrainz.org': 'musicbrainz', 'youtube.com': 'youtube', 'youtu.be': 'youtube', 'music.163.com': 'netease', 'twitch.tv': 'twitch', 'discord.com': 'discord', 'instagram.com': 'instagram' } as Record<string, SourceName>)[host];
 }
 
 export function directTarget(query: string): string | undefined {

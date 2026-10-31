@@ -181,6 +181,8 @@ export interface SourceRun {
   message?: string;
   code?: string;
   retryAfterSeconds?: number;
+  retryAt?: string;
+  fallbackUrl?: string;
   attempts?: SearchAttempt[];
   cacheHit?: boolean;
 }
@@ -229,6 +231,7 @@ export interface ReadReport {
   cacheHit?: boolean;
   cacheAgeMs?: number;
   cacheWarnings?: string[];
+  nextSteps?: string[];
   runs: SourceRun[];
 }
 export interface ReadOptions { sources?: SourceName[]; signal?: AbortSignal; query?: string; keywords?: string[]; length?: number; refresh?: boolean; maxAgeMs?: number }
@@ -238,14 +241,16 @@ export interface ResearchState {
   fields: ResearchField[];
   examinedUrls: string[];
   candidates?: { field: string; evidenceId: string; url: string }[];
-  accessFailures?: { url: string; codes: string[] }[];
+  accessFailures?: { url: string; codes: string[]; retryAt?: string }[];
   nextAction?: 'continue' | 'review-evidence' | 'complete';
+  nextQuery?: string;
 }
 export interface ResearchOptions extends SearchOptions { readLimit?: number; readSources?: SourceName[]; goals?: string[]; state?: ResearchState; keywords?: string[]; length?: number; refresh?: boolean }
 
 export interface ResearchReport extends SearchReport {
   documents: ReadReport[];
   state?: ResearchState;
+  stateWarnings?: string[];
   comparison: {
     documentsRead: number;
     publisherGroups: { publisher: string; evidenceIds: string[] }[];

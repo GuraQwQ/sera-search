@@ -14,7 +14,7 @@ import { createActionSources, bilibiliComments, serpImages, braveImages } from '
 import { createDiscoverySources } from './providers/discovery.js';
 import { createArchiveSources } from './providers/archives.js';
 import { createForumSources } from './providers/forums.js';
-import { createEntitySources } from './providers/entities.js';
+import { createEntitySources, steamDocumentMatches } from './providers/entities.js';
 import { directTarget, specificSource, taskRoute, preferredSources } from './routing.js';
 import { assessRelevance } from './providers/relevance.js';
 
@@ -40,8 +40,9 @@ export const researchStateSchema = z.object({
   fields: z.array(z.object({ name: z.string().trim().min(1).max(256), status: z.enum(['pending', 'supported', 'conflict']), evidenceIds: z.array(z.string().regex(/^[a-f0-9]{64}$/)).default([]), note: z.string().optional() })).max(30),
   examinedUrls: z.array(z.string().url()).default([]),
   candidates: z.array(z.object({ field: z.string(), evidenceId: z.string().regex(/^[a-f0-9]{64}$/), url: z.string().url() })).optional(),
-  accessFailures: z.array(z.object({ url: z.string().url(), codes: z.array(z.string()) })).optional(),
+  accessFailures: z.array(z.object({ url: z.string().url(), codes: z.array(z.string()), retryAt: z.string().datetime().optional() })).optional(),
   nextAction: z.enum(['continue', 'review-evidence', 'complete']).optional(),
+  nextQuery: z.string().optional(),
 });
 export const researchSchema = searchSchema.extend({
   readLimit: z.number().int().min(0).max(20).default(5), readSources: z.array(z.enum(sourceNames)).min(1).optional(),
@@ -122,7 +123,8 @@ export class Engine {
   }
 
   private async failure(source: SourceName, error: unknown, started: number, signal: AbortSignal): Promise<SourceRun> {
-    const detail = error as { code?: unknown; retryAfterSeconds?: number; platform?: string };
+    const detail = error as { code?: unknown; retryAfterSeconds?: number; retryAt?: string; fallbackUrl?: string; platform?: string };
+    const retryTime = Date.now() + (detail?.retryAfterSeconds ?? NaN) * 1000;
     const login = ['NOT_LOGGED_IN', 'NEED_LOGIN', 'AUTH_REQUIRED', 'HTTP_401'].includes(String(detail?.code));
     if (login) {
       const expected = this.config.credentials?.[authKey(source, detail.platform)];
@@ -135,6 +137,8 @@ export class Engine {
       elapsedMs: Date.now() - started, returned: 0, message: errorMessage(error, this.config),
       code: login ? 'NOT_LOGGED_IN' : typeof detail?.code === 'string' ? detail.code : signal.aborted ? signal.reason?.name === 'TimeoutError' ? 'TIMEOUT' : 'CANCELLED' : undefined,
       retryAfterSeconds: detail?.retryAfterSeconds,
+      retryAt: detail?.retryAt ?? (Number.isFinite(new Date(retryTime).getTime()) ? new Date(retryTime).toISOString() : undefined),
+      fallbackUrl: detail?.fallbackUrl,
     };
   }
 
@@ -239,7 +243,7 @@ export class Engine {
     const view = (content: string) => input.query || input.keywords?.length ? focusText(content, input, input.length) : { ...textPage(content, 0, input.length), selection: 'leading' as const };
     if (!input.refresh) {
       try {
-        const cached = await this.store.find(url, eligible, input.maxAgeMs);
+        const cached = await this.store.find(url, eligible, input.maxAgeMs, evidence => evidence.metadata?.bodyAvailable !== false && (evidence.source !== 'steam' || steamDocumentMatches(url, evidence)));
         if (cached) {
           const { content, ...metadata } = cached;
           return { status: 'ok', evidence: metadata, ...view(content), cacheHit: true, cacheAgeMs: Date.now() - Date.parse(cached.retrievedAt),
@@ -248,6 +252,7 @@ export class Engine {
       } catch (error) { cacheWarnings.push(`URL 缓存未读取：${errorMessage(error, this.config)}`); }
     }
     const runs: SourceRun[] = [];
+    let partial: ReadReport | undefined;
     for (const name of order) {
       const source = this.sources.find(item => item.capability.name === name);
       if (!source?.read || !source.capability.configured) {
@@ -259,7 +264,10 @@ export class Engine {
         signal.throwIfAborted();
         const document = await source.read(url, signal);
         if (typeof document.content !== 'string' || !document.content.trim()) throw new Error('读取结果没有正文或有效元数据');
-        runs.push({ source: name, status: 'ok', elapsedMs: Date.now() - started, returned: 1 });
+        if (name === 'steam' && !steamDocumentMatches(url, document)) throw Object.assign(new Error('读取对象与目标 URL 不匹配，需要对应公告或原文'), { code: 'CONTENT_MISMATCH' });
+        const bodyAvailable = document.metadata?.bodyAvailable !== false;
+        runs.push({ source: name, status: bodyAvailable ? 'ok' : 'error', elapsedMs: Date.now() - started, returned: bodyAvailable ? 1 : 0,
+          ...(!bodyAvailable ? { code: 'CONTENT_INCOMPLETE', message: '已取得页面框架或标题，目标正文尚未取得' } : {}) });
         try {
           const evidence = await this.store.save(document);
           if (canonicalUrl(document.url) !== url) {
@@ -267,10 +275,18 @@ export class Engine {
             catch (error) { cacheWarnings.push(`URL 缓存未保存：${errorMessage(error, this.config)}`); }
           }
           const { content: _content, ...metadata } = evidence;
+          if (!bodyAvailable) {
+            partial = { status: 'partial', evidence: metadata, ...view(document.content), cacheHit: false, runs, nextSteps: ['页面框架已保存，继续使用公开结构化 API、原始正文入口或其他允许的读取来源。'], ...(cacheWarnings.length ? { cacheWarnings } : {}) };
+            continue;
+          }
           return { status: 'ok', evidence: metadata, ...view(document.content), cacheHit: false, runs, ...(cacheWarnings.length ? { cacheWarnings } : {}) };
         } catch (error) {
           cacheWarnings.push(`证据保存未完成：${errorMessage(error, this.config)}`);
           const { content, ...metadata } = document;
+          if (!bodyAvailable) {
+            partial = { status: 'partial', document: metadata, ...view(content), cacheHit: false, runs, cacheWarnings, nextSteps: ['目标正文尚未取得，请继续使用其他允许的入口。'] };
+            continue;
+          }
           return { status: 'partial', document: metadata, ...view(content), cacheHit: false, runs, cacheWarnings };
         }
       } catch (error) {
@@ -278,7 +294,11 @@ export class Engine {
         if (options.signal?.aborted || (error as { terminal?: boolean }).terminal) break;
       }
     }
-    return { status: 'error', runs, ...(cacheWarnings.length ? { cacheWarnings } : {}) };
+    const nextSteps = [...new Set(runs.map(run => run.retryAt ? `此入口在 ${run.retryAt} 后重试；先补查其他允许的来源。`
+      : run.fallbackUrl ? `可用其他允许的读取来源取得原始页面：${run.fallbackUrl}`
+      : run.code === 'HTTP_403' || run.code === 'NOT_LOGGED_IN' ? '当前对象受访问条件限制，请使用可用的公开记录或其他允许来源，并保留缺口。'
+      : run.code === 'CONTENT_MISMATCH' || run.code === 'CONTENT_INCOMPLETE' ? '读取对象或正文范围不足，请改用对应原文或结构化入口。' : '根据本次来源记录调整入口或查询，保留已取得的材料。'))];
+    return partial ?? { status: 'error', runs, nextSteps, ...(cacheWarnings.length ? { cacheWarnings } : {}) };
   }
 
   async readMany(urls: string[], options: ReadOptions = {}): Promise<BatchReadReport> {
@@ -304,12 +324,15 @@ export class Engine {
     const complete = fields.length > 0 && !unresolved.length;
     const route = taskRoute(input.query, input.intent);
     const direct = !input.at && !input.since && !input.sources?.includes('wayback') && (route.intent !== 'historical' || route.directUrl?.startsWith('https://web.archive.org/web/')) ? route.directUrl : undefined;
-    const query = input.state && unresolved.length && !direct ? `${input.query} ${unresolved.map(field => field.name).join(' ')}`.slice(0, 4096) : input.query;
+    const focusField = unresolved.find(field => field.status === 'conflict') ?? unresolved[0];
+    const focusedQuery = focusField && !input.query.includes(focusField.name) ? `${input.query} ${focusField.name}`.slice(0, 4096) : input.query;
+    const query = input.state && !direct ? focusedQuery : input.query;
     const search: SearchReport = complete ? { query: input.query, status: 'ok', hits: [], runs: [], route }
       : direct ? { query: input.query, status: 'ok', hits: mergeHits([{ source: specificSource(direct, this.config) ?? readSources?.[0] ?? input.sources?.[0] ?? 'web', title: direct, url: direct, snippet: '', metadata: { directTarget: true } }]), runs: [], route }
       : await this.search({ ...input, query, signal: options.signal });
     const examined = new Set((input.state?.examinedUrls ?? []).map(canonicalUrl));
-    const available = search.hits.filter(hit => input.refresh || !examined.has(hit.url));
+    const waiting = new Set((input.state?.accessFailures ?? []).filter(item => item.retryAt && Date.parse(item.retryAt) > Date.now()).map(item => canonicalUrl(item.url)));
+    const available = search.hits.filter(hit => !waiting.has(hit.url) && (input.refresh || !examined.has(hit.url)));
     const selected: AggregatedHit[] = [];
     const publishers = new Set<string>();
     for (const hit of available) {
@@ -321,10 +344,10 @@ export class Engine {
     await Promise.all(Array.from({ length: Math.min(3, selected.length) }, async () => {
       while (next < selected.length) {
         const index = next++, hit = selected[index]!;
-        documents[index] = await this.read(hit.url, { sources: readSources ?? input.sources, signal: options.signal, query: unresolved.length ? unresolved.map(field => field.name).join(' ') : direct ? undefined : input.query, keywords: input.keywords, length: input.length, refresh: input.refresh });
+        documents[index] = await this.read(hit.url, { sources: readSources ?? input.sources, signal: options.signal, query: input.state && focusField ? focusField.name : unresolved.length ? unresolved.map(field => field.name).join(' ') : direct ? undefined : input.query, keywords: input.keywords, length: input.length, refresh: input.refresh });
       }
     }));
-    const evidence = documents.flatMap(document => document.evidence ? [document.evidence] : []);
+    const evidence = documents.flatMap(document => document.evidence && document.evidence.metadata?.bodyAvailable !== false ? [document.evidence] : []);
     const grouped = (key: (item: Omit<Evidence, 'content'>) => string) => {
       const groups = new Map<string, string[]>();
       for (const item of evidence) { const value = key(item); groups.set(value, [...(groups.get(value) ?? []), item.id]); }
@@ -332,22 +355,27 @@ export class Engine {
     };
     const nextSteps = ['围绕具体结论读取原文片段，核对支持、冲突和引用关系；不同检索入口不等于独立证据。'];
     if (documents.some(document => document.status === 'error')) nextSteps.push('部分原文未取得，请根据读取记录补查对应来源。');
-    if (documents.some(document => document.status === 'partial')) nextSteps.push('部分原文已读取但证据缓存未保存，请保留返回正文并查看缓存记录。');
+    if (documents.some(document => document.status === 'partial')) nextSteps.push('部分读取尚未完整，请检查正文范围、来源记录与 cacheWarnings，保留已取得的材料。');
     if (evidence.some(item => item.contentKind === 'metadata')) nextSteps.push('部分结果是元数据，判断正文内容前需要补充原文。');
     if (selected.length < available.length) nextSteps.push('本次读取受预算限制，可按结果链接继续获取证据。');
-    if (available.length < search.hits.length) nextSteps.push('已取证的页面本轮跳过；可通过证据 ID 继续核验，或用 refresh 重新读取。');
+    if (search.hits.some(hit => examined.has(hit.url)) && !input.refresh) nextSteps.push('已取证的页面本轮跳过；可通过证据 ID 继续核验，或用 refresh 重新读取。');
+    if (waiting.size) nextSteps.push('等待 Retry-After 的链接暂不重复读取；先核验成功材料或补查其他入口。');
     let state: ResearchState | undefined;
     if (fields.length) {
       const candidates = new Map((input.state?.candidates ?? []).map(item => [`${item.field}\n${item.evidenceId}`, item]));
       const failures = new Map((input.state?.accessFailures ?? []).map(item => [canonicalUrl(item.url), item]));
       for (const [index, document] of documents.entries()) {
         const url = selected[index]!.url;
-        if (document.content !== undefined) { examined.add(url); if (document.evidence) examined.add(document.evidence.url); failures.delete(url); }
-        else failures.set(url, { url, codes: document.runs.map(run => run.code ?? run.status) });
-        if (document.evidence) for (const field of unresolved) candidates.set(`${field.name}\n${document.evidence.id}`, { field: field.name, evidenceId: document.evidence.id, url: document.evidence.url });
+        const bodyAvailable = document.content !== undefined && (document.evidence ?? document.document)?.metadata?.bodyAvailable !== false;
+        if (bodyAvailable) { examined.add(url); if (document.evidence) examined.add(document.evidence.url); failures.delete(url); }
+        else {
+          const retryAt = document.runs.map(run => run.retryAt).filter((value): value is string => Boolean(value)).sort().at(-1);
+          failures.set(url, { url, codes: document.runs.map(run => run.code ?? run.status), ...(retryAt ? { retryAt } : {}) });
+        }
+        if (bodyAvailable && document.evidence) for (const field of input.state && focusField ? [focusField] : unresolved) candidates.set(`${field.name}\n${document.evidence.id}`, { field: field.name, evidenceId: document.evidence.id, url: document.evidence.url });
       }
-      const needsReview = documents.some(document => document.content !== undefined) || [...candidates.values()].some(item => unresolved.some(field => field.name === item.field));
-      state = { fields, examinedUrls: [...examined], candidates: [...candidates.values()], accessFailures: [...failures.values()], nextAction: complete ? 'complete' : needsReview ? 'review-evidence' : 'continue' };
+      const needsReview = [...candidates.values()].some(item => unresolved.some(field => field.name === item.field));
+      state = { fields, examinedUrls: [...examined], candidates: [...candidates.values()], accessFailures: [...failures.values()], nextAction: complete ? 'complete' : needsReview ? 'review-evidence' : 'continue', ...(!complete ? { nextQuery: focusedQuery } : {}) };
       if (unresolved.length) nextSteps.push(`待核验：${unresolved.map(field => field.name).join('、')}。阅读候选证据后更新 fields 的状态与 evidenceIds，再传回 state 只补缺口。`);
       else nextSteps.splice(0, nextSteps.length, '目标字段已由调用方核验；本轮停止检索。');
     }
@@ -355,7 +383,7 @@ export class Engine {
       ...search, status: search.status !== 'error' && documents.some(document => document.status !== 'ok') ? 'partial' : search.status,
       documents, ...(state ? { state } : {}),
       comparison: {
-        documentsRead: documents.filter(document => document.content !== undefined).length,
+        documentsRead: documents.filter(document => document.content !== undefined && (document.evidence ?? document.document)?.metadata?.bodyAvailable !== false).length,
         publisherGroups: [...grouped(item => publisher(item.url))].map(([publisher, evidenceIds]) => ({ publisher, evidenceIds })),
         duplicateContent: [...grouped(item => item.contentHash)].filter(([, ids]) => ids.length > 1).map(([contentHash, evidenceIds]) => ({ contentHash, evidenceIds })),
         nextSteps,

@@ -8,6 +8,7 @@ import { sourceNames, catalogGroups, intents } from './types.js';
 import type { SourceName } from './types.js';
 import { authStatus, login, logout } from './auth.js';
 import { credentialsSchema, notLoggedIn } from './credentials.js';
+import { writeAtomic } from './files.js';
 
 const help = `SERA — Search, Extract, Research for Agents
 
@@ -55,7 +56,7 @@ const help = `SERA — Search, Extract, Research for Agents
   --query <问题>       read/read-many/evidence 的正文定位问题
   --keyword <关键词>  可重复，定位原文；同义或跨语言词由调用方补充
   --goal <字段>        research 待核验字段，可重复
-  --state <JSON文件>   research 上轮返回的 state，已确认字段停止补查
+  --state <JSON文件>   research 读取并更新 state；新文件按 goals 建立
   --refresh            强制重新读取，跳过 URL 缓存
   --max-age <毫秒>     read/read-many 可复用缓存的最大时长
   --read-limit <数量>  research 的原文预算，默认 5，最大 20
@@ -111,10 +112,11 @@ function display(value: unknown): string {
         else lines.push(document.runs.map((run: any) => `${run.source}: ${run.message ?? run.status}`).join('\n'));
       }
       lines.push(...report.comparison.nextSteps);
+      if (report.stateWarnings?.length) lines.push(...report.stateWarnings);
     }
     return lines.join('\n');
   }
-  if (report.evidence) return `${report.evidence.title}\n${report.evidence.url}\n类型：${report.evidence.contentKind}\n证据：${report.evidence.id}\n\n${report.content ?? ''}${report.cacheWarnings?.length ? '\n\n' + report.cacheWarnings.join('\n') : ''}`;
+  if (report.evidence) return `${report.evidence.title}\n${report.evidence.url}\n类型：${report.evidence.contentKind}\n证据：${report.evidence.id}\n\n${report.content ?? ''}${report.nextSteps?.length ? '\n\n' + report.nextSteps.join('\n') : ''}${report.cacheWarnings?.length ? '\n\n' + report.cacheWarnings.join('\n') : ''}`;
   if (report.content !== undefined) return `${report.document?.title ?? report.title}\n${report.document?.url ?? report.url}\n\n${report.content}${report.nextOffset !== null && report.id ? `\n\n下一段：--offset ${report.nextOffset}` : ''}${report.cacheWarnings?.length ? '\n\n' + report.cacheWarnings.join('\n') : ''}`;
   return JSON.stringify(value, null, 2);
 }
@@ -166,7 +168,19 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       case 'comments': result = await engine.comments({ url: text, sources: selected, limit: integer(values.limit, 20), cursor: values.cursor, parentId: values.parent, order: values.order, signal: controller.signal }); break;
       case 'image-search': result = await engine.images({ query: text, sources: selected, platform: values.platform, limit: integer(values.limit, 5), signal: controller.signal }); break;
       case 'reverse-image': result = await engine.images({ imageUrl: text, sources: selected, platform: values.platform, limit: integer(values.limit, 5), signal: controller.signal }); break;
-      case 'research': result = await engine.research({ ...search, readLimit: integer(values['read-limit'], 5), readSources: sources(values['read-sources']), goals: values.goal, state: values.state ? JSON.parse(await readFile(values.state, 'utf8')) : undefined, keywords: values.keyword, length: read.length, refresh: values.refresh }); break;
+      case 'research': {
+        let state;
+        if (values.state) {
+          try { state = JSON.parse(await readFile(values.state, 'utf8')); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        }
+        const report = await engine.research({ ...search, readLimit: integer(values['read-limit'], 5), readSources: sources(values['read-sources']), goals: values.goal, state, keywords: values.keyword, length: read.length, refresh: values.refresh });
+        if (values.state && report.state) {
+          try { await writeAtomic(values.state, JSON.stringify(report.state, null, 2) + '\n'); }
+          catch (error) { if (report.status !== 'error') report.status = 'partial'; report.stateWarnings = [`状态文件未保存：${errorMessage(error, config)}`]; }
+        }
+        result = report; break;
+      }
       case 'read': result = await engine.read(text, read); break;
       case 'read-many': result = await engine.readMany(positionals.slice(1), read); break;
       case 'evidence': result = await engine.store.get(text, integer(values.offset, 0), integer(values.length, 4000), { query: values.query, keywords: values.keyword }); break;

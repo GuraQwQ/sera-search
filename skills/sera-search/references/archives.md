@@ -12,6 +12,8 @@ sera search "example.org/*" --sources wayback --platform cdx --since 2019-01-01 
 sera read "https://web.archive.org/web/捕获时间/原始URL" --sources wayback --json
 ```
 
+优先从官网、数据库或搜索结果已发现的原始URL、链接和历史域名开始定位，再选择目标时间；猜测多个产品路径前先检查已有页面的链接。CDX／availability失败或受到限流时，按 `runs` 与 `retryAfterSeconds` 处理，保留成功记录并继续其他来源或字段。
+
 最后一行替换成搜索实际返回的快照 URL。CDX 查询捕获索引，当前按月折叠并遵守结果预算；索引命中保留 `snapshotVerified:false`，继续读取成功后才记录 `snapshotVerified:true`。Availability 报告可用，也不等于已经取得正文。
 
 读取保留原始 URL、实际快照 URL、`captureAt` 和请求捕获时间。文本、HTML、JSON／XML 快照可读取，动态脚本未运行；媒体快照需要对应内容读取路径。快照受限、未收录或不可访问时按来源状态说明，不把后来的网页当成历史版本。

@@ -184,7 +184,16 @@ export class EvidenceStore {
     await writeAtomic(path, JSON.stringify(reference) + '\n');
   }
 
-  async find(value: string, sources?: SourceName[], maxAgeMs?: number): Promise<Evidence | undefined> {
+  async forget(value: string, source: SourceName, id: string) {
+    const key = referenceKey(value, source), path = join(this.directory, `url-${key}.json`);
+    let reference: unknown;
+    try { reference = JSON.parse(await readFile(path, 'utf8')); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+    if (!ownedReference(reference) || reference.key !== key) throw new Error('URL 缓存位置已被其他文件占用');
+    if (reference.id === id) await rm(path, { force: true });
+  }
+
+  async find(value: string, sources?: SourceName[], maxAgeMs?: number, accept?: (evidence: Evidence) => boolean): Promise<Evidence | undefined> {
     const url = canonicalUrl(value);
     if (maxAgeMs !== undefined && (!Number.isFinite(maxAgeMs) || maxAgeMs < 0)) throw new Error('缓存时长需要非负毫秒数');
     if (maxAgeMs === 0) return undefined;
@@ -204,6 +213,7 @@ export class EvidenceStore {
         throw error;
       }
       if (!owned(evidence) || evidence.id !== reference.id || evidence.source !== source) continue;
+      if (accept && !accept(evidence)) { await this.forget(url, source, evidence.id); continue; }
       const now = Date.now(), age = now - Date.parse(evidence.retrievedAt), referenceAge = now - Date.parse(reference.retrievedAt);
       if (Number.isFinite(age) && Number.isFinite(referenceAge) && age >= 0 && referenceAge >= 0 && Math.max(age, referenceAge) < freshness) return evidence;
     }

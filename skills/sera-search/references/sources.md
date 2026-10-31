@@ -99,7 +99,9 @@ Exa 的查询适合描述想找到的材料；Brave 等关键词检索可使用�
 | [Wayback](https://archive.org/help/wayback_api.php)、[Internet Archive](https://archive.org/advancedsearch.php) | `wayback` 的 availability／CDX；`archive` 的馆藏目录 | `--at` 选择目标捕获时间；快照与元数据读取范围见档案指南 |
 | [LinuxDo](https://linux.do/)、[小黑盒](https://www.xiaoheihe.cn/) | `linuxdo` Discourse 搜索／主题／楼层，`heybox` Bing 发现＋官网原生帖／评论 | 公开样本和权限以实际响应为准；可选 Key／用户名或完整网站 Cookie |
 
-`steam` 使用公开商店 `api/storesearch`、`api/appdetails` 与 `ISteamNews/GetNewsForApp/v2`；`nicovideo` 使用 [Snapshot API](https://site.nicovideo.jp/search-api-docs/snapshot) 与公开 ThumbInfo 元数据。`steam:105600`／`sm8628149` 可直接读取。Steam 指定公告仅在返回列表确含目标 ID 时交付；列表不含目标时继续读取原公告页面。商店语言字段与投稿元数据不等于游戏文件、完整视频、字幕或评论。2026-11-01 本机已取得 Terraria 商店规格和 Bad Apple 原投稿元数据。
+`steam` 区分商品规格、公告列表与单条公告：`steam:105600`／商店链接读取公开 `api/appdetails`；`allnews`、公告列表和 `ISteamNews/GetNewsForApp/v2` 链接读取新闻记录，返回 `contentScope:news-list` 及截断范围；单条公告从实际页面中的对应记录读取全文，保留新闻流、事件和公告各自的标识，不能将它们直接视为同一个 ID。列表截断时按返回的续查时间继续获取，不用最新公告替代指定历史公告。
+
+`nicovideo` 使用 [Snapshot API](https://site.nicovideo.jp/search-api-docs/snapshot) 与公开 ThumbInfo 元数据，`sm8628149` 可直接读取。商店语言字段与投稿元数据不等于游戏文件、完整视频、字幕或评论。2026-11-01 本机已取得 Terraria 商店规格和 Bad Apple 原投稿元数据。
 
 默认搜索的顺序由 `intent` 决定，有有效候选后停止；显式 `sources` 并行取全部指定来源。空或无关结果继续换源，`aliases` 同时帮助词面相关性判断；初始后端耗尽后最多检索首个不同别名。过程见 `runs[].attempts`，别名重试跳过已确认未登录或限流的后端。
 

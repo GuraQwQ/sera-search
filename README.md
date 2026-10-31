@@ -32,7 +32,7 @@ cd sera-search
 npm ci --cache ./.cache/npm
 npm run build
 node dist/cli.js install --home ./.sera
-node dist/cli.js capabilities --home ./.sera --json
+node dist/cli.js capabilities --home ./.sera --sources bing,web --json
 ```
 
 Search public sources and read the original pages:
@@ -79,7 +79,7 @@ Link the bundled Skill to your agent's standard skill directory for source selec
 node dist/cli.js install --home /absolute/path/to/sera-data --skill-dir /absolute/path/to/agent-skills
 ```
 
-The Skill links to the package directory, so keep that directory available. Load the MCP configuration and Skill according to your client. See [Agent Skill and MCP](docs/mcp.md).
+The Skill links to the package directory, so keep that directory available. Start with the sources relevant to the task, then take the first batch of evidence; platform and credential details load when needed. Load the MCP configuration and Skill according to your client. See [Agent Skill and MCP](docs/mcp.md).
 
 Then ask your agent:
 
@@ -103,8 +103,8 @@ flowchart LR
 
 - **Choose the right material.** Prefer official pages for versions, dates, and specifications; read original posts and comments for user feedback; locate original URLs and snapshots for historical questions. Account sources without valid credentials report that they are unavailable.
 - **Read less, keep the original.** Use `query` and `keywords` to locate relevant passages. `read-many` deduplicates URLs and reads up to three documents concurrently. Fresh cached evidence can be reused; `refresh` requests a new copy.
-- **Follow the remaining gaps.** `research` uses `goals` and `state` to retain pending, supported, and conflicting fields alongside access failures. Previously examined URLs are skipped, the agent updates fields after verification, and retrieval stops when all fields are supported.
-- **Inspect the route taken.** Default search selects sources by intent and switches backends after empty, unrelated, or failed results. Explicit `sources` aggregates the selected providers in parallel. `runs[].attempts` records the actual queries and outcomes.
+- **Follow the remaining gaps.** Start a multi-part task with `research` and `goals`, review the returned passages, then send back the updated `state` for the remaining fields. For a multi-round CLI task, pass `--state ./research-state.json` from the first call; the CLI creates or updates that file, and you can edit verified fields before repeating the command. Previously examined URLs are skipped; fields become supported only after the agent verifies the evidence. See the [workflow examples](skills/sera-search/references/workflows.md).
+- **Inspect the route taken.** Default search selects sources by intent and switches backends after empty, unrelated, or failed results. Explicit `sources` aggregates the selected providers in parallel. Follow `runs` and any `retryAfterSeconds` before retrying a limited source; keep successful evidence while continuing other leads.
 
 Full material remains available under its evidence ID. Passages retain Unicode offsets, and ranking organizes retrieval results. Multiple engines finding the same article still provide one original source. See the [evidence guide](docs/evidence.md) for reading scope, content types, and follow-up retrieval.
 

@@ -5,6 +5,7 @@ import { EnvHttpProxyAgent } from 'undici';
 export type Row = Record<string, unknown>;
 
 let proxy: EnvHttpProxyAgent | undefined;
+const retryDeadlines = new Map<string, number>();
 export function fetchResponse(url: URL | string, init: RequestInit): Promise<Response> {
   const host = new URL(url).hostname;
   const configured = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
@@ -88,15 +89,24 @@ export function endpoint(config: ApiConfig, fallback: string, path: string): URL
 }
 
 export async function response(url: URL | string, init: RequestInit, name: string): Promise<Response> {
+  const address = new URL(url), key = address.origin + address.pathname, deadline = retryDeadlines.get(key);
+  if (deadline && deadline > Date.now()) throw Object.assign(new Error(`${name} 仍在 Retry-After 等待期，请先使用其他入口`), {
+    code: 'RATE_LIMITED', retryAfterSeconds: Math.ceil((deadline - Date.now()) / 1000), retryAt: new Date(deadline).toISOString(),
+  });
+  if (deadline) retryDeadlines.delete(key);
   const result = await fetchResponse(url, init);
   if (!result.ok) {
     if (result.status === 401) throw new NotLoggedInError();
     const detail = result.status === 401 || result.status === 403 ? '，请核对访问权限或来源配置' : '';
     const retry = result.status === 429 && result.headers.get('retry-after');
     const retryAfterSeconds = retry ? (/^\d+$/.test(retry) ? Number(retry) : Math.max(0, Math.ceil((Date.parse(retry) - Date.now()) / 1000))) : undefined;
+    const retryTime = Date.now() + (retryAfterSeconds ?? NaN) * 1000;
+    const retryAt = Number.isFinite(new Date(retryTime).getTime()) ? retryTime : undefined;
+    if (retryAt && retryAt > Date.now()) retryDeadlines.set(key, retryAt);
     throw Object.assign(new Error(`${name} 请求返回 HTTP ${result.status}${detail}${retry ? `，Retry-After: ${retry}` : ''}`), {
       code: result.status === 429 ? 'RATE_LIMITED' : result.status === 412 ? 'PLATFORM_BLOCKED' : `HTTP_${result.status}`,
       ...(Number.isFinite(retryAfterSeconds) ? { retryAfterSeconds } : {}),
+      ...(retryAt ? { retryAt: new Date(retryAt).toISOString() } : {}),
     });
   }
   return result;

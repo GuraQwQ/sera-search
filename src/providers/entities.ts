@@ -1,10 +1,50 @@
-import type { ApiConfig, Config, Source } from '../types.js';
+import type { ApiConfig, Config, Source, Document } from '../types.js';
 import { date, decoded, document, endpoint, epoch, hit, json, object, permitted, response, rows, string, textResponse } from './shared.js';
+
+export interface SteamTarget {
+  kind: 'store' | 'news-list' | 'news';
+  appId?: string;
+  newsId?: string;
+  idKind?: 'feed' | 'event' | 'announcement';
+}
+
+export function steamTarget(value: string): SteamTarget | undefined {
+  const url = new URL(value), host = url.hostname.replace(/^www\./, ''), path = url.pathname;
+  if (host === 'api.steampowered.com' && /^\/ISteamNews\/GetNewsForApp\/v0*2\/?$/i.test(path) && /^[1-9]\d*$/.test(url.searchParams.get('appid') ?? '')) return { kind: 'news-list', appId: url.searchParams.get('appid')! };
+  if (host === 'store.steampowered.com' && /^\/api\/appdetails\/?$/.test(path) && /^[1-9]\d*$/.test(url.searchParams.get('appids') ?? '')) return { kind: 'store', appId: url.searchParams.get('appids')! };
+  if (host === 'steamstore-a.akamaihd.net') {
+    const match = path.match(/^\/news\/externalpost\/steam_community_announcements\/(\d+)\/?$/);
+    return match ? { kind: 'news', newsId: match[1]!, idKind: 'feed' } : undefined;
+  }
+  if (!['store.steampowered.com', 'steamcommunity.com'].includes(host)) return undefined;
+  let match = path.match(/^\/news\/app\/([1-9]\d*)(?:\/view\/(\d+))?\/?$/);
+  if (match) return match[2] ? { kind: 'news', appId: match[1]!, newsId: match[2], idKind: 'event' } : { kind: 'news-list', appId: match[1]! };
+  match = path.match(/^\/games\/([1-9]\d*)\/announcements(?:\/detail\/(\d+))?\/?$/);
+  if (match) return match[2] ? { kind: 'news', appId: match[1]!, newsId: match[2], idKind: 'announcement' } : { kind: 'news-list', appId: match[1]! };
+  match = path.match(/^\/app\/([1-9]\d*)\/(?:allnews|news|announcements)\/?$/);
+  if (match) return { kind: 'news-list', appId: match[1]! };
+  match = host === 'store.steampowered.com' ? path.match(/^\/app\/([1-9]\d*)(?:\/[^/]+)?\/?$/) : null;
+  return match ? { kind: 'store', appId: match[1]! } : undefined;
+}
+
+export function steamDocumentMatches(url: string, value: Document): boolean {
+  const target = steamTarget(url);
+  if (!target) return true;
+  const metadata = value.metadata ?? {};
+  if (target.appId && String(metadata.appId ?? '') !== target.appId) return false;
+  if (target.kind !== 'news') return metadata.contentScope === (target.kind === 'store' ? 'store-specification' : 'news-list');
+  const field = target.idKind === 'feed' ? 'feedGid' : target.idKind === 'event' ? 'eventGid' : 'announcementGid';
+  return metadata.contentScope === 'single-news-record' && String(metadata[field] ?? '') === target.newsId;
+}
+
+function steamError(message: string, code: string, fallbackUrl: string) {
+  return Object.assign(new Error(message), { code, fallbackUrl });
+}
 
 function steam(config: ApiConfig = {}): Source {
   const headers = { 'User-Agent': 'SERA', Accept: 'application/json' };
   return {
-    capability: { name: 'steam', search: true, read: true, configured: config.enabled !== false, category: 'catalog', platforms: ['steam'], requiresLogin: false, loggedIn: true, requirement: '公开商店作品实体、AppID、商店规格及公告；不推断游戏内所有语言或 DLC 文件内容' },
+    capability: { name: 'steam', search: true, read: true, configured: config.enabled !== false, category: 'catalog', platforms: ['steam'], requiresLogin: false, loggedIn: true, requirement: '公开商店作品实体、AppID、商店规格、公告列表及单条公告全文；公告保留各自标识与时间' },
     async search(request) {
       if (!permitted(request.domains, 'store.steampowered.com')) return [];
       if (request.since) throw new Error('Steam 商店实体搜索不支持统一发布日期过滤');
@@ -14,20 +54,50 @@ function steam(config: ApiConfig = {}): Source {
       return rows(result.items, 'Steam 商店实体').filter(item => /^[1-9]\d*$/.test(String(item.id))).slice(0, request.limit).flatMap(item => hit('steam', { title: string(item.name), url: `https://store.steampowered.com/app/${item.id}/`, snippet: 'Steam 商店实体候选；名称与发行商需继续核对', metadata: { appId: item.id, imageUrl: item.tiny_image, contentScope: 'store-entity' } }));
     },
     async read(url, signal) {
-      const parsed = new URL(url);
-      const appId = ['store.steampowered.com', 'steamcommunity.com'].includes(parsed.hostname) ? parsed.pathname.match(/^\/(?:app|games|news\/app)\/([1-9]\d*)(?:\/|$)/)?.[1] : undefined;
-      if (!appId) throw new Error('Steam 读取需要包含数字 AppID 的商店或社区链接');
-      const news = /\/(?:news|announcements)(?:\/|$)/.test(parsed.pathname), newsId = parsed.pathname.match(/\/(?:view|detail)\/(\d+)(?:\/|$)/)?.[1];
-      const target = endpoint(config, news ? 'https://api.steampowered.com/' : 'https://store.steampowered.com/', news ? 'ISteamNews/GetNewsForApp/v2/' : 'api/appdetails/');
-      target.searchParams.set(news ? 'appid' : 'appids', appId);
-      target.searchParams.set(news ? 'count' : 'l', news ? '10' : 'english');
-      if (!news) target.searchParams.set('cc', 'us');
-      const result = await json(target, { headers, signal }, 'Steam 作品读取');
-      const record = news ? object(result.appnews, 'Steam 公告') : object(result[appId], 'Steam 作品');
-      if (!news && record.success !== true) throw new Error('Steam 作品不存在或该区域未返回资料');
-      const data = newsId ? rows(record.newsitems, 'Steam 公告').find(item => String(item.gid) === newsId) : news ? record : object(record.data, 'Steam 作品规格');
-      if (!data) throw new Error('本次 Steam 公告列表没有目标记录，请读取原公告页面');
-      return document('steam', url, newsId ? string(data.title) : news ? `Steam ${appId} 公告` : string(data.name), JSON.stringify(data, null, 2), { contentKind: 'metadata', ...(newsId ? { publishedAt: epoch(data.date) } : {}), metadata: { appId, contentScope: newsId ? 'single-news-record' : news ? 'news-first-10' : 'store-specification', language: 'english', region: 'us', releaseDateRaw: news ? undefined : data.release_date } });
+      const target = steamTarget(url), address = new URL(url);
+      if (!target) throw steamError('Steam 读取需要商品、公告列表或单条公告链接', 'STEAM_URL_UNSUPPORTED', url);
+      if (target.kind === 'news') {
+        const requested = endpoint(config, address.origin, address.pathname.slice(1) + address.search);
+        const result = await response(requested, { headers: { ...headers, Accept: 'text/html' }, signal }, 'Steam 原始公告');
+        const decodedPage = await textResponse(result), actualUrl = config.baseUrl ? new URL(new URL(result.url).pathname + new URL(result.url).search, target.idKind === 'feed' ? 'https://steamcommunity.com' : address.origin).href : result.url || url;
+        const actual = steamTarget(actualUrl), selector = target.idKind === 'feed' ? actual : target;
+        if (!selector || selector.kind !== 'news' || selector.idKind === 'feed') throw steamError('Steam 公告没有返回可核实的实际公告地址', 'STEAM_NEWS_UNAVAILABLE', actualUrl);
+        const encoded = decodedPage.text.match(/\bdata-partnereventstore\s*=\s*(["'])([\s\S]*?)\1/i)?.[2];
+        let events: unknown;
+        try { events = encoded ? JSON.parse(decoded(encoded)) : []; } catch { events = []; }
+        const event = (Array.isArray(events) ? rows(events, 'Steam 原始公告') : []).find(item => {
+          const body = item.announcement_body as Record<string, unknown> | undefined;
+          return String(selector.idKind === 'event' ? item.gid : body?.gid) === selector.newsId && (!selector.appId || String(item.appid) === selector.appId);
+        });
+        if (!event) throw steamError('本次 Steam 公告页面没有目标记录，请读取原公告页面或官方新闻流', 'STEAM_NEWS_UNAVAILABLE', actualUrl);
+        const body = object(event.announcement_body, 'Steam 公告正文'), contents = string(body.body);
+        if (!contents.trim()) throw steamError('Steam 目标公告没有返回正文', 'CONTENT_EMPTY', actualUrl);
+        return document('steam', actualUrl, string(body.headline) || string(event.event_name), contents, { contentKind: 'post', publishedAt: epoch(body.posttime), metadata: { appId: String(event.appid), contentScope: 'single-news-record', eventGid: String(event.gid), announcementGid: String(body.gid), ...(target.idKind === 'feed' ? { feedGid: target.newsId } : {}), ...(actualUrl !== url ? { requestedUrl: url } : {}), extraction: 'steam-embedded-announcement', encoding: decodedPage.encoding } });
+      }
+      const news = target.kind === 'news-list', requestedCount = Number(address.searchParams.get('count') ?? 100);
+      const api = endpoint(config, news ? 'https://api.steampowered.com/' : 'https://store.steampowered.com/', news ? 'ISteamNews/GetNewsForApp/v2/' : 'api/appdetails/');
+      api.searchParams.set(news ? 'appid' : 'appids', target.appId!);
+      if (news) {
+        if (!Number.isSafeInteger(requestedCount) || requestedCount < 1) throw steamError('Steam 公告数量需要正整数', 'INVALID_INPUT', url);
+        api.searchParams.set('count', String(Math.min(requestedCount, 100))); api.searchParams.set('maxlength', '0');
+        const enddate = address.searchParams.get('enddate');
+        if (enddate !== null) { if (!/^\d+$/.test(enddate)) throw steamError('Steam 公告 enddate 需要Unix秒数', 'INVALID_INPUT', url); api.searchParams.set('enddate', enddate); }
+      } else {
+        api.searchParams.set('l', address.searchParams.get('l') ?? 'english'); api.searchParams.set('cc', address.searchParams.get('cc') ?? 'us');
+      }
+      const result = await json(api, { headers, signal }, news ? 'Steam 公告列表' : 'Steam 作品规格');
+      const record = object(news ? result.appnews : result[target.appId!], news ? 'Steam 公告列表' : 'Steam 作品规格');
+      if (!news && record.success !== true) throw steamError('Steam 作品不存在或该区域未返回资料', 'STEAM_APP_UNAVAILABLE', url);
+      const data = news ? record : object(record.data, 'Steam 作品规格');
+      if (news) {
+        if (record.appid !== undefined && String(record.appid) !== target.appId) throw steamError('Steam 公告列表的AppID与请求不符', 'CONTENT_MISMATCH', url);
+        const items = rows(record.newsitems, 'Steam 公告列表'), total = typeof record.count === 'number' ? record.count : typeof record.newsitems_count === 'number' ? record.newsitems_count : undefined;
+        const truncated = total === undefined ? items.length >= Math.min(requestedCount, 100) : total > items.length;
+        const dates = items.map(item => Number(item.date)).filter(value => Number.isSafeInteger(value) && value > 0);
+        return document('steam', url, `Steam ${target.appId} 公告`, JSON.stringify(data, null, 2), { contentKind: 'metadata', metadata: { appId: target.appId, contentScope: 'news-list', returned: items.length, ...(total !== undefined ? { total } : {}), truncated, ...(truncated && dates.length ? { nextEndDate: Math.min(...dates) - 1 } : {}), apiUrl: config.baseUrl ? undefined : api.href } });
+      }
+      if (data.steam_appid !== undefined && String(data.steam_appid) !== target.appId) throw steamError('Steam 作品AppID与请求不符', 'CONTENT_MISMATCH', url);
+      return document('steam', url, string(data.name), JSON.stringify(data, null, 2), { contentKind: 'metadata', metadata: { appId: target.appId, contentScope: 'store-specification', language: api.searchParams.get('l'), region: api.searchParams.get('cc'), releaseDateRaw: data.release_date } });
     },
   };
 }

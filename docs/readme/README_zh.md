@@ -32,7 +32,7 @@ cd sera-search
 npm ci --cache ./.cache/npm
 npm run build
 node dist/cli.js install --home ./.sera
-node dist/cli.js capabilities --home ./.sera --json
+node dist/cli.js capabilities --home ./.sera --sources bing,web --json
 ```
 
 使用公开网页来源完成一次搜索与原文读取：
@@ -79,7 +79,7 @@ Windows 可使用 `F:/tools/sera-search/dist/cli.js` 这样的绝对路径。
 node dist/cli.js install --home /absolute/path/to/sera-data --skill-dir /absolute/path/to/agent-skills
 ```
 
-Skill 源文件随包提供，入口链接到包内目录，需要保留包的位置。MCP 配置和 Skill 入口按所用客户端加载，详见 [Agent Skill 与 MCP](../../docs/mcp.md)。
+Skill 源文件随包提供，入口链接到包内目录，需要保留包的位置。先查看任务相关来源，再取得首批证据；平台与凭据细节按需加载。MCP 配置和 Skill 入口按所用客户端加载，详见 [Agent Skill 与 MCP](../../docs/mcp.md)。
 
 接入后可以这样提问：
 
@@ -102,8 +102,8 @@ flowchart LR
 
 - **先选合适的材料。** 版本、日期和规格优先官方资料；用户反馈读取原帖与评论；历史问题定位原 URL、域名和快照。账号渠道缺少有效凭据时显示“未登录，不可用”。
 - **少翻页、少重复读取。** `query`／`keywords` 定位原文片段；`read-many` 三路并行、合并重复 URL；新鲜缓存可复用，需要最新内容时传 `refresh`。
-- **只补还缺的证据。** `research` 用 `goals`／`state` 保留待查、已确认、冲突和访问失败，跳过已取证页面。字段由 Agent 核验后更新，全部确认后停止联网。
-- **换路过程可追溯。** 默认按意图选源，空结果、无关候选或错误继续换后端；显式 `sources` 并行聚合所选来源，`runs[].attempts` 保留实际查询与原因。
+- **只补还缺的证据。** 多字段任务先用 `research` 与 `goals` 取得一批材料，核验片段后将更新的 `state` 传回，只补剩余问题。CLI多轮任务可从首轮传 `--state ./research-state.json`，自动创建或更新该文件，核验后编辑字段再执行原命令。已取证页面跳过，字段由 Agent 核验后确认。完整流程见[取证与续查示例](../../skills/sera-search/references/workflows.md)。
+- **换路过程可追溯。** 默认按意图选源，空结果、无关候选或错误继续换后端；显式 `sources` 并行聚合所选来源。重试受限入口前查看 `runs` 与 `retryAfterSeconds`，保留成功证据，继续其他线索。
 
 全文保留在证据 ID 下，相关片段带 Unicode 坐标。排序分数用于组织召回；多个引擎找到同一篇文章仍是一份原始材料。证据的读取范围、内容类型和使用方式见 [证据指南](../../docs/evidence.md)。
 

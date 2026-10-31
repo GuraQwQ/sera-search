@@ -2,6 +2,14 @@
 
 安装为可执行包后，下面的 `node dist/cli.js` 可以替换为 `sera`。使用 `--help` 查看实际参数。
 
+任务开始时先查看相关来源，再直接执行首轮取证；例如网页问题只看 `bing,web`，作品发行考据再加入 `steam,wayback`。多字段任务使用 `research --goal`，已有链接直接 `read`／`read-many`。起步和续查示例见[取证与续查](../skills/sera-search/references/workflows.md)。
+
+```bash
+node dist/cli.js capabilities --sources bing,web --json
+node dist/cli.js research "TypeScript 发行记录" --sources bing --read-sources web --goal "版本与发布日期" --goal "官方更新内容" --state ./research-state.json --read-limit 3 --json
+```
+
+
 ```bash
 # 多来源召回，每个来源最多返回 5 条
 node dist/cli.js search "MCP TypeScript SDK stdio" --sources exa,tavily,brave,github --limit 5 --json
@@ -80,6 +88,8 @@ node dist/cli.js clean --json
 
 未指定 `--sources` 时，`search` 按 `intent` 选择可用来源，空结果、无关候选或错误继续换源，有有效候选后停止。显式来源保持并行聚合。`--intent` 可指定 `official`、`feedback`、`historical`、`game`、`galgame`、`academic`、`code`、`images` 或 `general`；重复 `--alias` 补充别名，初始后端无有效结果时最多重试首个不同别名。`runs[].attempts` 记录实际查询、后端和换路原因。相关性为保守词面判断，跨语言名称或歧义短名需 agent 消歧。
 
+跨轮研究可从首轮传 `--state ./research-state.json`，配合重复 `--goal` 指定待核验字段。CLI创建或读取该文件，并将新状态原子写回；审阅原文后编辑字段状态与 `evidenceIds`，再执行原命令。`state.nextQuery` 建议下一轮关注一个字段，优先冲突项。已取证URL跳过；明确 `Retry-After` 对应的 `retryAt` 未到时，先查其他URL，`--refresh` 也遵守等待条件。文件保存失败保留结果并返回 `stateWarnings`。
+
 `research --sources` 同时约束搜索和正文读取的来源范围。需要使用另一组读取后端时，传入 `--read-sources`；例如 `--sources brave --read-sources web`。MCP／库接口对应字段为 `readSources`。这样可以显式控制参与任务的来源及 API 调用预算。
 
 正常结果和部分成功退出码为 `0`，整体失败或参数错误为 `1`，用户中断为 `130`。自动化调用应同时检查 JSON 中的 `status` 和 `runs`，部分成功仍可能有待补查来源。
@@ -109,4 +119,4 @@ Agent 的来源选择表位于项目 Skill；[领域指南](../skills/sera-searc
 
 [游戏 Wiki](../skills/sera-search/references/game-wikis.md)采用独立的 [catalogs/game-wikis.json](../catalogs/game-wikis.json)，游戏查询通过 `--group game-wikis` 选择该组。[Galgame 社区](../skills/sera-search/references/galgame.md)使用 [catalogs/galgame.json](../catalogs/galgame.json)，通过 `--group galgame` 选择目录、`--platform` 选择站点；自定义站点目录使用 `--catalog <文件>`。常规配置分别加载自己的来源与站点目录。识图、直播、社区、评论及作品资料的当前范围见 [平台指南](../skills/sera-search/references/platform-expansion.md)。
 
-2026-11-01 的有界检查取得了 Bing RSS、英文 Wikipedia、Wayback、Internet Archive、部分游戏 Wiki、skills.sh、作品数据库、B站单视频评论、小黑盒原生帖子／评论和 Steam 的真实结果。环境代理支持已接通；新 API 的适配与固定响应测试仍不能替代实际 Key、平台权限和质量验证，具体证据见平台指南与研究记录。
+2026-11-01 的有界检查取得了 Bing RSS、英文 Wikipedia、Wayback、Internet Archive、部分游戏 Wiki、skills.sh、作品数据库、B站单视频评论、小黑盒原生帖子／评论和 Steam 的真实结果。环境代理支持已接通；新 API 的适配与固定响应测试仍不能替代实际 Key、平台权限和质量验证，具体入口与范围见平台指南。
