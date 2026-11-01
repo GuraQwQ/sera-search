@@ -9,6 +9,8 @@ import type { SourceName } from './types.js';
 import { authStatus, login, logout } from './auth.js';
 import { credentialsSchema, notLoggedIn } from './credentials.js';
 import { writeAtomic } from './files.js';
+import { backendSchema } from './backends.js';
+import { componentNames, cleanIntegrationCache } from './components.js';
 
 const help = `SERA — Search, Extract, Research for Agents
 
@@ -20,6 +22,7 @@ const help = `SERA — Search, Extract, Research for Agents
   logout <来源>        清除登录记录，可配 --platform 退出平台
   auth [来源]          查看登录记录，平台记录用 --platform 筛选
   capabilities         列出来源、操作和配置状态
+  backend <来源> [工具] 发现或调用 ghgrab / Scrapling 原生 MCP 工具
   channels             发现可匹配的平台，支持 --sources 和 --platform 筛选
   search <查询>        自动选路；指定来源时并行聚合，保留换源记录
   comments <URL>       读取歌曲、视频或授权媒体评论及回复页
@@ -29,7 +32,7 @@ const help = `SERA — Search, Extract, Research for Agents
   read <URL或ID>       获取原文，保存证据并定位相关片段
   read-many <URL...>   批量读取，最多20个地址，三路并行
   evidence <ID>        定位或分页读取已保存证据
-  clean                清理 SERA 管理的证据缓存，保留配置和其他文件
+  clean                清理 SERA 管理的证据与组件缓存
   mcp                  启动使用同一核心的 stdio MCP 服务
 
 通用选项：
@@ -67,6 +70,10 @@ const help = `SERA — Search, Extract, Research for Agents
   --offset <位置>      evidence 的字符起点，默认 0
   --length <数量>      返回字符预算，read 默认2000，evidence 默认4000，最大20000
   --skill-dir <目录>   install 时链接 sera-search 到此技能根目录
+  --components <列表>  install 可选安装 ghgrab,scrapling,metadata-parser
+  --python <路径>      install 使用已有 Python 创建工具环境
+  --browser <路径>     install 复用已有 Chromium / Edge
+  --input <JSON文件>   backend 的原生工具参数；先不带工具名查看 schema
 
 示例：
   sera search "MCP 文档" --sources exa,tavily,brave --json
@@ -128,12 +135,24 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     cursor: { type: 'string' }, parent: { type: 'string' }, order: { type: 'string' },
     sources: { type: 'string' }, platform: { type: 'string' }, stdin: { type: 'boolean' }, 'from-env': { type: 'string' }, limit: { type: 'string' }, 'github-type': { type: 'string' },
     domain: { type: 'string', multiple: true }, since: { type: 'string' }, at: { type: 'string' }, 'read-limit': { type: 'string' }, 'read-sources': { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' }, 'skill-dir': { type: 'string' },
+    components: { type: 'string' }, python: { type: 'string' }, browser: { type: 'string' }, input: { type: 'string' },
   } });
   if (values.help || (!positionals.length && !values.version)) { process.stdout.write(help); return; }
   if (values.version) { process.stdout.write(JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version + '\n'); return; }
   const command = positionals[0], text = positionals.slice(1).join(' ');
   const location = { home: values.home, file: values.config, catalog: values.catalog, group: values.group === undefined ? undefined : z.enum(catalogGroups).parse(values.group) };
-  if (command === 'install') { process.stdout.write(JSON.stringify(await install({ ...location, skillDir: values['skill-dir'] }), null, 2) + '\n'); return; }
+  if (command === 'install') {
+    const controller = new AbortController(), cancel = () => controller.abort();
+    process.once('SIGINT', cancel);
+    try {
+      const components = values.components === undefined ? undefined : z.array(z.enum(componentNames)).min(1).parse(values.components.split(',').map(value => value.trim()));
+      const result = await install({ ...location, skillDir: values['skill-dir'], components, python: values.python, browser: values.browser, signal: controller.signal });
+      process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+      if (controller.signal.aborted) process.exitCode = 130;
+      else if (result.status === 'error') process.exitCode = 1;
+    } finally { process.removeListener('SIGINT', cancel); }
+    return;
+  }
   const config = await loadConfig(location);
   if (command === 'mcp') { const { startMcp } = await import('./mcp.js'); await startMcp(config); return; }
   const engine = new Engine(config);
@@ -163,6 +182,12 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       case 'logout': result = await logout(config, z.enum(sourceNames).parse(text), values.platform, controller.signal); break;
       case 'auth': result = await authStatus(config, text ? z.enum(sourceNames).parse(text) : undefined, values.platform); break;
       case 'capabilities': result = engine.capabilities(selected); break;
+      case 'backend': {
+        const input = values.input ? JSON.parse(await readFile(values.input, 'utf8')) : undefined;
+        const request = backendSchema.parse({ source: positionals[1], tool: positionals[2], arguments: input });
+        result = await engine.backends.run(config, request, controller.signal);
+        break;
+      }
       case 'channels': result = await engine.channels({ sources: selected, platform: values.platform, signal: controller.signal }); break;
       case 'search': result = await engine.search(search); break;
       case 'comments': result = await engine.comments({ url: text, sources: selected, limit: integer(values.limit, 20), cursor: values.cursor, parentId: values.parent, order: values.order, signal: controller.signal }); break;
@@ -184,16 +209,21 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       case 'read': result = await engine.read(text, read); break;
       case 'read-many': result = await engine.readMany(positionals.slice(1), read); break;
       case 'evidence': result = await engine.store.get(text, integer(values.offset, 0), integer(values.length, 4000), { query: values.query, keywords: values.keyword }); break;
-      case 'clean': result = await engine.store.clean(); break;
+      case 'clean': {
+        const evidence = await engine.store.clean();
+        try { result = { ...evidence, integrations: await cleanIntegrationCache(config.home) }; }
+        catch (error) { result = { ...evidence, status: 'partial', cacheWarnings: [errorMessage(error, config)] }; }
+        break;
+      }
       default: throw new Error(`未知命令：${command}，使用 sera --help 查看用法`);
     }
     process.stdout.write((values.json ? JSON.stringify(result, null, 2) : display(result)) + '\n');
     if (controller.signal.aborted) process.exitCode = 130;
-    else if ((result as { status?: string }).status === 'error') process.exitCode = 1;
+    else if ((result as { status?: string }).status === 'error' || (result as { isError?: boolean }).isError) process.exitCode = 1;
   } catch (error) {
     process.stderr.write(JSON.stringify({ error: errorMessage(error, config) }) + '\n');
     process.exitCode = controller.signal.aborted ? 130 : 1;
-  } finally { process.removeListener('SIGINT', cancel); }
+  } finally { process.removeListener('SIGINT', cancel); await engine.backends.close(); }
 }
 
 main().catch(error => { process.stderr.write(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) + '\n'); process.exitCode = 1; });

@@ -43,6 +43,14 @@ node dist/cli.js research "TypeScript 官方发布记录" --home ./.sera --sourc
 
 公开来源可直接请求；需要账号的来源通过 `login` 登记。数据目录统一使用 `--home` 或 `SERA_HOME`，重复执行 `install` 保留已有配置。网络、登录与额度状态以每次返回的 `runs` 为准。
 
+默认 `install` 准备 SERA 配置，扩展依赖按需安装：
+
+```bash
+node dist/cli.js install --home F:/tools/sera-data --components ghgrab,scrapling,metadata-parser --python D:/Python/python.exe --browser "D:/Apps/Edge/msedge.exe"
+```
+
+将路径替换为已有 Python 与 Chromium／Edge 浏览器。组件位于 `<home>/tools`，受管理缓存位于 `<home>/cache/integrations`；重复执行会核对或修复所选组件。兼容范围与后端工具发现见[扩展来源与后端](../../docs/integrations.md)。
+
 已有 URL 或对象 ID 时可以直接读取：
 
 ```bash
@@ -109,7 +117,7 @@ flowchart LR
 
 ## 可以查什么
 
-当前注册 **44 个来源**，MCP 提供 **12 个工具**。来源注册表示接口已接入，实际可用性由配置、权限和上游响应确认。
+当前注册 **49 个来源**，MCP 提供 **13 个工具**。来源注册表示接口已接入，实际可用性由配置、权限和上游响应确认。
 
 | 资料 | 入口示例 | 返回内容 |
 |---|---|---|
@@ -119,6 +127,7 @@ flowchart LR
 | 游戏、动漫、音乐与作品资料 | Steam、Niconico、VNDB、Bangumi、MusicBrainz 等 | 对象 ID、发行记录、规格、署名与元数据 |
 | 历史网页与失传信息 | Wayback、Internet Archive | 捕获索引、实际快照、馆藏及文件目录 |
 | 社区、评论与图片来源 | LinuxDo、小黑盒、YouTube、网易云、图片与反向识图接口 | 原帖、评论分页、父子回复、图片承载页及匹配线索 |
+| 仓库与浏览器工具、新闻和频道目录 | ghgrab、Scrapling、metadata_parser、Google News RSS、Free-TV IPTV | 仓库树与文件、浏览器响应、HTML 声明元数据、RSS 记录与频道资料 |
 
 游戏 Wiki 和 Galgame 社区采用独立目录，按需加载：
 
@@ -128,6 +137,8 @@ node dist/cli.js search "CLANNAD 感想" --home ./.sera --sources sites --platfo
 ```
 
 MCP 单次输入使用 `group:"game-wikis"` 或 `group:"galgame"`，同一连接可切换目录。完整来源、平台对象和内容范围见 [来源指南](../../skills/sera-search/references/sources.md)及[领域选路](../../skills/sera-search/references/domains.md)。
+
+`backend ghgrab`／`backend scrapling` 发现上游工具与 Schema，MCP 使用 `sera_backend`。Scrapling 会话在同一 MCP 连接内保持。Google News 聚合记录在实际取得发布者正文前标为元数据；IPTV 返回频道目录与流 URL，可播放状态仍待验证。网页元数据保留页面声明，事实结论需继续核验。
 
 ## 结果与证据
 
@@ -143,6 +154,8 @@ MCP 单次输入使用 `group:"game-wikis"` 或 `group:"galgame"`，同一连接
 | [CLI 指南](../../docs/cli.md) | 搜索、研究、读取、评论、图片与退出码 |
 | [证据指南](../../docs/evidence.md) | 片段、缓存、版本时间、缺口续查与清理 |
 | [Agent Skill 与 MCP](../../docs/mcp.md) | Skill 链接、服务配置及工具目录 |
+| [扩展来源与后端](../../docs/integrations.md) | 组件安装、完整后端工具、会话与兼容范围 |
+| [第三方归属](../../THIRD_PARTY.md) | 上游项目、许可与内容来源 |
 | [选路 Skill](../../skills/sera-search/SKILL.md) | Agent 的起步流程与按需参考 |
 
 ## 开发与贡献
@@ -163,4 +176,4 @@ SERA 的共享入口与证据组织参考 [REA](https://github.com/morluto/rea)�
 
 ## 许可证
 
-[MIT](../../LICENSE)。第三方服务和资料的使用遵循各自条款与许可。
+[MIT](../../LICENSE)。第三方服务和资料的使用遵循各自条款与许可，详见[第三方归属](../../THIRD_PARTY.md)。

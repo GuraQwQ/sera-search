@@ -9,6 +9,26 @@ node dist/cli.js capabilities --sources bing,web --json
 node dist/cli.js research "TypeScript 发行记录" --sources bing --read-sources web --goal "版本与发布日期" --goal "官方更新内容" --state ./research-state.json --read-limit 3 --json
 ```
 
+## 安装扩展与调用后端
+
+默认 `install` 创建或复用配置，显式选择 `--components` 才安装扩展。`--python` 指定已有 Python 3.10+，`--browser` 指定已有 Chromium／Edge 可执行文件；路径请替换为本机实际位置。
+
+```bash
+node dist/cli.js install --home F:/tools/sera-data
+node dist/cli.js install --home F:/tools/sera-data --components ghgrab,scrapling,metadata-parser --python D:/Python/python.exe --browser "D:/Apps/Edge/msedge.exe"
+node dist/cli.js capabilities --home F:/tools/sera-data --sources ghgrab,scrapling,metadata-parser,google-news,iptv --json
+
+# 省略 tool 时，发现上游工具名及输入 Schema
+node dist/cli.js backend ghgrab --home F:/tools/sera-data --json
+node dist/cli.js backend scrapling --home F:/tools/sera-data --json
+
+# TOOL_NAME 替换为发现的工具名，文件内容为该工具接受的 JSON 对象
+node dist/cli.js backend scrapling TOOL_NAME --input ./backend-input.json --home F:/tools/sera-data --json
+```
+
+`backend` 仅接受 `ghgrab` 或 `scrapling`，按上游 Schema 传参。组件位于 `<home>/tools`，安装与运行缓存位于 `<home>/cache/integrations`；重复 `install --components` 会核对、补全或修复所选组件。Scrapling 的内存会话在同一 MCP 连接内保持；每次 CLI `backend` 是独立进程，需要跨进程会话时使用上游发现的 save／load 工具。完整能力与兼容范围见[扩展来源与后端](integrations.md)。
+
+## 检索与取证
 
 ```bash
 # 多来源召回，每个来源最多返回 5 条
@@ -59,6 +79,12 @@ node dist/cli.js search "illustration" --sources instagram --platform hashtag --
 node dist/cli.js search "https://example.org/" --sources wayback --at 20200101 --json
 node dist/cli.js search "opensource_movies" --sources archive --json
 
+# 新闻 RSS、频道目录与可选提取来源
+node dist/cli.js search "TypeScript" --sources google-news --json
+node dist/cli.js search "France 24" --sources iptv --json
+node dist/cli.js read "https://example.org/article" --sources scrapling --json
+node dist/cli.js read "https://example.org/article" --sources metadata-parser --json
+
 # 原生论坛检索与评论
 node dist/cli.js search "Linux" --sources linuxdo --json
 node dist/cli.js search "游戏评测" --sources heybox --json
@@ -76,7 +102,7 @@ node dist/cli.js capabilities --sources wiki,wayback,linuxdo --json
 node dist/cli.js channels --sources opencli,agent-reach --json
 node dist/cli.js channels --sources opencli --platform zhihu --json
 
-# 清理 SERA 生成的证据缓存
+# 清理 SERA 管理的证据与组件缓存，保留依赖及会话
 node dist/cli.js clean --json
 ```
 
@@ -101,6 +127,11 @@ node dist/cli.js clean --json
 | `brave`、`zhipu`、`doubao` | 使用已登记的 API Key；网页搜索，Brave 另有关键词图片；正文另选读取源 |
 | `serpapi`、`dataforseo` | Google／Bing 自然搜索；SerpAPI 可调用图片与 Lens；正文另选读取源 |
 | `github` | 读取公开仓库、代码搜索结果及 issue／PR 等资料；受 GitHub 权限和速率限制约束 |
+| `ghgrab` | 搜索使用 GitHub；仓库树与文件支持上游识别的 forge，完整工具由 `backend ghgrab` 发现 |
+| `scrapling` | 已知 URL 的网页提取；HTTP、浏览器与会话工具由 `backend scrapling` 发现 |
+| `metadata-parser` | 现成 HTML 的标题、meta 与声明 URL；可选增强 `web` 原始 HTML 读取 |
+| `google-news` | Google News RSS 发现与聚合记录；实际取得发布者正文前标为元数据 |
+| `iptv` | Free-TV IPTV 频道目录、流 URL 与 EPG 线索，播放状态未验证 |
 | `agent-reach`、`opencli` | 按实时渠道清单查询；账号渠道检查平台登录记录，正文、评论和字幕分别核对 |
 | `bilibili`、`youtube`、`netease` | 视频／歌曲资料与评论；正文、字幕、评论和计数是不同对象 |
 | `v2ex` | 公开帖子／节点资料读取；该 API 本身不是任意关键词全站搜索 |
@@ -111,7 +142,7 @@ node dist/cli.js clean --json
 | `linuxdo`、`heybox` | 原生主题／帖子与评论；访问权限、父楼层和游标按接口判断 |
 | 作品、音乐、技能与社交 API | 按资料对象与授权范围调用；详细入口见来源及平台指南 |
 
-当前注册 44 个来源，`capabilities --sources` 可缩小查看范围。Agent Reach 的渠道从统一 CLI 的 `channels` 发现；OpenCLI 从实时注册表发现接受 `query` 或 `keyword` 位置参数的只读搜索命令。来源注册与登录记录说明可调用的路径，实际账号权限、额度与结果仍由请求确认。
+当前注册 49 个来源，`capabilities --sources` 可缩小查看范围。Agent Reach 的渠道从统一 CLI 的 `channels` 发现；OpenCLI 从实时注册表发现接受 `query` 或 `keyword` 位置参数的只读搜索命令。来源注册与登录记录说明可调用的路径，实际账号权限、额度与结果仍由请求确认。
 
 `sera channels` 返回各平台的 `search`、`read`、`configured` 和搜索入口的 `browser`／`strategy`。这份清单说明 SERA 可匹配的操作，实际登录与返回内容由调用结果确认。OpenCLI 的平台搜索覆盖比原文映射广；只有 `read: true` 的平台可直接通过该适配读取，其余可显式选择网页正文源。
 

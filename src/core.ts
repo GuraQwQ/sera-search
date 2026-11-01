@@ -17,6 +17,9 @@ import { createForumSources } from './providers/forums.js';
 import { createEntitySources, steamDocumentMatches } from './providers/entities.js';
 import { directTarget, specificSource, taskRoute, preferredSources } from './routing.js';
 import { assessRelevance } from './providers/relevance.js';
+import { createFeedSources } from './providers/feeds.js';
+import { createMetadataSource } from './providers/metadata-parser.js';
+import { BackendPool, createBackendSources } from './backends.js';
 
 export const searchSchema = z.object({
   query: z.string().trim().min(1).max(4096),
@@ -77,8 +80,8 @@ export function mergeHits(hits: SearchHit[]): AggregatedHit[] {
 export class Engine {
   readonly store: EvidenceStore;
   readonly sources: Source[];
-  constructor(readonly config: Config, sources?: Source[]) {
-    this.sources = sources ?? [...createHttpSources(config), ...createWebSources(config), ...createAcademicSources(config), ...createPlatformSources(config), ...createCatalogSources(config), ...createSocialSources(config), ...createActionSources(config), ...createDiscoverySources(config), ...createArchiveSources(config), ...createForumSources(config), ...createEntitySources(config)];
+  constructor(readonly config: Config, sources?: Source[], readonly backends = new BackendPool()) {
+    this.sources = sources ?? [...createHttpSources(config), ...createWebSources(config), ...createAcademicSources(config), ...createPlatformSources(config), ...createCatalogSources(config), ...createSocialSources(config), ...createActionSources(config), ...createDiscoverySources(config), ...createArchiveSources(config), ...createForumSources(config), ...createEntitySources(config), ...createFeedSources(config), createMetadataSource(config), ...createBackendSources(config, backends)];
     if (!sources) {
       const attach = (name: SourceName) => this.sources.find(source => source.capability.name === name)!;
       attach('bilibili').comments = request => bilibiliComments(config.bilibili, request);
@@ -237,7 +240,7 @@ export class Engine {
     } catch (error) { cacheWarnings.push(`缓存清理未完成：${errorMessage(error, this.config)}`); }
     const specific = specificSource(url, this.config);
     const order: SourceName[] = input.sources ?? [...new Set<SourceName>([
-      ...(specific ? [specific] : []), 'exa', 'tavily', 'agent-reach', 'opencli', 'web',
+      ...(specific ? [specific] : []), 'exa', 'tavily', 'agent-reach', 'opencli', 'web', 'scrapling',
     ])];
     const eligible = order.filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.read));
     const view = (content: string) => input.query || input.keywords?.length ? focusText(content, input, input.length) : { ...textPage(content, 0, input.length), selection: 'leading' as const };

@@ -20,14 +20,17 @@
     "dist",
     "skills",
     "catalogs",
+    "bridges",
     "docs/assets",
     "docs/cli.md",
     "docs/configuration.md",
     "docs/evidence.md",
     "docs/mcp.md",
+    "docs/integrations.md",
     "docs/readme",
     "README.md",
     "LICENSE",
+    "THIRD_PARTY.md",
     "config.example.json"
   ],
   "scripts": {
@@ -36,12 +39,12 @@
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
     "@modelcontextprotocol/server": "^2.4.0",
     "undici": "^7.30.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "^2.4.0",
     "@types/node": "^22.0.0",
     "typescript": "^7.0.2"
   },

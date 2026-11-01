@@ -20,6 +20,18 @@
 | `wayback`、`archive` | 公开查询 | 网页历史快照、捕获索引、Internet Archive 馆藏及文件目录 |
 | `linuxdo`、`heybox` | 公开入口，可选 API 凭据／网站 Cookie | 原生主题或帖子读取、逐页评论；可见范围以站点响应为准 |
 | `steam`、`nicovideo` | 公开查询 | Steam AppID、商店规格与公告；Niconico 视频标识、投稿时间与作者元数据 |
+| `ghgrab`、`scrapling` | 已安装命令入口及后端自身需要的访问条件 | 仓库查询、网页提取与完整后端工具 |
+| `metadata-parser` | 安装 metadata-parser 的 Python 与桥接路径 | HTML 页面声明元数据，并可增强 `web` 原始 HTML 读取 |
+| `google-news` | 公开 RSS | 新闻条目、发布者与聚合 URL；按语言、国家和版别选择目录 |
+| `iptv` | 公开 M3U 目录 | 频道字段、流 URL 与 EPG 线索 |
+
+## 可选组件
+
+`install` 默认准备配置，安装扩展时显式传 `--components ghgrab,scrapling,metadata-parser`。`--python` 指定已有 Python 3.10+；`--browser` 指定已有 Chromium／Edge 可执行文件。组件安装到 `<home>/tools`，缓存集中到 `<home>/cache/integrations`，成功后把绝对命令路径写入配置。空状态、部分安装及中断后均可重复执行相同的 `install` 命令。用 `clean` 清理受管理缓存会保留依赖、配置和会话数据。详细安装步骤见[扩展来源与后端](integrations.md)。
+
+[配置示例](../config.example.json)中的三个命令模板默认禁用，安装后由 `install` 填入实际路径；手动配置时使用原生可执行文件与独立参数数组。`ghgrab` 的参数为 `["mcp"]`，Scrapling 使用 `scrapling-mcp`，`metadata-parser` 使用 Python 加包内 `bridges/metadata_parser.py` 的绝对路径。
+
+`google-news` 支持 `languageCode`、`country`、`edition` 和可选 `topicId`。默认 `en-US`／`US`／`US:en`；配置 `topicId` 后读取该主题 RSS，查询词不再用于关键词 RSS。`baseUrl` 可替换新闻服务入口。`iptv.baseUrl` 是 M3U 目录的完整 URL，默认读取 [Free-TV/IPTV](https://github.com/Free-TV/IPTV) 的 `playlist.m3u8`。这两个来源直接参与 `capabilities`、`search` 与 `read`，无需安装 Python 组件。
 
 用 `login --from-env` 登记已有环境变量，或用 `login --stdin` 传入纯 Key／凭据 JSON：
 

@@ -1,5 +1,7 @@
-export const sourceNames = ['exa', 'tavily', 'brave', 'github', 'agent-reach', 'opencli', 'bilibili', 'v2ex', 'web', 'zhipu', 'doubao', 'crossref', 'openalex', 'pubmed', 'serpapi', 'dataforseo', 'wiki', 'skills', 'bangumi', 'anilist', 'jikan', 'mangadex', 'vndb', 'musicbrainz', 'lastfm', 'listenbrainz', 'discogs', 'youtube', 'netease', 'baidu-images', 'sogou-images', 'trace-moe', 'saucenao', 'twitch', 'discord', 'instagram', 'bing', 'sites', 'wayback', 'archive', 'linuxdo', 'heybox', 'steam', 'nicovideo'] as const;
+export const sourceNames = ['exa', 'tavily', 'brave', 'github', 'agent-reach', 'opencli', 'bilibili', 'v2ex', 'web', 'zhipu', 'doubao', 'crossref', 'openalex', 'pubmed', 'serpapi', 'dataforseo', 'wiki', 'skills', 'bangumi', 'anilist', 'jikan', 'mangadex', 'vndb', 'musicbrainz', 'lastfm', 'listenbrainz', 'discogs', 'youtube', 'netease', 'baidu-images', 'sogou-images', 'trace-moe', 'saucenao', 'twitch', 'discord', 'instagram', 'bing', 'sites', 'wayback', 'archive', 'linuxdo', 'heybox', 'steam', 'nicovideo', 'ghgrab', 'scrapling', 'metadata-parser', 'google-news', 'iptv'] as const;
 export type SourceName = typeof sourceNames[number];
+export const backendNames = ['ghgrab', 'scrapling'] as const;
+export type BackendName = typeof backendNames[number];
 export const intents = ['general', 'official', 'feedback', 'historical', 'game', 'galgame', 'academic', 'code', 'images'] as const;
 export type Intent = typeof intents[number];
 export const catalogGroups = ['default', 'game-wikis', 'galgame'] as const;
@@ -67,6 +69,9 @@ export interface Config {
   wayback?: ApiConfig; archive?: ApiConfig;
   linuxdo?: ApiConfig; heybox?: ApiConfig;
   steam?: ApiConfig; nicovideo?: ApiConfig;
+  ghgrab?: CommandConfig; scrapling?: CommandConfig; 'metadata-parser'?: CommandConfig;
+  'google-news'?: ApiConfig & { country?: string; edition?: string; topicId?: string };
+  iptv?: ApiConfig;
   catalog?: SiteCatalog;
   catalogFile?: string;
   credentials?: Record<string, AuthRecord>;

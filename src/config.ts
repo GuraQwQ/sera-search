@@ -29,10 +29,11 @@ const schema = z.object({
   musicbrainz: api, lastfm: api, listenbrainz: api, discogs: api, youtube: api, netease: api,
   'baidu-images': api, 'sogou-images': api, 'trace-moe': api, saucenao: api, twitch: api, discord: api, instagram: api, bing: api, sites: api,
   wayback: api, archive: api,
-  linuxdo: api, heybox: api, steam: api, nicovideo: api,
+  linuxdo: api, heybox: api, steam: api, nicovideo: api, iptv: api,
+  'google-news': api.unwrap().extend({ country: z.string().min(2).optional(), edition: z.string().min(1).optional(), topicId: z.string().min(1).optional() }).default({}),
   catalogFile: z.string().optional(),
   wiki: api.unwrap().extend({ sites: z.record(z.string().regex(platformIdPattern), z.object({ apiUrl: z.string().url(), pageBaseUrl: z.string().url(), label: z.string().optional() })).optional() }).default({}),
-  agentReach: command.optional(), opencli: command.optional(),
+  agentReach: command.optional(), opencli: command.optional(), ghgrab: command.optional(), scrapling: command.optional(), 'metadata-parser': command.optional(),
 });
 
 export interface ConfigLocation { home?: string; file?: string; catalog?: string; group?: CatalogGroup }
@@ -71,7 +72,7 @@ export async function loadConfig(options: ConfigLocation = {}): Promise<Config> 
   return config;
 }
 
-export async function install(options: ConfigLocation & { skillDir?: string } = {}) {
+export async function install(options: ConfigLocation & { skillDir?: string; components?: import('./components.js').ComponentName[]; python?: string; browser?: string; signal?: AbortSignal } = {}) {
   const location = configLocation(options);
   const template = await readFile(new URL('../config.example.json', import.meta.url), 'utf8');
   const created = await writeAtomic(location.file, template, true);
@@ -89,7 +90,8 @@ export async function install(options: ConfigLocation & { skillDir?: string } = 
     }
     skill = target;
   }
-  return { home: location.home, config: location.file, configCreated: created, skill };
+  const components = options.components?.length ? await (await import('./components.js')).installComponents({ ...location, components: options.components, python: options.python, browser: options.browser, signal: options.signal }) : undefined;
+  return { home: location.home, config: location.file, configCreated: created, skill, ...components, ...(components?.components.some(item => item.status === 'error') ? { status: 'error' } : {}) };
 }
 
 export function errorMessage(error: unknown, config: Config): string {

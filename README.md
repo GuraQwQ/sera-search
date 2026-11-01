@@ -43,6 +43,14 @@ node dist/cli.js research "TypeScript official release notes" --home ./.sera --s
 
 Public sources can be requested directly. Register credentials with `login` for sources that require an account. Use the same `--home` or `SERA_HOME` for every call; repeated `install` preserves existing configuration. Each response records actual network, login, and quota outcomes in `runs`.
 
+The default `install` prepares SERA configuration without installing optional dependencies. Add repository tools, browser extraction, and HTML metadata parsing when needed:
+
+```bash
+node dist/cli.js install --home F:/tools/sera-data --components ghgrab,scrapling,metadata-parser --python D:/Python/python.exe --browser "D:/Apps/Edge/msedge.exe"
+```
+
+Use paths to your existing Python and Chromium-based browser. Components live under `<home>/tools`, with managed caches under `<home>/cache/integrations`. Repeating `install` verifies or repairs the selected components. See [optional integrations](docs/integrations.md) for compatibility and backend tool discovery.
+
 Already have a URL or object ID? Read it directly:
 
 ```bash
@@ -110,7 +118,7 @@ Full material remains available under its evidence ID. Passages retain Unicode o
 
 ## What you can search
 
-SERA currently registers **44 sources** and exposes **12 MCP tools**. Available operations depend on configuration, permissions, and the provider's actual response.
+SERA currently registers **49 sources** and exposes **13 MCP tools**. Available operations depend on configuration, permissions, and the provider's actual response.
 
 | Material | Example sources | What you get |
 |---|---|---|
@@ -120,6 +128,7 @@ SERA currently registers **44 sources** and exposes **12 MCP tools**. Available 
 | Games, animation, music, and media records | Steam, Niconico, VNDB, Bangumi, MusicBrainz, and others | Object IDs, release records, specifications, credits, and metadata |
 | Historical pages and lost information | Wayback Machine, Internet Archive | Capture indexes, actual snapshots, collection metadata, and file listings |
 | Communities, comments, and image sources | LinuxDo, Heybox, YouTube, NetEase Music, image and reverse-image providers | Original posts, comment pages, reply relationships, hosting pages, and match clues |
+| Repository and browser tools, news feeds, and channel catalogs | ghgrab, Scrapling, metadata_parser, Google News RSS, Free-TV IPTV | Repository trees and files, browser responses, declared HTML metadata, RSS records, and channel metadata |
 
 Game Wikis and visual-novel communities use catalogs loaded on demand:
 
@@ -129,6 +138,8 @@ node dist/cli.js search "CLANNAD impressions" --home ./.sera --sources sites --p
 ```
 
 MCP calls accept `group:"game-wikis"` or `group:"galgame"` within the same connection. See the [source guide](skills/sera-search/references/sources.md) and [domain routing guide](skills/sera-search/references/domains.md) for exact objects and reading scope.
+
+Use `backend ghgrab` or `backend scrapling` to discover the upstream tools and their schemas; MCP clients use `sera_backend`. Scrapling sessions remain available within the same MCP connection. Google News aggregation records remain metadata until publisher text is actually retrieved; IPTV results describe catalog entries and stream URLs, with playback availability unverified. HTML metadata records page declarations, which require separate factual verification.
 
 ## Results and evidence
 
@@ -144,6 +155,8 @@ Saved evidence can be located, paged, or refreshed from the chosen data director
 | [CLI](docs/cli.md) | Search, research, reading, comments, images, and exit codes |
 | [Evidence](docs/evidence.md) | Passages, caching, timestamps, gap tracking, and cleanup |
 | [Agent Skill and MCP](docs/mcp.md) | Skill links, server registration, and the tool catalog |
+| [Optional integrations](docs/integrations.md) | Component installation, backend tools, sessions, and compatibility |
+| [Third-party notices](THIRD_PARTY.md) | Upstream projects, licenses, and content attribution |
 | [Routing Skill](skills/sera-search/SKILL.md) | Agent startup, source selection, and references loaded on demand |
 
 Detailed guides and the bundled Skill are currently written in Simplified Chinese.
@@ -166,4 +179,4 @@ SERA's shared entry points and evidence organization were inspired by [REA](http
 
 ## License
 
-[MIT](LICENSE). Third-party services and source material retain their own terms and licenses.
+[MIT](LICENSE). Third-party services and source material retain their own terms and licenses; see [third-party notices](THIRD_PARTY.md).

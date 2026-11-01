@@ -1,6 +1,7 @@
 import type { ApiConfig, Config, Document, Source } from '../types.js';
 import type { Row } from './shared.js';
 import { NotLoggedInError, notLoggedIn } from '../credentials.js';
+import { extractMetadata } from './metadata-parser.js';
 import { object, rows, string, plain, decoded, htmlText, textResponse, date, epoch, hit, endpoint, response, json, document, apiHeaders, permitted } from './shared.js';
 
 function github(config: ApiConfig): Source {
@@ -211,9 +212,14 @@ export function createHttpSources(config: Config): Source[] {
         const body = html ? htmlText((text.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? text)
           .replace(/<(?:head|header|nav|footer)\b[^>]*>[\s\S]*?<\/(?:head|header|nav|footer)>/gi, ''), actualUrl) : content;
         const bodyAvailable = !html || hasBody(title, body);
+        let pageMetadata: Record<string, unknown> | undefined;
+        if (html && config['metadata-parser'] && config['metadata-parser'].enabled !== false) {
+          try { pageMetadata = { declaredMetadata: await extractMetadata(config, text, actualUrl, signal) }; }
+          catch (error) { pageMetadata = { metadataParserWarning: (error as { code?: string }).code ?? 'PARSE_FAILED' }; }
+        }
         return document('web', actualUrl, title, content || plain(title), {
           contentKind: /\.(vtt|srt)$/i.test(parsed.pathname) ? 'subtitle' : /json|xml|text\/csv/i.test(type) || /\.(csv|json|xml)$/i.test(parsed.pathname) ? 'metadata' : 'page',
-          metadata: { extraction: html ? 'html-source-text' : 'direct-text', contentScope: bodyAvailable ? 'server-returned-text' : 'page-shell', bodyAvailable, renderedScripts: false, encoding: decoded.encoding, ...(page.redirected ? { requestedUrl: url } : {}) },
+          metadata: { extraction: html ? 'html-source-text' : 'direct-text', contentScope: bodyAvailable ? 'server-returned-text' : 'page-shell', bodyAvailable, renderedScripts: false, encoding: decoded.encoding, ...pageMetadata, ...(page.redirected ? { requestedUrl: url } : {}) },
         });
       };
       if (textResource || parsed.hostname.startsWith('api.') || /(?:^|\/)api(?:\/|$)/i.test(parsed.pathname) || ['format', 'output', 'f'].some(key => parsed.searchParams.get(key) === 'json')) return raw();

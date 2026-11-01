@@ -23,6 +23,11 @@
   "twitch": {}, "discord": {}, "instagram": {}, "bing": {}, "sites": {},
   "wayback": {}, "archive": {},
   "linuxdo": {}, "heybox": {},
+  "google-news": { "languageCode": "zh-CN", "country": "CN", "edition": "CN:zh-Hans" },
+  "iptv": { "baseUrl": "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8" },
+  "ghgrab": { "command": "ghgrab", "args": ["mcp"], "enabled": false },
+  "scrapling": { "command": "scrapling-mcp", "args": [], "enabled": false },
+  "metadata-parser": { "command": "python", "args": ["/absolute/path/to/sera-search/bridges/metadata_parser.py"], "enabled": false },
   "agentReach": { "command": "agent-reach", "args": [], "enabled": false },
   "opencli": { "command": "opencli", "args": [], "enabled": false }
 }

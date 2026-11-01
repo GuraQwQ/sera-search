@@ -7,7 +7,10 @@ export const webSearchOrder: SourceName[] = ['exa', 'tavily', 'brave', 'zhipu', 
 
 export function specificSource(value: string, config: Config): SourceName | undefined {
   if (steamTarget(value)) return 'steam';
-  const host = new URL(value).hostname.replace(/^www\./, '');
+  const url = new URL(value), host = url.hostname.replace(/^www\./, '');
+  if (host === 'raw.githubusercontent.com' && /^\/Free-TV\/IPTV\//i.test(url.pathname) || config.iptv?.baseUrl && value.split('?')[0] === config.iptv.baseUrl.split('?')[0]) return 'iptv';
+  if (host === 'news.google.com') return 'google-news';
+  if (['gitlab.com', 'codeberg.org', 'gitea.com', 'git.disroot.org'].includes(host)) return 'ghgrab';
   if (host === 'github.com' || host === 'raw.githubusercontent.com') return 'github';
   if (/(^|\.)bilibili\.com$/.test(host) || host === 'b23.tv') return 'bilibili';
   if (/(^|\.)v2ex\.com$/.test(host)) return 'v2ex';
@@ -50,9 +53,11 @@ export function preferredSources(intent: Intent, query = ''): SourceName[] {
   if (intent === 'game') return ['wiki', 'steam', ...webSearchOrder];
   if (intent === 'galgame') return ['vndb', 'bangumi', 'steam', 'sites', ...webSearchOrder];
   if (intent === 'academic') return ['crossref', 'openalex', 'pubmed'];
-  if (intent === 'code') return ['github', ...webSearchOrder];
+  if (intent === 'code') return ['github', 'ghgrab', ...webSearchOrder];
   if (intent === 'feedback') return ['linuxdo', 'heybox', 'agent-reach', 'opencli', ...webSearchOrder];
   if (intent === 'images') return ['brave', 'serpapi', 'baidu-images', 'sogou-images', 'trace-moe', 'saucenao'];
+  if (/\biptv\b|电视频道|直播频道/i.test(query)) return ['iptv', ...webSearchOrder];
+  if (/新闻|快讯|\bnews\b/i.test(query)) return ['google-news', ...webSearchOrder];
   if (/steam/i.test(query)) return ['steam', ...webSearchOrder];
   if (/niconico|nicovideo|ニコニコ/i.test(query)) return ['nicovideo', ...webSearchOrder];
   return [...webSearchOrder, 'github', 'wiki'];

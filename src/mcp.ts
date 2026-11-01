@@ -8,11 +8,14 @@ import { login, logout, authStatus } from './auth.js';
 import { credentialsSchema, notLoggedIn } from './credentials.js';
 import { sourceNames, platformIdPattern, catalogGroups } from './types.js';
 import type { Config, CatalogGroup } from './types.js';
+import { BackendPool, backendSchema } from './backends.js';
 
 export async function startMcp(config: Config) {
   const version = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
   const server = new McpServer({ name: 'sera-search', version });
-  const fresh = async (group?: CatalogGroup) => new Engine(await loadConfig({ home: config.home, file: config.configFile, group: group ?? config.group, catalog: group && group !== config.group ? undefined : config.catalogFile }));
+  const backends = new BackendPool();
+  server.server.onclose = () => { void backends.close(); };
+  const fresh = async (group?: CatalogGroup) => new Engine(await loadConfig({ home: config.home, file: config.configFile, group: group ?? config.group, catalog: group && group !== config.group ? undefined : config.catalogFile }), undefined, backends);
   const group = z.enum(catalogGroups).optional();
   const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
   const result = async (run: () => Promise<unknown> | unknown) => {
@@ -26,6 +29,10 @@ export async function startMcp(config: Config) {
   };
   server.registerTool('sera_capabilities', { description: '首次查询按 sources 只查看当前任务相关来源、动作与登录状态。未登录渠道不可用，实际网络与配额调用时检查；group 按需选领域目录。', inputSchema: z.object({ sources: z.array(z.enum(sourceNames)).min(1).optional(), group }), annotations }, input => result(async () => (await fresh(input.group)).capabilities(input.sources)));
   server.registerTool('sera_channels', { description: '按来源、平台和 group 发现可匹配渠道及状态；发现成功不代表已读取帖子或评论。', inputSchema: z.object({ sources: z.array(z.enum(sourceNames)).min(1).optional(), platform: z.string().optional(), group }), annotations }, (input, context) => result(async () => (await fresh(input.group)).channels({ ...input, signal: context.mcpReq.signal })));
+  server.registerTool('sera_backend', { description: '先只传 source 发现 ghgrab / Scrapling 的原生工具和 schema，再用 tool 与 arguments 调用。支持仓库操作、浏览器会话、交互、网络和截图；保留原生结果，截图不生成正文证据。浏览器 session 在当前 MCP 连接内复用。', inputSchema: backendSchema }, async (input, context) => {
+    try { return await backends.run((await fresh()).config, input, context.mcpReq.signal); }
+    catch (error) { return { content: [{ type: 'text' as const, text: errorMessage(error, config) }], isError: true }; }
+  });
   server.registerTool('sera_search', { description: '检索候选与摘要。默认按 intent 选路，空或无关结果换源；显式 sources 并行聚合。aliases 补充实体别名，已知 URL/ID 可直接 research 或 read。', inputSchema: searchSchema.extend({ group }), annotations }, (input, context) => result(async () => (await fresh(input.group)).search({ ...input, signal: context.mcpReq.signal })));
   server.registerTool('sera_comments', { description: '读取歌曲、视频或授权媒体评论。返回评论ID、父子关系、下一页游标及范围，不将首批结果解释成完整评论区。', inputSchema: commentsSchema, annotations }, (input, context) => result(async () => (await fresh()).comments({ ...input, signal: context.mcpReq.signal })));
   server.registerTool('sera_images', { description: '关键词图片检索或反向识图，使用 query 或 imageUrl；保留图片、来源页和匹配类型，按来源判断能力。', inputSchema: imagesSchema, annotations }, (input, context) => result(async () => (await fresh()).images({ ...input, signal: context.mcpReq.signal })));

@@ -8,7 +8,9 @@
 |---|---|---|
 | 普通网页、事实和产品资料 | 公开 Bing RSS，或已登记 Exa／Tavily／Brave；中文资料可选智谱／豆包 | 搜索摘要与实际正文；资料版本和发布时间 |
 | Google／Bing 结果 | SerpAPI／DataForSEO，指定实际引擎 | 两个 API 入口可能共享上游索引和原始文章 |
-| 代码、仓库、issue／PR | GitHub | 仓库、文件、commit 和讨论间的关系 |
+| 代码、仓库、issue／PR | GitHub；已安装时可选 `ghgrab` | 仓库、文件、commit 和讨论间的关系；ghgrab 搜索使用 GitHub，树与文件按已知 forge 支持范围读取 |
+| 新闻发现与频道目录 | `google-news`／`iptv` | RSS 聚合记录与发布者正文、频道记录与实际播放分别核对 |
+| 已知网页的浏览器提取／声明字段 | `scrapling`／`metadata-parser` | 实际工具与返回内容；页面声明保留来源并继续核验 |
 | 中文帖子、答案和评论 | 指定平台的 Agent Reach／OpenCLI | 是否取得完整对象，评论与正文分别记录 |
 | 视频内容 | 平台读取或字幕路径 | 标题、元数据、字幕、转录分别核对 |
 | V2EX 帖子／节点 | V2EX 公开读取 | 浏览／读取接口与关键词检索的区别 |
@@ -42,6 +44,8 @@ Reddit、Twitch、Discord、Instagram、评论、图片及作品资料的当前�
 - 独立动作：评论按 `comments` 逐页获取；关键词图片和反向识图按各来源的 `images` 能力调用。B站评论、Brave 图片、SerpAPI 图片附在原来源上。
 - 站点目录：`sites` 按所选平台域名发现公开页面，使用已登记网页后端或公开 Bing RSS；游戏 Wiki 与 Galgame 社区目录分别按需加载。
 - 档案与论坛：`wayback` 查最近快照／CDX 捕获索引，`archive` 查馆藏；`linuxdo` 与 `heybox` 读取原生主题、帖子和评论。
+- 扩展后端：`ghgrab`、`scrapling` 的统一来源用于仓库与网页取证，`backend`／`sera_backend` 发现完整上游工具和输入 Schema；Scrapling 内存会话在同一 MCP 连接保持，跨进程恢复用上游 save／load。
+- RSS 与目录：`google-news` 提供新闻条目和聚合记录，`iptv` 提供 Free-TV 频道与流地址线索；`metadata-parser` 提供现成 HTML 的声明分组，也可增强 `web` 原始 HTML 读取。内容边界、安装与兼容范围见[扩展来源与后端](../../../docs/integrations.md)。
 
 2026-10-31 的本机渠道发现快照匹配到 86 个 OpenCLI 搜索入口，其中 29 个不需要浏览器，57 个需要浏览器。Google 的 `keyword` 参数已被识别。快照表示签名匹配；运行状态和质量通过实际请求确认，后续以 `sera channels` 为准。
 
@@ -118,4 +122,4 @@ Exa 的查询适合描述想找到的材料；Brave 等关键词检索可使用�
 
 新增 API 应返回同一套命中和原文契约，保留提供者、原始发布者、内容类型和失败原因。中文平台的账号开放 API、发布 API 与全站搜索授权范围不同，接入前核对实际可读数据。
 
-SERA HTTP 请求支持环境代理与 `NO_PROXY`；Node.js 22.17 下的代理调用已取得英文 Wikipedia、Wayback 与馆藏查询响应。观察日期：2026-11-01，当前注册 44 个来源。公开网页、学术、作品数据库、部分游戏 Wiki、B站评论、小黑盒原生帖／评论等取得有界结果；付费 Key、社交授权和完整覆盖未逐一验证。Europe PMC／SEC 保留为扩展候选。
+SERA HTTP 请求支持环境代理与 `NO_PROXY`；Node.js 22.17 下的代理调用已取得英文 Wikipedia、Wayback 与馆藏查询响应。观察日期：2026-11-01，当前注册 49 个来源。公开网页、学术、作品数据库、部分游戏 Wiki、B站评论、小黑盒原生帖／评论等取得有界结果；付费 Key、社交授权和完整覆盖未逐一验证。Europe PMC／SEC 保留为扩展候选。
