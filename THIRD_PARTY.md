@@ -2,7 +2,9 @@
 
 SERA 自身代码采用 [MIT 许可证](LICENSE)。外部组件、服务与来源材料保留各自的许可和使用条款。可选组件由 `install --components` 下载到用户选定的数据目录；接入方式与兼容责任见[扩展来源与后端](docs/integrations.md)。
 
-以下归属根据 2026-11-01 的上游仓库和许可文件核对。
+初始组件于 2026-11-01 核对上游仓库和许可文件；账号与地理扩展于 2026-11-06 核对。
+
+Windows 完整 ZIP 的 Python 扩展与 npm 生产依赖保留各自包内许可，实际版本及归属见随包 `DEPENDENCIES.json`；运行环境由本机程序提供。
 
 | 项目 | 作者／维护者与上游 | 许可 | SERA 中的用途 |
 |---|---|---|---|
@@ -11,6 +13,11 @@ SERA 自身代码采用 [MIT 许可证](LICENSE)。外部组件、服务与来�
 | metadata_parser | Jonathan Vanasco 与贡献者；[jvanasco/metadata_parser](https://github.com/jvanasco/metadata_parser) | [MIT](https://github.com/jvanasco/metadata_parser/blob/main/LICENSE.txt) | 可选 Python 依赖，解析已取得 HTML 的声明元数据 |
 | Free-TV IPTV | [Free-TV/IPTV](https://github.com/Free-TV/IPTV) 的维护者和目录贡献者 | 核对时仓库未提供独立 LICENSE | 运行时读取公开 M3U 频道目录，SERA 自行解析目录字段 |
 | Google News Scraper 参考项目 | [Oxylabs](https://github.com/oxylabs/google-news-scraper) | 核对时仓库未提供独立 LICENSE | 功能参考；SERA 独立实现公开 Google News RSS 查询和解析 |
+| Aliens_eye | Aaron Thomas 与贡献者；[arxhr007/Aliens_eye](https://github.com/arxhr007/Aliens_eye) | MIT，随可选 Python 包保留 | 按站点发现账号、读取报告、资料关联及头像 dHash；SERA 提供分步 MCP 桥接 |
+| Sherlock | Sherlock Project 贡献者；[sherlock-project/sherlock](https://github.com/sherlock-project/sherlock) | MIT，随可选 Python 包保留 | 站点规则、误报排除表和账号检测；桥接保留原状态 |
+| God's Eye View | Bilawal Sidhu、Sameh Khamis 与贡献者；[bilawalsidhu/gods-eye-view](https://github.com/bilawalsidhu/gods-eye-view) | 源码 MIT，数据各自归属 | 独立地理扩展吸收 portable 查询、数据源和 provider 模块；[提交与改动清单](extensions/gods-eye-view/README.md)及扩展内 LICENSE 记录实际边界 |
+
+God's Eye View 的数据许可按扩展清单及各数据源保留；上游源码授权与运行时数据授权分别适用。
 
 Google News RSS 内容与聚合链接归对应服务及原始发布者；RSS 记录和发布者文章按各自条款使用。IPTV 的频道标识、logo、EPG、流链接和视听内容归相应发布者或权利人，目录收录与实际播放条件分别确认。上述两个仓库的许可状态不扩展为 SERA 的 MIT 授权。
 

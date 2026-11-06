@@ -1,0 +1,986 @@
+{
+  "repository": "https://github.com/bilawalsidhu/gods-eye-view",
+  "commit": "39d47a99ab791bf16ada4ce9778d32cc31e3d549",
+  "files": [
+    {
+      "path": "LICENSE",
+      "upstreamSha256": "b231bb38e2d4eab741643126087cbe9df2b58e2f2e5abf27ad613d05f52b01ca",
+      "modified": false
+    },
+    {
+      "path": "scripts/google-server-key.mjs",
+      "upstreamSha256": "1b0e29cde04c6134f243f9049c2e83a9ebd78203122c50dfc6bdabf0b5f4b416",
+      "modified": false
+    },
+    {
+      "path": "server/providers/aircraft/adsb-lol.js",
+      "upstreamSha256": "d56b8f4fbc24ba4a065e9cd4e496c23a6ed4a6dcfcebef853ce8572b9ee3fe10",
+      "modified": false
+    },
+    {
+      "path": "server/providers/aircraft/enrichment.js",
+      "upstreamSha256": "af514fe145efdd9756e3b0f76554375bc50e96ef179b350e227aa422f96578c4",
+      "modified": false
+    },
+    {
+      "path": "server/providers/aircraft/opensky.js",
+      "upstreamSha256": "00dc601199a746dd4e44ffddd00409fa485a00e8e47690935e37dad801416a51",
+      "modified": false
+    },
+    {
+      "path": "server/providers/aircraft/tracks.js",
+      "upstreamSha256": "315633822d9446cbce9e88433c454e5152b6844c14a757f29d8808ee52449a44",
+      "modified": false
+    },
+    {
+      "path": "server/providers/cctv/constants.js",
+      "upstreamSha256": "7d80af5a9404cf18aae4573f9ce2da98cd196049555a6cc5471ec427a18a274a",
+      "modified": false
+    },
+    {
+      "path": "server/providers/cctv/media.js",
+      "upstreamSha256": "9967013b4dd1cbdc835e14cc5db3514175e100869b4de137e52e2539c25e5f43",
+      "modified": false
+    },
+    {
+      "path": "server/providers/cctv/normalize.js",
+      "upstreamSha256": "c922179c8ab0e0863d236824ad6cb646be0ea2c0d64611071b7d1bc87089d7dd",
+      "modified": false
+    },
+    {
+      "path": "server/providers/cctv/sources.js",
+      "upstreamSha256": "6a66acf0fe4799a2a3d54b9682c5e68b39aff5058aa510def507346b2086eec4",
+      "modified": false
+    },
+    {
+      "path": "server/providers/common/boundedCache.js",
+      "upstreamSha256": "00c91216f2e35bd61f7e64494e29ad26c62c945a6c924011f732b37b2f09aba0",
+      "modified": false
+    },
+    {
+      "path": "server/providers/common/geo.js",
+      "upstreamSha256": "d21127a921b4228e8964acbaed264003761d67868581856c6838ac5d777f92a7",
+      "modified": false
+    },
+    {
+      "path": "server/providers/common/http.js",
+      "upstreamSha256": "3aa8351de12b0e3c915957a7f4e9b5f932ef2f9c5ee93e74b070013c25420f5e",
+      "modified": false
+    },
+    {
+      "path": "server/providers/common/query.js",
+      "upstreamSha256": "da5cbb8b4f7f3e67850dd4e7ae13cbe6aa96f7c7ea120a683f5cade06b1ddd98",
+      "modified": false
+    },
+    {
+      "path": "server/providers/common/rate-limit.js",
+      "upstreamSha256": "2d193855df5545e6a221810820437063c8d0005429a360c9c270572e02958cf6",
+      "modified": false
+    },
+    {
+      "path": "server/providers/common/request.js",
+      "upstreamSha256": "4979751dffdb8c383abe6c129a0df562d52fcf07c8ffb26ee034047dcfd2b7e3",
+      "modified": false
+    },
+    {
+      "path": "server/providers/common/same-site.js",
+      "upstreamSha256": "87450c5263bfd73ab08f1c2735452576ac0cc10d1288ed39e1c2254d3b5280bd",
+      "modified": false
+    },
+    {
+      "path": "server/providers/common/source-root.js",
+      "upstreamSha256": "e8a4d42a945e14989432bc09100f7618492aae10f92a4d375962e0b7949c0395",
+      "modified": false
+    },
+    {
+      "path": "server/providers/cyclones.js",
+      "upstreamSha256": "fd118214b4b5d50d355f1b90c8d2a244194c26825a2ccee574273339fc25a89d",
+      "modified": false
+    },
+    {
+      "path": "server/providers/firePerimeters.js",
+      "upstreamSha256": "f168230ae27ff2500e77ea146a1194806713b1134a4ea132929eb4a61b9200e8",
+      "modified": false
+    },
+    {
+      "path": "server/providers/firms.js",
+      "upstreamSha256": "99200563ea6c4747cc8522d53f01b2c931d90f1851e6b6d130027e6377e8609a",
+      "modified": false
+    },
+    {
+      "path": "server/providers/gbfs.js",
+      "upstreamSha256": "4419de8819d09f993a6008ed672a670b8c52a330059c3aa10dd56e31ef9dd9fd",
+      "modified": false
+    },
+    {
+      "path": "server/providers/military-installations.js",
+      "upstreamSha256": "462f987c00b730590ac0b6fcf511fb38cba13d6d3ecfa5521bc7bc4e8926911d",
+      "modified": false
+    },
+    {
+      "path": "server/providers/military-installations/cache.js",
+      "upstreamSha256": "934822d1e70f9524f052d91ddf259454182f023d268cb9ed462c0f7ad6e2cc01",
+      "modified": false
+    },
+    {
+      "path": "server/providers/military-installations/constants.js",
+      "upstreamSha256": "8022c5e9dfce5f5ca70ae6b49cfa99fc6b71f802dcc23c115bb359f8f463c4f6",
+      "modified": false
+    },
+    {
+      "path": "server/providers/military-installations/query.js",
+      "upstreamSha256": "04717b72a951f3950f0fdac537c69fc3b461c9013a64d6728007bb8972b6610a",
+      "modified": false
+    },
+    {
+      "path": "server/providers/overpass.js",
+      "upstreamSha256": "f3b72586a7848c506db00ed97a0f3e4eb808ce3946018fb7fa8716ffd6077c83",
+      "modified": false
+    },
+    {
+      "path": "server/providers/overpass/cache.js",
+      "upstreamSha256": "e9525f180d067c3dbfcaa4d2e30b69133296a2b2ee3a75360fa84d1837a40ff8",
+      "modified": false
+    },
+    {
+      "path": "server/providers/overpass/constants.js",
+      "upstreamSha256": "b38f7a65d90fa68db76105bdc60252f151db93a38254ed869d760d4a9bb79bb1",
+      "modified": false
+    },
+    {
+      "path": "server/providers/overpass/geometry.js",
+      "upstreamSha256": "44ebf4669870921c0ff5dccf060572aaf41db87ab7487eaeeb4f1c779cd6f10e",
+      "modified": false
+    },
+    {
+      "path": "server/providers/overpass/osmFeatures.js",
+      "upstreamSha256": "c8f565c31151bf2f4c6133e960a0d223d27d84dd34e9246f2bfdfaf51626146a",
+      "modified": false
+    },
+    {
+      "path": "server/providers/overpass/osmFeaturesRoute.js",
+      "upstreamSha256": "074ceb4563deb5de155001c8d0f54c4a56bed314c52ff412f33df4df4b5022af",
+      "modified": false
+    },
+    {
+      "path": "server/providers/overpass/query.js",
+      "upstreamSha256": "d3e78e2c9ee9d9b5433fd5b9ca88d2274b981c68d0cfa1a41f16621b9537eaa7",
+      "modified": false
+    },
+    {
+      "path": "server/providers/overpass/transport.js",
+      "upstreamSha256": "c8f5cc03b85cd1517a4e80d19d63f36be6c7bc95b72188ec7e6f43be627a80f8",
+      "modified": false
+    },
+    {
+      "path": "server/providers/places/google-key.js",
+      "upstreamSha256": "c045a6bf5421d7c792c6819e94e659315f614c209e52d01166903b9e7b5e89dd",
+      "modified": false
+    },
+    {
+      "path": "server/providers/places/google.js",
+      "upstreamSha256": "ef644f3aba20c2a7722d613e382950dc073f8ac0af1e3af5173a7bb438b18ecf",
+      "modified": false
+    },
+    {
+      "path": "server/providers/places/routes.js",
+      "upstreamSha256": "2fa9731cfec9673d8eded785d636478a0af86e578f785c9d87da4634ebd6e87a",
+      "modified": false
+    },
+    {
+      "path": "server/providers/radio.js",
+      "upstreamSha256": "3a285dc70e755bc98229e10b9005ca9dad4649e3d29f8c1f16728804877d12dd",
+      "modified": false
+    },
+    {
+      "path": "server/providers/radio/catalog.js",
+      "upstreamSha256": "2a9e85a4f71b6537eab21640f02bd4417a40d56dcf0666904a9702465bbb0b48",
+      "modified": false
+    },
+    {
+      "path": "server/providers/radio/constants.js",
+      "upstreamSha256": "ec4324529e2c14dcd8f079328244c4aaf3717e0ed700ad045e1535ac9993fd9f",
+      "modified": false
+    },
+    {
+      "path": "server/providers/radio/stations.js",
+      "upstreamSha256": "4f3b4b6e9a553034e9e6885a5fce6a5e169682ce7b13548d01ba0d5812947762",
+      "modified": false
+    },
+    {
+      "path": "server/providers/radio/transport.js",
+      "upstreamSha256": "96fd5299ac494a590c996f4b8f4af0c73b9f82c02abc19129e2ef9c8ab55bf83",
+      "modified": false
+    },
+    {
+      "path": "server/providers/regional/briefing.js",
+      "upstreamSha256": "c38bd39e05e5ad5ef7c71e6ef44ab2a8169d39f52e959c003516b8314bda16e0",
+      "modified": false
+    },
+    {
+      "path": "server/providers/regional/http.js",
+      "upstreamSha256": "1cbe6b3daeb9f462f982644cedf1d13bce1ce99161fa26d9f5294fdd7834d38d",
+      "modified": false
+    },
+    {
+      "path": "server/providers/regional/news.js",
+      "upstreamSha256": "e187fea054fdfd1cc4f26430114cd705c3e064e396decc7a2ac332249e935f0c",
+      "modified": false
+    },
+    {
+      "path": "server/providers/regional/nominatimCache.js",
+      "upstreamSha256": "7f2c7df20dadb164fce8d5a0022589996adcb68805c91bc797e580b14b90c02b",
+      "modified": false
+    },
+    {
+      "path": "server/providers/regional/nominatimGate.js",
+      "upstreamSha256": "af4cb413a2b18ee678067626d8033917e40bffa2d47826703df7b3c5181f0b6c",
+      "modified": false
+    },
+    {
+      "path": "server/providers/regional/outlineSelect.js",
+      "upstreamSha256": "fff2fb10bc058a3b36bafe0c9a930300799531ed13136f9d1ea110db6ab41dc6",
+      "modified": false
+    },
+    {
+      "path": "server/providers/regional/place.js",
+      "upstreamSha256": "787ee8f458770b5e14a9261892f135e9be3a225ab786dfb9d39682382d1b2c2d",
+      "modified": false
+    },
+    {
+      "path": "server/providers/regional/query.js",
+      "upstreamSha256": "79df10ac21be54def2915ae81fbeb44d27f7a04c995256a6dd504eac0d73e854",
+      "modified": false
+    },
+    {
+      "path": "server/providers/regional/weather-effects.js",
+      "upstreamSha256": "90602284b662f3dd84ce2e12494c83f72f01c458752c03924524abf790e7cb83",
+      "modified": false
+    },
+    {
+      "path": "server/providers/regional/weather.js",
+      "upstreamSha256": "c84410b3331fbbeda6deb41fa6f3d4491db8bf18133dab40dcc62ee23ae89bf9",
+      "modified": false
+    },
+    {
+      "path": "server/providers/space/celestrak.js",
+      "upstreamSha256": "4df2fe3340869425a507434bff305935902d8b9d10447e2a57a182b58a91f412",
+      "modified": false
+    },
+    {
+      "path": "server/providers/space/cooldown.js",
+      "upstreamSha256": "93b11673c32467ce97833deb374f550981b10524063f2dc2ffcbc41d4f753869",
+      "modified": false
+    },
+    {
+      "path": "server/providers/space/launch-library.js",
+      "upstreamSha256": "eabbd49534493934d78e7dd8574f36e099c63962080c9abd81f4f02f773b5bd6",
+      "modified": false
+    },
+    {
+      "path": "server/providers/terrain.js",
+      "upstreamSha256": "ad8465e5f801f5efe7eac59e84216be16fe5e336faac88841cf39dc7c031da89",
+      "modified": false
+    },
+    {
+      "path": "server/providers/traffic.js",
+      "upstreamSha256": "208f57f7a71633d21066f529bc26d7fd477cb7a31ee14d7d4a6426793f0ea302",
+      "modified": false
+    },
+    {
+      "path": "server/providers/transit.js",
+      "upstreamSha256": "0eeb4fbfaf45b2844b93da619d068dab011c30ea61d16223c08c9e20b8c3a169",
+      "modified": false
+    },
+    {
+      "path": "server/providers/vessels/ais-store.js",
+      "upstreamSha256": "1130234d2c0d3bdd5bd8e369ccec9ff88c68e995442b283e9a4e0856b79adeca",
+      "modified": false
+    },
+    {
+      "path": "server/providers/weather.js",
+      "upstreamSha256": "315d150f75f487143de54e982dd0f0e4ca403f2a37e45d6de8f6c80042d62743",
+      "modified": false
+    },
+    {
+      "path": "server/providers/wind.js",
+      "upstreamSha256": "09214a91f1d916af92581ec6e2d21aeedc5d8b713f87a1560e57ed981ab802ec",
+      "modified": false
+    },
+    {
+      "path": "server/providers/wind/catalog.js",
+      "upstreamSha256": "ded81308c915d623b18b2df49d9578ee3a9b3feca7af11ed70d30924830bc52b",
+      "modified": false
+    },
+    {
+      "path": "server/providers/wind/decode.js",
+      "upstreamSha256": "618a7af7838d7386df51ec8702529aad44f09ae87493b05ffdab30f151b7b582",
+      "modified": false
+    },
+    {
+      "path": "server/providers/wind/gfs.js",
+      "upstreamSha256": "18690d9a0d5e372184e6f92b1d9e51c2037744b15a83a0ebce0a4c3b6fb7e80f",
+      "modified": false
+    },
+    {
+      "path": "server/providers/wind/grid.js",
+      "upstreamSha256": "d2bc7718525f3f12bc87253a3d23e1662c5a29326ca8110a175e80a0fa8c7a61",
+      "modified": false
+    },
+    {
+      "path": "server/providers/wind/ifs.js",
+      "upstreamSha256": "fa0c5bbfff5a530bcca0bb22b13818d8f5d6b3f0fc689d63389861b0e238d768",
+      "modified": false
+    },
+    {
+      "path": "src/data/adminBoundaries.js",
+      "upstreamSha256": "8496eba58df9ac53ca6daf00debfdd6ab694d9def0e0fc31f58d8da0561ffc8b",
+      "modified": false
+    },
+    {
+      "path": "src/data/adsbLolFallback.js",
+      "upstreamSha256": "ac35623a3dfb0f9a66d39aaf89fa8e33b5bed3111e7fb2e3834809d468959f9b",
+      "modified": false
+    },
+    {
+      "path": "src/data/aircraftEmergency.js",
+      "upstreamSha256": "34b4116da2120b375df2eab22de5f3319b9c5d6f69716449b7bf8899c7c9e35b",
+      "modified": false
+    },
+    {
+      "path": "src/data/aisStreamAdapter.js",
+      "upstreamSha256": "73bbb8b88eb556ce7465f4f2246885f8eb0458c4617d3b41bf772c2e50b90997",
+      "modified": false
+    },
+    {
+      "path": "src/data/aisWatchdog.js",
+      "upstreamSha256": "61f46338d2804fd7deac69ef5d1aba04bdd827b6c6b9241a6d3c9efb156776e4",
+      "modified": false
+    },
+    {
+      "path": "src/data/bundledJson.js",
+      "upstreamSha256": "db6fc76e7e768ba48aa3944edc1b5bb45cdb8525bd6dde46064fc100ff2315c7",
+      "modified": false
+    },
+    {
+      "path": "src/data/contactPlayback.js",
+      "upstreamSha256": "7b756ec02fd07622a6c8e106a214713ef14a747dd3c87d0d195fbe2d223d5618",
+      "modified": false
+    },
+    {
+      "path": "src/data/directionText.js",
+      "upstreamSha256": "f3ea716def24660362da917ce0ca81ed63357694da153975a75a3f2f952ec64b",
+      "modified": false
+    },
+    {
+      "path": "src/data/distanceFormat.js",
+      "upstreamSha256": "0f57dda838bb1402f4b3ae225b48b38235ff734c5adef1eb1ab9774dde066074",
+      "modified": false
+    },
+    {
+      "path": "src/data/feedState.js",
+      "upstreamSha256": "5bfe81076c446b9b4910bb3620f291ad03bb2eaf13199265afedd546acf9d0d6",
+      "modified": false
+    },
+    {
+      "path": "src/data/firmsAdapt.js",
+      "upstreamSha256": "91027f43a9a9578df27f35c100734cab96bf091e869f85aa4b2b8fa5a5b9a38e",
+      "modified": false
+    },
+    {
+      "path": "src/data/firmsCsv.js",
+      "upstreamSha256": "0b632d72f2b9d970eb42775aeb612bd222ec116b7278c3e4b324f17c5995312f",
+      "modified": false
+    },
+    {
+      "path": "src/data/firmsIntensity.js",
+      "upstreamSha256": "541681ca5443af20511fefd2e1cddd8ff406313bf902e6d5750a5b79b8387516",
+      "modified": false
+    },
+    {
+      "path": "src/data/flowMatch.js",
+      "upstreamSha256": "60bc6f10f7fd3864c9fdbed36b8f15e724cbeaeef785fa5c7eb21959f2e9fceb",
+      "modified": false
+    },
+    {
+      "path": "src/data/gbfsSource.js",
+      "upstreamSha256": "71eb4b0122e4c4802234285762e67e1d5e16169b6857462c018e4767f6bdb233",
+      "modified": false
+    },
+    {
+      "path": "src/data/gtfsRealtime.js",
+      "upstreamSha256": "e6ee987a159cf59d52ef0243b9156dd1229c24e62e486c303c16734c7fd955fd",
+      "modified": false
+    },
+    {
+      "path": "src/data/headingDegrees.js",
+      "upstreamSha256": "4de51c5ecf69e795468ee0d315ebaf4c161e5c0aeb7903187c708e19d0b11015",
+      "modified": false
+    },
+    {
+      "path": "src/data/installationFeedback.js",
+      "upstreamSha256": "63b19aeb6c7c8af6a57ff9cf15b442d411f2d2176ef5435cc0004a6c99c56052",
+      "modified": false
+    },
+    {
+      "path": "src/data/installationNames.js",
+      "upstreamSha256": "b6e6abd9b126274a88f2c3479d59e5d661f550135eabdff8ca147283d163890d",
+      "modified": false
+    },
+    {
+      "path": "src/data/layerSnapshot.js",
+      "upstreamSha256": "b88266d9dc3ef67c0340fe5802133d72356c1b6e5714ea05b7aa9cde680473f2",
+      "modified": false
+    },
+    {
+      "path": "src/data/local_data/dams/README.md",
+      "upstreamSha256": "401ae884bf8dcbc87e4a3c7d1f3789ae172d19999fe1745304a831c8f6009b15",
+      "modified": false
+    },
+    {
+      "path": "src/data/local_data/dams/dams.geojsonl",
+      "upstreamSha256": "f2b6f3166bee6dba4f0b569553a14c84faeb0048eb522bacd4d9c78e93d30d30",
+      "modified": false
+    },
+    {
+      "path": "src/data/local_data/datacenters/README.md",
+      "upstreamSha256": "c469d88576699fefff1dac9ed1c76d941291162162f30d6d96092ef9647a200d",
+      "modified": false
+    },
+    {
+      "path": "src/data/local_data/datacenters/datacenters.geojsonl",
+      "upstreamSha256": "89f60dabba00d83f590ea0e967677bb9af692b41f5a452358725e746419eb8c5",
+      "modified": false
+    },
+    {
+      "path": "src/data/militaryInstallationData.js",
+      "upstreamSha256": "a89d115107e6e30c63d3886488fb1567352889e4adb14146cbdd4671129beb6b",
+      "modified": false
+    },
+    {
+      "path": "src/data/militaryNames.js",
+      "upstreamSha256": "d1ea01f00afc1a3f50a4e95f99bf9d508e076e6159e0c708b6a9c75040164949",
+      "modified": false
+    },
+    {
+      "path": "src/data/naturalEarthRegions.js",
+      "upstreamSha256": "25714bbe29cfc9de0f35af24ee9c70ccd0ec4f8143ca0832ef807c6cd6e8955c",
+      "modified": false
+    },
+    {
+      "path": "src/data/osmPresets.js",
+      "upstreamSha256": "1e0f416cabef7f7c35657d4b98503e17bd401b12f8c9df18b5366645be3018fb",
+      "modified": false
+    },
+    {
+      "path": "src/data/placeNames.js",
+      "upstreamSha256": "7dc9fe0b84dc2f59548f8c548420562a825a3640dae590ad5be4057b47345410",
+      "modified": false
+    },
+    {
+      "path": "src/data/placeProviderPayloads.js",
+      "upstreamSha256": "99f1644707dd61f36894d9978a71dec97e020bcc912b366885ba8200367d5b72",
+      "modified": false
+    },
+    {
+      "path": "src/data/radioCountry.js",
+      "upstreamSha256": "97aa812cac30739c0b1761a929f22b34e99cd598e672ced9ad564b3f410af0a8",
+      "modified": false
+    },
+    {
+      "path": "src/data/regionalModel.js",
+      "upstreamSha256": "12352ab67d20b8cdc32e873dea614eb3a649ae71c8c7377ed2c3da5e301ab2e2",
+      "modified": false
+    },
+    {
+      "path": "src/data/retryableLoad.js",
+      "upstreamSha256": "a0f9a3d4bb65d76baf2d13ab62b00518bff2f0f84fc4474837cc27e3bd79ae34",
+      "modified": false
+    },
+    {
+      "path": "src/data/rioRouteNames.js",
+      "upstreamSha256": "95a6c8580969ca3a9668d6571611509149fe268d6b59e8e2dc9a0de6cb9baae9",
+      "modified": false
+    },
+    {
+      "path": "src/data/routeSteps.js",
+      "upstreamSha256": "173b333e2401489a086784e63fbe1547aaf6b546db22e30695edf5790769ab19",
+      "modified": false
+    },
+    {
+      "path": "src/data/satellitePass.js",
+      "upstreamSha256": "d23c5820941c07884e448742675200ec383febd9eba4eb01fe0ea0819cab1720",
+      "modified": false
+    },
+    {
+      "path": "src/data/spaceProviderRequests.js",
+      "upstreamSha256": "de7fd135cba16e3499449adf2f84e27a2c86c245fdabed7a6505e05f9a621031",
+      "modified": false
+    },
+    {
+      "path": "src/data/terrainHeightsProxy.js",
+      "upstreamSha256": "f417453d1ceb4ee8612116d84c2fcd612db2cc7b24b2579ec19023e0da689b4b",
+      "modified": false
+    },
+    {
+      "path": "src/data/tomtomTiles.js",
+      "upstreamSha256": "f84d67222c74bda7a2b7f14e1b5de1622ccd8c932b08c34a561afb4876452f03",
+      "modified": false
+    },
+    {
+      "path": "src/data/transitFeeds.js",
+      "upstreamSha256": "380f071c42a88e1f4cdc434ab4995c508108ce72b06739fb007d3865a5f3c98e",
+      "modified": false
+    },
+    {
+      "path": "src/data/transitProxy.js",
+      "upstreamSha256": "e63f57feea021bb0dfa4f0c2d8c4f93801cab12ca1ad4d0283b5538220fd0245",
+      "modified": false
+    },
+    {
+      "path": "src/data/vesselTypes.js",
+      "upstreamSha256": "6d643e6242d4f074140505680e82f32b2e6c666ad11506ad8c305ce7d7a186dd",
+      "modified": false
+    },
+    {
+      "path": "src/geoDistance.js",
+      "upstreamSha256": "ce84efc906c32175f0f2ab907ca876f59ffa1f10fc841fc80c30c8737e7e1506",
+      "modified": false
+    },
+    {
+      "path": "src/i18n/marker.js",
+      "upstreamSha256": "8b9c5d7a233d59205e7e74428bf5c8a6bd8e916a45737e44b199c02593199c41",
+      "modified": false
+    },
+    {
+      "path": "src/layers/alpr/policy.js",
+      "upstreamSha256": "26ce61f048b771bac86a0479333e13cf34ce784d5e2d51bc105de372cca78e6e",
+      "modified": false
+    },
+    {
+      "path": "src/layers/alpr/records.js",
+      "upstreamSha256": "4582ea20cc2c66ea4cfbb241638fdaa4941634a9e909b9d630d8b309e8892d85",
+      "modified": false
+    },
+    {
+      "path": "src/layers/alpr/source.js",
+      "upstreamSha256": "ed642c36d47d4f34dea1fc1e63405e5414885f044f57d4cd9badbc76fa055219",
+      "modified": false
+    },
+    {
+      "path": "src/layers/alpr/tileRecords.js",
+      "upstreamSha256": "753c1d68ca6e7afef1b5b4126ef829e8137ad4c2e08858a12b92922a54ab1b18",
+      "modified": false
+    },
+    {
+      "path": "src/layers/bikeshare/registry.js",
+      "upstreamSha256": "0c3c128da6f3bc5d68e4819914c7f26c2608496c2d894c1d012219ff1ca3cff5",
+      "modified": false
+    },
+    {
+      "path": "src/layers/bikeshare/source.js",
+      "upstreamSha256": "1a71c9ef3d70b7b41f111e6140d8d1262d5ff22c2948907891c58bd6a7af6171",
+      "modified": false
+    },
+    {
+      "path": "src/layers/cctv/source.js",
+      "upstreamSha256": "86e27a443081c88dcf5908892283b75543b07600e067e66879944c719cc0aca4",
+      "modified": false
+    },
+    {
+      "path": "src/layers/cctv/sourcePolicy.js",
+      "upstreamSha256": "7c8a7c8bae07cfe7bb2e34cdf8ec13d7b276ea1bfb724bf53425eea9da1b7002",
+      "modified": false
+    },
+    {
+      "path": "src/layers/cyclones/source.js",
+      "upstreamSha256": "b6f507900b35b290875d60a8a15091474efdef7f37472f037bb8385084b9bfb3",
+      "modified": false
+    },
+    {
+      "path": "src/layers/earthquakes/records.js",
+      "upstreamSha256": "a35859b1cef9b6a5353aad1a62335444781ae7cb7191a1c975a05490e338aa56",
+      "modified": false
+    },
+    {
+      "path": "src/layers/earthquakes/source.js",
+      "upstreamSha256": "fd04c42b6d7386bc262054b78611b87bf7c3a3e3c7a7fe815a22e4642080f2d3",
+      "modified": false
+    },
+    {
+      "path": "src/layers/firms/source.js",
+      "upstreamSha256": "5754af5fba35a0c395883fda32961fad2dfb06473708a39c9cb4ac96366f3ce3",
+      "modified": false
+    },
+    {
+      "path": "src/layers/installations/source.js",
+      "upstreamSha256": "4d40904cb738ea0c279f591530a05adab8c52dcbb17b078c6dd1cc6cef3f36ea",
+      "modified": false
+    },
+    {
+      "path": "src/layers/launches/source.js",
+      "upstreamSha256": "110abf21ff19b2e1c228ba8bd29b68c04a636ed42591936b558d14cd46a2876f",
+      "modified": false
+    },
+    {
+      "path": "src/layers/perimeters/records.js",
+      "upstreamSha256": "33f56ea87d68a7dc972f6f0a9bbb1cfeba7cf1c39d98ac7d2ad225683ed72c04",
+      "modified": false
+    },
+    {
+      "path": "src/layers/perimeters/source.js",
+      "upstreamSha256": "2a1c7cb68abaa624aa02e2092ae42483cd25ed2751718b22b50c3e91960d2d0b",
+      "modified": false
+    },
+    {
+      "path": "src/layers/radio/policy.js",
+      "upstreamSha256": "b306bb8e96e3fb5d9b92ee5d1048cd61b2864ba928acbf9c7ba5287cba0cdac7",
+      "modified": false
+    },
+    {
+      "path": "src/layers/radio/source.js",
+      "upstreamSha256": "b25ba1ba91d4e820e5d318095e6f546c0a9bec6550593d6a8c5ecabff449617a",
+      "modified": false
+    },
+    {
+      "path": "src/layers/recentImagery/catalog.js",
+      "upstreamSha256": "295a8170ce692e42ba50cc8cbb4eedc28db650012bfe1b005c69127f9a6239d9",
+      "modified": false
+    },
+    {
+      "path": "src/layers/recentImagery/model.js",
+      "upstreamSha256": "01050be33f7f2fc3013c7678ed261f4a9d7630156173a74096d817f2dc02f1de",
+      "modified": false
+    },
+    {
+      "path": "src/layers/satellites/source.js",
+      "upstreamSha256": "660719077bce7b26ed9da9f2d0d583249a66afe35c6687bb410d4c03a2269712",
+      "modified": false
+    },
+    {
+      "path": "src/layers/traffic/flowDecode.js",
+      "upstreamSha256": "860c4218ff6795e196178ef46f900cdbde020354340bb1c69ca42dc3dfb19d58",
+      "modified": false
+    },
+    {
+      "path": "src/layers/traffic/flowSource.js",
+      "upstreamSha256": "b867a9a3b7aec1b4883b34047b5331dc69a25eee48dc55faa1da87486bed49a0",
+      "modified": false
+    },
+    {
+      "path": "src/layers/traffic/roadModes.js",
+      "upstreamSha256": "d73c2fa1362600538ac9976485486ec87120c5df874b639b9abe4b6ba0fc82fb",
+      "modified": false
+    },
+    {
+      "path": "src/layers/traffic/source.js",
+      "upstreamSha256": "14d6d6512adb5026aa30f4ad1a5c59b40a2bae9ccda01a10d24a3d40bedeb14b",
+      "modified": false
+    },
+    {
+      "path": "src/layers/transit/movement.js",
+      "upstreamSha256": "ed82416e986970bd25fa4a8d5125a61ae9f6151142b3734bcf5909c609709a81",
+      "modified": false
+    },
+    {
+      "path": "src/layers/transit/policy.js",
+      "upstreamSha256": "92bdc4eff0f0ac20296c22fe976d0832f53bb90fba1a1fd603641b3eb2eaca1f",
+      "modified": false
+    },
+    {
+      "path": "src/layers/transit/source.js",
+      "upstreamSha256": "dfdd818d0faf5d80bdf9b06c8dffc2bccf66ef5286672b9a3c9de1307c23e8d4",
+      "modified": false
+    },
+    {
+      "path": "src/layers/weather/source.js",
+      "upstreamSha256": "5ab791dffc8881bf567b7a51c25919780c9261e83e45cc762337ca43a8745596",
+      "modified": false
+    },
+    {
+      "path": "src/layers/wind/fields.js",
+      "upstreamSha256": "9741c70fd587baf8f01483d98c8ef195d22fb3a2c154436afb0ebbf9ca4fd9f4",
+      "modified": false
+    },
+    {
+      "path": "src/layers/wind/inspection.js",
+      "upstreamSha256": "5a07b6e6a14c2f5ba47485fcd36c8e10aad1f7ae839dbc3eb3d2b4589d4c9b67",
+      "modified": false
+    },
+    {
+      "path": "src/layers/wind/model.js",
+      "upstreamSha256": "c298d8a2c852fc5087658c94de33f4cccd44ed558134ab86c27ee34660ac7f60",
+      "modified": false
+    },
+    {
+      "path": "src/layers/wind/source.js",
+      "upstreamSha256": "e4c54f0b2443c8cda0c489cf866e6c7c9541aedba59d880d50b3bd9b72dc3ea8",
+      "modified": false
+    },
+    {
+      "path": "src/loadingFeedback.js",
+      "upstreamSha256": "e7535787defd7575889eeab80cf769ac347b2a5f7c85a25919612da2aafcee2c",
+      "modified": false
+    },
+    {
+      "path": "src/localRequestGate.mjs",
+      "upstreamSha256": "016bf9b3bf7806d132b0cb940cd44a9bbfbfdcf7749e5661c5e2c34b23822194",
+      "modified": false
+    },
+    {
+      "path": "src/nominatimGeocode.js",
+      "upstreamSha256": "6502b03df8ab3937c0fa8c7b095c0d9d44ac103315d77192b4baa0194b12101f",
+      "modified": false
+    },
+    {
+      "path": "src/services/requests.js",
+      "upstreamSha256": "0b969f83613ed474f4d80379f6689cdcc8022a31d9d8abbea3f619fdbda98d57",
+      "modified": false
+    },
+    {
+      "path": "src/sources/adsbFields.js",
+      "upstreamSha256": "6244e94234b0502ab694016a896cbed89ed2c2840b35168555a1079aa48c01c1",
+      "modified": false
+    },
+    {
+      "path": "src/sources/capability.js",
+      "upstreamSha256": "c778bcc4a60ca3a1689de7c3e6c7c8378fc5f7d1a0353fef4b56327153270e62",
+      "modified": false
+    },
+    {
+      "path": "src/sources/cctvTypes.js",
+      "upstreamSha256": "dcc3a9248c664e15c589a981a76fe7f049a1397e03665a2fb495b9c3d3c73719",
+      "modified": false
+    },
+    {
+      "path": "src/sources/featureGeometry.js",
+      "upstreamSha256": "18a6e2650e9869f00a13643acbf18d5e499fdeee546be7d086d75c62fd2bd6c8",
+      "modified": false
+    },
+    {
+      "path": "src/sources/featureSource.js",
+      "upstreamSha256": "c573266530ab2b37fa3f69aa04eb515f075d632e47bd6600ec7ac114ccb17bb9",
+      "modified": false
+    },
+    {
+      "path": "src/sources/gbfsStations.js",
+      "upstreamSha256": "6e074c97c247c25b8ad495432158ffdd6f7444b7c3be765d1b5eef7fc74a159c",
+      "modified": false
+    },
+    {
+      "path": "src/sources/httpBody.js",
+      "upstreamSha256": "e486290915f80a6429419a3189ebbfff02f3d12b9e3406358060c04afa11c48d",
+      "modified": false
+    },
+    {
+      "path": "src/sources/infrastructureData.js",
+      "upstreamSha256": "ba0d873006ec79fbc12e84c98e953a10c5f3847644e3a13ad43baae5062b5974",
+      "modified": false
+    },
+    {
+      "path": "src/sources/live/aircraft.js",
+      "upstreamSha256": "02e3c3b04f4509006336064e7b3f20eab050a5cb8d8ba1435a39993567d5321a",
+      "modified": false
+    },
+    {
+      "path": "src/sources/live/contract.js",
+      "upstreamSha256": "dd4ccb14673dd56f6a5562ab7ff6edc94defb69d0773928bf58f6c95cec58d0d",
+      "modified": false
+    },
+    {
+      "path": "src/sources/live/standalone.js",
+      "upstreamSha256": "8cbb57e020ea8e2820b8b22a7d5313d02d5a5f909e6d4068e05f2445932ce186",
+      "modified": false
+    },
+    {
+      "path": "src/sources/live/vessels.js",
+      "upstreamSha256": "3f14d3f4f7c0f164a798af26b84605e677f2bbdc61c57c4d917b76f28b83a58d",
+      "modified": false
+    },
+    {
+      "path": "src/sources/militaryTileGeometry.js",
+      "upstreamSha256": "d8319cbe97d4ccc6d05bec433dd3bd465e5af504017c5a426c214df5620b4414",
+      "modified": false
+    },
+    {
+      "path": "src/sources/openFreeMap.js",
+      "upstreamSha256": "4b65a26f377518e5b602edcace874e59d68b24c53bdcf58fbbb06e3ffb17eb18",
+      "modified": false
+    },
+    {
+      "path": "src/sources/overpass.js",
+      "upstreamSha256": "36098d3582a2858ee9479f19d1a9ee073173a16aade1a3c0b05376cf7d5d1b0e",
+      "modified": false
+    },
+    {
+      "path": "src/sources/overpassFeatures.js",
+      "upstreamSha256": "1e0b333685cdf3bab5fa9f8c7e09f5b5ca3b4daf5d041772b73779270076d06e",
+      "modified": false
+    },
+    {
+      "path": "src/sources/overpassFeaturesRecords.js",
+      "upstreamSha256": "02c76a9d56f7949f0b788aee02fdaabdab33910f4a92c23f3d2cd5c8bac4e4b9",
+      "modified": false
+    },
+    {
+      "path": "src/sources/overpassRoads.js",
+      "upstreamSha256": "90553e9e92600b4e6d5f82d99bc1ea1ef19259ce533392e15abd683ca82f2afe",
+      "modified": false
+    },
+    {
+      "path": "src/sources/phaseTiming.js",
+      "upstreamSha256": "29dc00fc22553e1ce39dc3e8944837f7d48626524c79c132ec9a40ecb4c006b3",
+      "modified": false
+    },
+    {
+      "path": "src/sources/radioBrowser.js",
+      "upstreamSha256": "a996487950d945faaad0607e8d79cef2c2fd254f7cbbb191a1e95ed52b56eb5c",
+      "modified": false
+    },
+    {
+      "path": "src/sources/rateLimit.js",
+      "upstreamSha256": "ece920def60b67280b7d8b2ad67e7450716faf122eed6a4d562e4abc873d6bd7",
+      "modified": false
+    },
+    {
+      "path": "src/sources/requestDeadline.js",
+      "upstreamSha256": "12c5d18c2a3de111ca266f2d03640bc6bc8efe6601440b72bdcb120c62bbed69",
+      "modified": false
+    },
+    {
+      "path": "src/sources/tle.js",
+      "upstreamSha256": "0ee0456828c4d2cdd0c1a6e5b58ba27e9cf084ec4e90064c7050b25c3fb5b5ec",
+      "modified": false
+    },
+    {
+      "path": "src/sources/transitHistory.js",
+      "upstreamSha256": "a23b757a7b9c487464bf4b767389f509fd88c3dddc9a655f958bf066db41da63",
+      "modified": false
+    },
+    {
+      "path": "src/sources/transitHistoryStore.js",
+      "upstreamSha256": "fbbf2f980b16c0d1b0d753c4bdb404f9fc4c3c001f6102e4cb1626b7964b26e4",
+      "modified": false
+    },
+    {
+      "path": "src/sources/transitService.js",
+      "upstreamSha256": "3afaef62ea0f4a6fc5e54a6c8eeb0854849bedcde6e705e6ed70e5d1c77d8589",
+      "modified": false
+    },
+    {
+      "path": "src/sources/vectorTiles.js",
+      "upstreamSha256": "4aa10d420f8c8b77d9138e9eb8019f634430ad9b320eb6c2be71c77a27363e92",
+      "modified": false
+    },
+    {
+      "path": "src/sources/windBody.js",
+      "upstreamSha256": "ea3056c54e1c173dc28926949d095948d6f7a35ea40502079f4761d638f0e3e1",
+      "modified": false
+    },
+    {
+      "path": "src/tools/area.js",
+      "upstreamSha256": "7397cca54bd86ed61a1263ac5996a3b1b1bc53cb6e99b6932699679d591da8c5",
+      "modified": false
+    },
+    {
+      "path": "src/tools/catalog.js",
+      "upstreamSha256": "d82d41ab73d8926f7fa6277eca01a7bfcb362821acd51b927fc147517232d5ad",
+      "modified": false
+    },
+    {
+      "path": "src/tools/mcp/protocol.js",
+      "upstreamSha256": "fdbe0b1a7208c3b270e0891f9af2ba6988810474c77c4309fd2e470d88c1e144",
+      "modified": false
+    },
+    {
+      "path": "src/tools/places.js",
+      "upstreamSha256": "64589c53d3ebd889609e5e8c878c5c84fa0554d89883767ab9dcc5b087bf5c88",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/atmosphere.js",
+      "upstreamSha256": "804859e26852fd702921188d4a8cf876447a3a574aed176ded762db1289e247a",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/aviation.js",
+      "upstreamSha256": "05e3862f84962e946133e0ac322d21228e61ad290a3f884629148e07f9c87cf6",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/brief.js",
+      "upstreamSha256": "13528a6f2446b9a81a99d461cc46f3bbe3902305f084369224692d641b73e921",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/environment.js",
+      "upstreamSha256": "3102388a0b5103f3c320bcbf149cdc686a9b7d5c643b59aa421eb8b2c11b1c1a",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/hazards.js",
+      "upstreamSha256": "9b562d39cb7a521803bd66f21f347bbad9d1eebece3c5c5bf916621311a75391",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/imagery.js",
+      "upstreamSha256": "bc425d29af72e8ddd8d18cb13bf673f06926b449d4fb3e50e07ead9d73f1e156",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/infrastructure.js",
+      "upstreamSha256": "7ccd35116657b5af450f3628369d4d03fbc5498f54a30de163d869621676e274",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/maritime.js",
+      "upstreamSha256": "514a4705bf242d510a42ef1d3c75b1fe5709ab58867b7b4cece0c67bd6e71d17",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/media.js",
+      "upstreamSha256": "03becd654dab6ce664327ae4d4698e843906d9d01b1bf2f4d919bc64fb4c64d9",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/mobility.js",
+      "upstreamSha256": "e4a5844365fe4e2eb2ac3408fe820b8703dca85d32783fee96053a983b3045c7",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/places.js",
+      "upstreamSha256": "73eeb95735df2c56b89c5c80e27c04d379835ba6f3646e8017174735b43c5209",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/space.js",
+      "upstreamSha256": "f6c350bc50bef5a91fce5794ca91535ff928dce53849f45193c2ff3a8244a4e3",
+      "modified": false
+    },
+    {
+      "path": "src/tools/queries/surveillance.js",
+      "upstreamSha256": "c8238aff313323335718c23f5556ed41588e5a79dbabb2fdb6c3b14099674ff1",
+      "modified": false
+    },
+    {
+      "path": "src/tools/results.js",
+      "upstreamSha256": "dc5afaa6fc17b72fbfd6e4e7b891c16fc4181479a6e65aead612fe1d3e55e60d",
+      "modified": false
+    },
+    {
+      "path": "src/tools/schema.js",
+      "upstreamSha256": "31914e206147d0769c56152dc238a169c0b23b5b5adb28e166ee6c21a60946b3",
+      "modified": false
+    },
+    {
+      "path": "src/tools/services.js",
+      "upstreamSha256": "b53dcb9e308d8e80abe375440e6e89db27cb89b6ad021b6c375c4448b5c36c5b",
+      "modified": true
+    },
+    {
+      "path": "src/tools/views.js",
+      "upstreamSha256": "a7b90f77ffe7a92c01c4d7b4ffef3d4a4d8caf96b5be43d74aafada5973a575e",
+      "modified": true
+    }
+  ]
+}

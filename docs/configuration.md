@@ -1,5 +1,7 @@
 # 配置来源
 
+可选账号和地理组件通过 `install --components aliens-eye,sherlock,gods-eye-view` 安装，配置项使用同名的 `{command,args,enabled}`；安装成功会写入实际入口。扩展工具的 Schema、预算和数据源配置见[账号与地理扩展](extensions.md)。
+
 编辑数据目录内的 `config.json`，或通过 `--config`／`SERA_CONFIG` 指定配置文件。完整字段见 [config.example.json](../config.example.json)。配置保存 API 入口、搜索引擎、地域和启用状态；凭据单独存入数据目录的 `credentials/`。数据目录的优先级为 `--home`、`SERA_HOME`、配置中的 `home`、默认用户目录。
 
 | 来源 | 凭据 | 获取能力 |

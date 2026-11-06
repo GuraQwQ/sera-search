@@ -24,6 +24,8 @@ SERA 把网页、代码、社区、学术、作品数据库和互联网归档接
 
 ## 快速开始
 
+Windows x64 可下载[轻量 ZIP](https://github.com/GuraQwQ/sera-search/releases/download/v1.0.0/SERA-v1.0.0-lite-windows-x64.zip)或[完整 ZIP](https://github.com/GuraQwQ/sera-search/releases/download/v1.0.0/SERA-v1.0.0-full-windows-x64.zip)，解压后运行 `sera.cmd`。完整版预装六个可选组件及其依赖；两版均检测本机已有环境，缺失时显示要求和下载入口。使用方法见[发布包指南](../../docs/releases.md)。
+
 需要 **Node.js 22 或以上版本**。当前从源码运行，尚未发布到 npm。
 
 ```bash
@@ -117,7 +119,9 @@ flowchart LR
 
 ## 可以查什么
 
-当前注册 **49 个来源**，MCP 提供 **13 个工具**。来源注册表示接口已接入，实际可用性由配置、权限和上游响应确认。
+当前注册 **52 个来源**，MCP 提供 **13 个工具**。来源注册表示接口已接入，实际可用性由配置、权限和上游响应确认。
+
+账号与地理扩展通过 `install --components aliens-eye,sherlock,gods-eye-view` 按需安装。Agent 用 `backend 来源` 发现真实工具，自行选择站点、关联信号、区域及后续动作；账号候选、关联依据和地理查询结果可保存为证据。使用方法见[账号与地理扩展](../../docs/extensions.md)。
 
 | 资料 | 入口示例 | 返回内容 |
 |---|---|---|
@@ -155,6 +159,7 @@ MCP 单次输入使用 `group:"game-wikis"` 或 `group:"galgame"`，同一连接
 | [证据指南](../../docs/evidence.md) | 片段、缓存、版本时间、缺口续查与清理 |
 | [Agent Skill 与 MCP](../../docs/mcp.md) | Skill 链接、服务配置及工具目录 |
 | [扩展来源与后端](../../docs/integrations.md) | 组件安装、完整后端工具、会话与兼容范围 |
+| [账号与地理扩展](../../docs/extensions.md) | 分步账号发现、资料关联、头像比较与地理时空数据 |
 | [第三方归属](../../THIRD_PARTY.md) | 上游项目、许可与内容来源 |
 | [选路 Skill](../../skills/sera-search/SKILL.md) | Agent 的起步流程与按需参考 |
 

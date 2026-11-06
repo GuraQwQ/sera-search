@@ -15,6 +15,7 @@ export { createEntitySources } from './providers/entities.js';
 export { createFeedSources } from './providers/feeds.js';
 export { createMetadataSource, extractMetadata } from './providers/metadata-parser.js';
 export { BackendPool, backendSchema, createBackendSources } from './backends.js';
+export { createExtensionSources } from './extensions.js';
 export { componentNames, installComponents, cleanIntegrationCache } from './components.js';
 export type { ComponentName, ComponentResult } from './components.js';
 export { login, logout, authStatus } from './auth.js';

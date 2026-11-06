@@ -20,6 +20,7 @@ import { assessRelevance } from './providers/relevance.js';
 import { createFeedSources } from './providers/feeds.js';
 import { createMetadataSource } from './providers/metadata-parser.js';
 import { BackendPool, createBackendSources } from './backends.js';
+import { createExtensionSources } from './extensions.js';
 
 export const searchSchema = z.object({
   query: z.string().trim().min(1).max(4096),
@@ -81,7 +82,7 @@ export class Engine {
   readonly store: EvidenceStore;
   readonly sources: Source[];
   constructor(readonly config: Config, sources?: Source[], readonly backends = new BackendPool()) {
-    this.sources = sources ?? [...createHttpSources(config), ...createWebSources(config), ...createAcademicSources(config), ...createPlatformSources(config), ...createCatalogSources(config), ...createSocialSources(config), ...createActionSources(config), ...createDiscoverySources(config), ...createArchiveSources(config), ...createForumSources(config), ...createEntitySources(config), ...createFeedSources(config), createMetadataSource(config), ...createBackendSources(config, backends)];
+    this.sources = sources ?? [...createHttpSources(config), ...createWebSources(config), ...createAcademicSources(config), ...createPlatformSources(config), ...createCatalogSources(config), ...createSocialSources(config), ...createActionSources(config), ...createDiscoverySources(config), ...createArchiveSources(config), ...createForumSources(config), ...createEntitySources(config), ...createFeedSources(config), createMetadataSource(config), ...createBackendSources(config, backends), ...createExtensionSources(config, backends)];
     if (!sources) {
       const attach = (name: SourceName) => this.sources.find(source => source.capability.name === name)!;
       attach('bilibili').comments = request => bilibiliComments(config.bilibili, request);
@@ -161,7 +162,9 @@ export class Engine {
         const raw = (await source.search({ ...input, query, signal, onAttempt: attempt => attempts.push(attempt) })).slice(0, input.limit);
         const relevant = filter ? assessRelevance(input.query, raw, input.aliases) : { hits: raw };
         if (!attempts.length) attempts.push({ backend: name, query, status: relevant.hits.length ? 'ok' : raw.length ? 'irrelevant' : 'empty', elapsedMs: Date.now() - started, returned: relevant.hits.length, reason: relevant.reason });
-        return { hits: relevant.hits, run: { source: name, status: relevant.hits.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: relevant.hits.length, attempts } as SourceRun };
+        const partial = attempts.find(attempt => attempt.code === 'PARTIAL_RESULT');
+        return { hits: relevant.hits, run: { source: name, status: relevant.hits.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: relevant.hits.length, attempts,
+          ...(partial ? { code: partial.code, message: partial.reason } : {}) } as SourceRun };
       } catch (error) {
         const failure = await this.failure(name, error, started, signal);
         if (!attempts.length) attempts.push({ backend: name, query, status: failure.status === 'cancelled' ? 'cancelled' : 'error', elapsedMs: failure.elapsedMs, returned: 0, reason: failure.message, code: failure.code, retryAfterSeconds: failure.retryAfterSeconds });
@@ -189,7 +192,7 @@ export class Engine {
     const runs = results.map(result => result.run);
     const hits = mergeHits(results.flatMap(result => result.hits));
     const good = runs.some(run => ['ok', 'empty'].includes(run.status));
-    const failed = runs.some(run => !['ok', 'empty'].includes(run.status));
+    const failed = runs.some(run => !['ok', 'empty'].includes(run.status) || run.code === 'PARTIAL_RESULT');
     return { query: input.query, hits, runs, route, status: !good ? 'error' : failed ? 'partial' : hits.length ? 'ok' : 'empty' };
   }
 

@@ -1,5 +1,7 @@
 # CLI
 
+账号与地理扩展使用同一 `install --components` 和 `backend` 命令。组件包括 `aliens-eye`、`sherlock`、`gods-eye-view`；先用 `backend 来源` 发现 Schema，再以 `--input JSON文件` 调用工具。`--timeout-ms` 设置外层预算，扫描范围、关联信号及地理区域由工具参数指定。完整示例见[账号与地理扩展](extensions.md)。
+
 安装为可执行包后，下面的 `node dist/cli.js` 可以替换为 `sera`。使用 `--help` 查看实际参数。
 
 任务开始时先查看相关来源，再直接执行首轮取证；例如网页问题只看 `bing,web`，作品发行考据再加入 `steam,wayback`。多字段任务使用 `research --goal`，已有链接直接 `read`／`read-many`。起步和续查示例见[取证与续查](../skills/sera-search/references/workflows.md)。
@@ -142,7 +144,7 @@ node dist/cli.js clean --json
 | `linuxdo`、`heybox` | 原生主题／帖子与评论；访问权限、父楼层和游标按接口判断 |
 | 作品、音乐、技能与社交 API | 按资料对象与授权范围调用；详细入口见来源及平台指南 |
 
-当前注册 49 个来源，`capabilities --sources` 可缩小查看范围。Agent Reach 的渠道从统一 CLI 的 `channels` 发现；OpenCLI 从实时注册表发现接受 `query` 或 `keyword` 位置参数的只读搜索命令。来源注册与登录记录说明可调用的路径，实际账号权限、额度与结果仍由请求确认。
+当前注册 52 个来源，`capabilities --sources` 可缩小查看范围。Agent Reach 的渠道从统一 CLI 的 `channels` 发现；OpenCLI 从实时注册表发现接受 `query` 或 `keyword` 位置参数的只读搜索命令。来源注册与登录记录说明可调用的路径，实际账号权限、额度与结果仍由请求确认。
 
 `sera channels` 返回各平台的 `search`、`read`、`configured` 和搜索入口的 `browser`／`strategy`。这份清单说明 SERA 可匹配的操作，实际登录与返回内容由调用结果确认。OpenCLI 的平台搜索覆盖比原文映射广；只有 `read: true` 的平台可直接通过该适配读取，其余可显式选择网页正文源。
 

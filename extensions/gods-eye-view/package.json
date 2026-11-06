@@ -1,0 +1,21 @@
+{
+  "name": "sera-gods-eye-view",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@mapbox/vector-tile": "^3.0.0",
+    "@meri-imperiumi/eccodes-wasm": "^2.48.2",
+    "https-proxy-agent": "^7.0.6",
+    "pbf": "^5.1.2",
+    "proxy-from-env": "^1.1.0",
+    "satellite.js": "^6.0.2",
+    "socks-proxy-agent": "^8.0.5",
+    "undici": "^7.30.2",
+    "ws": "^8.21.0"
+  }
+}

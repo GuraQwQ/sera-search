@@ -30,7 +30,7 @@ MCP 提供 13 个工具：`sera_capabilities`、`sera_channels`、`sera_search`�
 
 ## 完整后端工具
 
-`sera_backend` 接受 `{source, tool?, arguments?}`，`source` 为 `ghgrab` 或 `scrapling`。省略 `tool` 时返回后端当前工具及输入 Schema，例如：
+`sera_backend` 接受 `{source, tool?, arguments?, timeoutMs?}`，`source` 为 `ghgrab`、`scrapling`、`aliens-eye`、`sherlock` 或 `gods-eye-view`。省略 `tool` 时返回后端当前工具及输入 Schema，例如：
 
 ```json
 {"source":"scrapling"}
@@ -39,6 +39,8 @@ MCP 提供 13 个工具：`sera_capabilities`、`sera_channels`、`sera_search`�
 发现后传入实际工具名与符合该 Schema 的 `arguments` 对象。此入口保留上游完整工具范围；仓库搜索、已知网页读取等常规取证也可使用统一 `sera_search`／`sera_read`。先按任务调用 `sera_capabilities` 的 `sources:["ghgrab","scrapling","metadata-parser","google-news","iptv"]` 核对配置。
 
 同一 SERA MCP 连接会复用后端进程，Scrapling 的内存会话可跨 `sera_backend` 调用保持；断开连接或重启 CLI 后需重新创建会话，跨进程恢复使用上游发现的 save／load 工具。安装、浏览器选择与兼容范围见[扩展来源与后端](integrations.md)。
+
+账号和地理扩展的工具调用结果附带 `structuredContent.seraEvidence`，可用 `sera_evidence` 重读报告。Agent 按本次 Schema 控制站点、关联动作、区域和预算；账号发现、头像匹配与地理查询示例见[账号与地理扩展](extensions.md)。
 
 用户明确提供 API Key 或 API 账号时，Agent 可调用 `sera_login`，输入 `source` 与 `credentials: {apiKey}`、Twitch 的 `{apiKey, clientId}` 或 DataForSEO 的 `{username, password}`；平台验证输入 `source` 与 `platform`。结果不回显凭据，每次 MCP 调用重新加载记录，登录后同一连接即可查询。CLI Agent 通过 Skill 与 `--help` 获得调用指引，MCP Agent 还会取得工具 Schema。MCP 的能力、渠道、搜索、研究与读取工具支持单次输入 `group:"game-wikis"` 或 `group:"galgame"`，同一连接可按需切换；自定义站点目录可在启动参数中传 `--catalog <目录文件>`。
 

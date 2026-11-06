@@ -28,6 +28,9 @@
   "ghgrab": { "command": "ghgrab", "args": ["mcp"], "enabled": false },
   "scrapling": { "command": "scrapling-mcp", "args": [], "enabled": false },
   "metadata-parser": { "command": "python", "args": ["/absolute/path/to/sera-search/bridges/metadata_parser.py"], "enabled": false },
+  "aliens-eye": { "command": "python", "args": ["/absolute/path/to/sera-search/bridges/accounts.py", "--engine", "aliens-eye"], "enabled": false },
+  "sherlock": { "command": "python", "args": ["/absolute/path/to/sera-search/bridges/accounts.py", "--engine", "sherlock"], "enabled": false },
+  "gods-eye-view": { "command": "node", "args": ["/absolute/path/to/sera-data/tools/gods-eye-view/server.mjs"], "enabled": false },
   "agentReach": { "command": "agent-reach", "args": [], "enabled": false },
   "opencli": { "command": "opencli", "args": [], "enabled": false }
 }

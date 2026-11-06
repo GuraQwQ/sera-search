@@ -1,12 +1,13 @@
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { z } from 'zod';
-import { backendNames } from './types.js';
+import { backendNames, extensionNames } from './types.js';
 import type { BackendName, Config, Source } from './types.js';
 import { integrationEnvironment } from './components.js';
+import { contentHash, EvidenceStore } from './evidence.js';
 import { document, hit, object, permitted, rows, string } from './providers/shared.js';
 
-export const backendSchema = z.object({ source: z.enum(backendNames), tool: z.string().min(1).optional(), arguments: z.record(z.string(), z.unknown()).optional() });
+export const backendSchema = z.object({ source: z.enum(backendNames), tool: z.string().min(1).optional(), arguments: z.record(z.string(), z.unknown()).optional(), timeoutMs: z.number().int().min(100).max(300000).optional() });
 const failure = (code: string, message: string) => Object.assign(new Error(message), { code });
 
 // MCP 服务复用连接，让浏览器会话跨工具调用存活；配置改变时替换对应连接。
@@ -64,8 +65,8 @@ export class BackendPool {
   }
 
   async run(config: Config, input: z.input<typeof backendSchema>, parent?: AbortSignal) {
-    const { source, tool, arguments: args } = backendSchema.parse(input);
-    const signal = AbortSignal.any([AbortSignal.timeout(config.timeoutMs), ...(parent ? [parent] : [])]);
+    const { source, tool, arguments: args, timeoutMs = config.timeoutMs } = backendSchema.parse(input);
+    const signal = AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(parent ? [parent] : [])]);
     const client = await this.connect(config, source, signal);
     if (!tool) {
       const tools = [];
@@ -77,7 +78,33 @@ export class BackendPool {
       } while (cursor);
       return { content: [{ type: 'text' as const, text: JSON.stringify({ source, tools }) }], structuredContent: { source, tools } };
     }
-    return client.callTool({ name: tool, arguments: args ?? {} }, { signal, timeout: config.timeoutMs });
+    const result = await client.callTool({ name: tool, arguments: args ?? {} }, { signal, timeout: timeoutMs });
+    if (!(extensionNames as readonly string[]).includes(source) || result.isError) return result;
+    let data = result.structuredContent as Record<string, unknown> | undefined;
+    if (!data) {
+      for (const item of result.content) {
+        if (item.type !== 'text') continue;
+        try {
+          const value: unknown = JSON.parse(item.text);
+          data = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : { result: value };
+        } catch { /* 保留上游说明文字，结构化内容从其他文本块读取。 */ }
+      }
+    }
+    data ??= { content: result.content.filter(item => item.type === 'text') };
+    try {
+      const evidence = await new EvidenceStore(config).save({
+        source, url: `sera://extensions/${source}/${contentHash(JSON.stringify({ tool, arguments: args ?? {} }))}`,
+        title: `${source} / ${tool}`, content: JSON.stringify(data, null, 2), contentKind: 'metadata',
+        metadata: { tool, arguments: Object.fromEntries(Object.entries(args ?? {}).filter(([key]) => !['proxy', 'report'].includes(key))),
+          ...(args?.report ? { inputReportHash: contentHash(JSON.stringify(args.report)) } : {}),
+          contentScope: 'extension-report', imageCount: result.content.filter(item => item.type === 'image').length },
+      });
+      const { content: _content, ...seraEvidence } = evidence;
+      return { ...result, isError: data.status === 'error', structuredContent: { ...data, seraEvidence }, content: [...result.content, { type: 'text' as const, text: JSON.stringify({ seraEvidence }) }] };
+    } catch (error) {
+      const cacheWarnings = ['扩展结果已返回，证据保存失败：' + (error instanceof Error ? error.message : String(error))];
+      return { ...result, isError: data.status === 'error', structuredContent: { ...data, cacheWarnings }, content: [...result.content, { type: 'text' as const, text: JSON.stringify({ cacheWarnings }) }] };
+    }
   }
 
   async data(config: Config, source: BackendName, tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {

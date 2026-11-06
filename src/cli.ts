@@ -22,7 +22,7 @@ const help = `SERA — Search, Extract, Research for Agents
   logout <来源>        清除登录记录，可配 --platform 退出平台
   auth [来源]          查看登录记录，平台记录用 --platform 筛选
   capabilities         列出来源、操作和配置状态
-  backend <来源> [工具] 发现或调用 ghgrab / Scrapling 原生 MCP 工具
+  backend <来源> [工具] 发现或调用仓库、浏览器、账号与地理扩展工具
   channels             发现可匹配的平台，支持 --sources 和 --platform 筛选
   search <查询>        自动选路；指定来源时并行聚合，保留换源记录
   comments <URL>       读取歌曲、视频或授权媒体评论及回复页
@@ -70,10 +70,12 @@ const help = `SERA — Search, Extract, Research for Agents
   --offset <位置>      evidence 的字符起点，默认 0
   --length <数量>      返回字符预算，read 默认2000，evidence 默认4000，最大20000
   --skill-dir <目录>   install 时链接 sera-search 到此技能根目录
-  --components <列表>  install 可选安装 ghgrab,scrapling,metadata-parser
+  --components <列表>  install 可选组件：ghgrab,scrapling,metadata-parser,aliens-eye,sherlock,gods-eye-view
   --python <路径>      install 使用已有 Python 创建工具环境
   --browser <路径>     install 复用已有 Chromium / Edge
+  --node <路径>        install 地理扩展使用已有 Node.js 24+
   --input <JSON文件>   backend 的原生工具参数；先不带工具名查看 schema
+  --timeout-ms <毫秒>  backend 调用预算，最大300000；扫描内部预算由工具参数指定
 
 示例：
   sera search "MCP 文档" --sources exa,tavily,brave --json
@@ -95,9 +97,9 @@ function sources(value?: string): SourceName[] | undefined {
 function display(value: unknown): string {
   if (Array.isArray(value)) return value.map(item => {
     if (!('name' in item)) return `${item.source}${item.platform ? ' / ' + item.platform : ''}: ${item.status}`;
-    const source = item as { name: string; search: boolean; read: boolean; configured: boolean; requirement?: string };
+    const source = item as { name: string; search: boolean; read: boolean; backend?: boolean; configured: boolean; requirement?: string };
     if ((item as { status?: string }).status === notLoggedIn) return `${source.name}: ${notLoggedIn}`;
-    return `${source.name}: 搜索=${source.search ? '支持' : '—'}，读取=${source.read ? '支持' : '—'}，配置=${source.configured ? '已配置；调用时检查可用性' : source.requirement ?? '待配置'}`;
+    return `${source.name}: 搜索=${source.search ? '支持' : '—'}，读取=${source.read ? '支持' : '—'}${source.backend ? '，扩展工具=支持' : ''}，配置=${source.configured ? '已配置；调用时检查可用性' : source.requirement ?? '待配置'}`;
   }).join('\n');
   const report = value as Record<string, any>;
   if (report.runs?.length && !report.hits?.length && !report.content && report.runs.every((run: any) => run.code === 'NOT_LOGGED_IN')) return notLoggedIn;
@@ -135,7 +137,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     cursor: { type: 'string' }, parent: { type: 'string' }, order: { type: 'string' },
     sources: { type: 'string' }, platform: { type: 'string' }, stdin: { type: 'boolean' }, 'from-env': { type: 'string' }, limit: { type: 'string' }, 'github-type': { type: 'string' },
     domain: { type: 'string', multiple: true }, since: { type: 'string' }, at: { type: 'string' }, 'read-limit': { type: 'string' }, 'read-sources': { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' }, 'skill-dir': { type: 'string' },
-    components: { type: 'string' }, python: { type: 'string' }, browser: { type: 'string' }, input: { type: 'string' },
+    components: { type: 'string' }, python: { type: 'string' }, browser: { type: 'string' }, node: { type: 'string' }, input: { type: 'string' }, 'timeout-ms': { type: 'string' },
   } });
   if (values.help || (!positionals.length && !values.version)) { process.stdout.write(help); return; }
   if (values.version) { process.stdout.write(JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version + '\n'); return; }
@@ -146,7 +148,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     process.once('SIGINT', cancel);
     try {
       const components = values.components === undefined ? undefined : z.array(z.enum(componentNames)).min(1).parse(values.components.split(',').map(value => value.trim()));
-      const result = await install({ ...location, skillDir: values['skill-dir'], components, python: values.python, browser: values.browser, signal: controller.signal });
+      const result = await install({ ...location, skillDir: values['skill-dir'], components, python: values.python, browser: values.browser, node: values.node, signal: controller.signal });
       process.stdout.write(JSON.stringify(result, null, 2) + '\n');
       if (controller.signal.aborted) process.exitCode = 130;
       else if (result.status === 'error') process.exitCode = 1;
@@ -184,7 +186,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       case 'capabilities': result = engine.capabilities(selected); break;
       case 'backend': {
         const input = values.input ? JSON.parse(await readFile(values.input, 'utf8')) : undefined;
-        const request = backendSchema.parse({ source: positionals[1], tool: positionals[2], arguments: input });
+        const request = backendSchema.parse({ source: positionals[1], tool: positionals[2], arguments: input, timeoutMs: values['timeout-ms'] === undefined ? undefined : integer(values['timeout-ms'], 20000) });
         result = await engine.backends.run(config, request, controller.signal);
         break;
       }

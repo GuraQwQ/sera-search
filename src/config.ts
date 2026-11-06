@@ -34,6 +34,7 @@ const schema = z.object({
   catalogFile: z.string().optional(),
   wiki: api.unwrap().extend({ sites: z.record(z.string().regex(platformIdPattern), z.object({ apiUrl: z.string().url(), pageBaseUrl: z.string().url(), label: z.string().optional() })).optional() }).default({}),
   agentReach: command.optional(), opencli: command.optional(), ghgrab: command.optional(), scrapling: command.optional(), 'metadata-parser': command.optional(),
+  'aliens-eye': command.optional(), sherlock: command.optional(), 'gods-eye-view': command.optional(),
 });
 
 export interface ConfigLocation { home?: string; file?: string; catalog?: string; group?: CatalogGroup }
@@ -72,7 +73,7 @@ export async function loadConfig(options: ConfigLocation = {}): Promise<Config> 
   return config;
 }
 
-export async function install(options: ConfigLocation & { skillDir?: string; components?: import('./components.js').ComponentName[]; python?: string; browser?: string; signal?: AbortSignal } = {}) {
+export async function install(options: ConfigLocation & { skillDir?: string; components?: import('./components.js').ComponentName[]; python?: string; browser?: string; node?: string; signal?: AbortSignal } = {}) {
   const location = configLocation(options);
   const template = await readFile(new URL('../config.example.json', import.meta.url), 'utf8');
   const created = await writeAtomic(location.file, template, true);
@@ -90,7 +91,7 @@ export async function install(options: ConfigLocation & { skillDir?: string; com
     }
     skill = target;
   }
-  const components = options.components?.length ? await (await import('./components.js')).installComponents({ ...location, components: options.components, python: options.python, browser: options.browser, signal: options.signal }) : undefined;
+  const components = options.components?.length ? await (await import('./components.js')).installComponents({ ...location, components: options.components, python: options.python, browser: options.browser, node: options.node, signal: options.signal }) : undefined;
   return { home: location.home, config: location.file, configCreated: created, skill, ...components, ...(components?.components.some(item => item.status === 'error') ? { status: 'error' } : {}) };
 }
 

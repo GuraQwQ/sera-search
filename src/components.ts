@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { chmod, cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeAtomic } from './files.js';
 import { object, response } from './providers/shared.js';
 
-export const componentNames = ['ghgrab', 'scrapling', 'metadata-parser'] as const;
+export const componentNames = ['ghgrab', 'scrapling', 'metadata-parser', 'aliens-eye', 'sherlock', 'gods-eye-view'] as const;
 export type ComponentName = typeof componentNames[number];
 interface InstallOptions {
   home: string;
@@ -14,6 +14,7 @@ interface InstallOptions {
   components: ComponentName[];
   python?: string;
   browser?: string;
+  node?: string;
   signal?: AbortSignal;
 }
 export interface ComponentResult { name: ComponentName; status: 'ready' | 'error'; version?: string; message?: string }
@@ -136,7 +137,7 @@ async function pythonEnvironment(options: InstallOptions, env: Record<string, st
       try { await run(candidate, ['-c', 'import sys; assert sys.version_info >= (3, 10); print(sys.executable)'], env, root, options.signal); base = candidate; break; }
       catch (error) { if (options.signal?.aborted) throw error; }
     }
-    if (!base) throw new Error('未找到可用的 Python 3.10+，请用 --python 指定已有解释器');
+    if (!base) throw new Error('缺少 Python 3.10+；可从 https://www.python.org/downloads/ 下载，或用 --python 指定已有解释器');
     await run(base, ['-m', 'venv', '--without-pip', path], env, root, options.signal);
     if (!await probe()) throw new Error('Python 虚拟环境尚未完整建立，请检查解释器后重试 install');
   }
@@ -154,8 +155,15 @@ async function pythonComponent(name: 'scrapling' | 'metadata-parser', options: I
   const bin = join(home, 'tools', 'python', process.platform === 'win32' ? 'Scripts' : 'bin');
   const bridge = fileURLToPath(new URL('../bridges/metadata_parser.py', import.meta.url));
   const command = name === 'scrapling' ? join(bin, process.platform === 'win32' ? 'scrapling-mcp.exe' : 'scrapling-mcp') : python;
-  const args = name === 'scrapling' ? options.browser ? ['--executable-path', resolve(options.browser)] : [] : [bridge];
-  if (name === 'scrapling' && options.browser && !await exists(resolve(options.browser))) throw new Error('指定的浏览器可执行文件不存在');
+  let browser: string | undefined;
+  if (name === 'scrapling') {
+    const candidates = options.browser ? [options.browser] : [process.env.SERA_BROWSER,
+      ...[process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA].filter((base): base is string => Boolean(base)).flatMap(base => [join(base, 'Microsoft/Edge/Application/msedge.exe'), join(base, 'Google/Chrome/Application/chrome.exe')]),
+      '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
+    for (const candidate of candidates) if (candidate && await exists(resolve(candidate))) { browser = resolve(candidate); break; }
+    if (!browser) throw new Error('缺少 Chromium、Edge 或 Chrome；可从 https://www.microsoft.com/edge/download 下载，或用 --browser 指定已有程序');
+  }
+  const args = name === 'scrapling' ? ['--executable-path', browser!] : [bridge];
   if (name === 'metadata-parser' && !await exists(bridge)) throw new Error('metadata_parser 桥接入口文件不存在');
   const verify = async () => {
     const version = await run(python, ['-c', `import importlib.metadata; import ${name === 'scrapling' ? 'scrapling' : 'metadata_parser'}; print(importlib.metadata.version(${JSON.stringify(name === 'scrapling' ? 'scrapling' : 'metadata-parser')}))`], env, home, options.signal);
@@ -171,19 +179,6 @@ async function pythonComponent(name: 'scrapling' | 'metadata-parser', options: I
     await run(python, ['-m', 'pip', 'install', '--disable-pip-version-check', '--no-input', '--cache-dir', env.PIP_CACHE_DIR!, '--force-reinstall',
       name === 'scrapling' ? 'scrapling[ai]>=0.5,<0.6' : 'metadata-parser>=2,<3'], env, home, options.signal);
     version = await verify();
-  }
-  if (name === 'scrapling' && !options.browser) {
-    const browser = async () => run(python, ['-c', 'from patchright.sync_api import sync_playwright\nwith sync_playwright() as p: print(p.chromium.executable_path)'], env, home, options.signal);
-    let installed = false;
-    try { installed = await exists(await browser()); } catch (error) { if (options.signal?.aborted) throw error; }
-    if (!installed) {
-      const cli = join(bin, process.platform === 'win32' ? 'scrapling.exe' : 'scrapling');
-      if (!await exists(cli)) throw new Error('Scrapling 浏览器安装入口不存在，请重试 install');
-      await run(cli, ['install', '--force'], env, home, options.signal);
-      // Scrapling CLI 安装 Playwright；版本不同时补齐实际使用的 Patchright 浏览器。
-      if (!await exists(await browser())) await run(python, ['-m', 'patchright', 'install', 'chromium'], env, home, options.signal);
-      if (!await exists(await browser())) throw new Error('Scrapling 浏览器安装尚未完成，请重试 install');
-    }
   }
   return { command, args, version };
 }
@@ -220,9 +215,68 @@ async function ghgrab(options: InstallOptions, env: Record<string, string>) {
   } finally { await rm(temporary, { force: true }); }
 }
 
+async function accounts(name: 'aliens-eye' | 'sherlock', options: InstallOptions, env: Record<string, string>) {
+  const command = await pythonEnvironment(options, env), home = await realpath(resolve(options.home));
+  const bridge = fileURLToPath(new URL('../bridges/accounts.py', import.meta.url));
+  if (!await exists(bridge)) throw new Error('账号扩展桥接入口不存在');
+  const module = name === 'aliens-eye' ? 'aliens_eye.api' : 'sherlock_project.sherlock';
+  const verify = async () => {
+    const version = await run(command, ['-c', `import importlib.metadata; from mcp.server.mcpserver import MCPServer; import ${module};${name === 'aliens-eye' ? ' import PIL;' : ''} print(importlib.metadata.version(${JSON.stringify(name === 'sherlock' ? 'sherlock-project' : name)}))`], env, home, options.signal);
+    if (!(name === 'aliens-eye' ? /^2\.7\.(?:[5-9]|\d{2,})(?:\.|$)/ : /^0\.16\.(?:[2-9]|\d{2,})(?:\.|$)/).test(version)) throw new Error(`${name} ${version} 超出当前桥接兼容范围`);
+    return version;
+  };
+  let version: string;
+  try { version = await verify(); }
+  catch (error) {
+    if (options.signal?.aborted) throw error;
+    await run(command, ['-m', 'pip', 'install', '--disable-pip-version-check', '--no-input', '--cache-dir', env.PIP_CACHE_DIR!,
+      ...(name === 'aliens-eye' ? ['aliens-eye[correlate]>=2.7.5,<2.8'] : ['sherlock-project>=0.16.2,<0.17']), 'mcp>=2.3,<3'], env, home, options.signal);
+    version = await verify();
+  }
+  return { command, args: [bridge, '--engine', name], version };
+}
+
+async function geospatial(options: InstallOptions, env: Record<string, string>) {
+  const home = await realpath(resolve(options.home)), target = await directory(home, 'tools', 'gods-eye-view');
+  const source = fileURLToPath(new URL('../extensions/gods-eye-view/', import.meta.url));
+  const manifest = await readFile(join(source, 'package.json'), 'utf8');
+  const npmArgs = ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--cache', await directory(home, 'cache', 'integrations', 'npm')];
+  let previous = '';
+  try { previous = await readFile(join(target, 'package.json'), 'utf8'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  await cp(source, target, { recursive: true, filter: path => !['node_modules', '.cache'].includes(basename(path)) });
+  const command = await extensionNode(options, env), entry = join(target, 'server.mjs');
+  const verify = () => run(command, [entry, '--check'], env, target, options.signal);
+  let ready = false;
+  if (previous === manifest) { try { await verify(); ready = true; } catch (error) { if (options.signal?.aborted) throw error; } }
+  if (!ready) {
+    if (process.platform === 'win32') {
+      const candidates = [process.env.npm_execpath, join(dirname(command), 'node_modules', 'npm', 'bin', 'npm-cli.js'), join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')];
+      const npmCli = (await Promise.all(candidates.map(async path => path && await exists(path) ? path : undefined))).find(Boolean);
+      if (!npmCli) throw new Error('未找到现有 npm-cli.js，请在已有 Node.js/npm 环境中重试 install');
+      await run(command, [npmCli, ...npmArgs], env, target, options.signal);
+    } else await run('npm', npmArgs, env, target, options.signal);
+    await verify();
+  }
+  return { command, args: [entry], version: String(JSON.parse(manifest).version) };
+}
+
+async function extensionNode(options: InstallOptions, env: Record<string, string>): Promise<string> {
+  const home = await realpath(resolve(options.home));
+  const verify = async (candidate: string) => {
+    const executable = await run(candidate, ['-e', 'if(Number(process.versions.node.split(".")[0])<24)process.exit(1);process.stdout.write(process.execPath)'], env, home, options.signal);
+    return resolve(executable);
+  };
+  const candidates = options.node ? [options.node] : [process.env.SERA_NODE, process.execPath, join(home, 'tools', 'node', process.platform === 'win32' ? 'node.exe' : 'bin/node'), 'node', 'node24'];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try { return await verify(candidate); } catch (error) { if (options.signal?.aborted) throw error; }
+  }
+  throw new Error('缺少 Node.js 24+；可从 https://nodejs.org/en/download 下载，或用 --node 指定已有程序');
+}
+
 export async function installComponents(options: InstallOptions): Promise<{ components: ComponentResult[] }> {
   const names = [...new Set(options.components)], components: ComponentResult[] = [];
-  if (!names.every(name => componentNames.includes(name))) throw new Error('组件仅支持 ghgrab、scrapling、metadata-parser');
+  if (!names.every(name => componentNames.includes(name))) throw new Error(`组件支持 ${componentNames.join('、')}`);
   if (!names.length) return { components };
   let env: Record<string, string>;
   try { options.signal?.throwIfAborted(); env = await integrationEnvironment(options.home); }
@@ -230,7 +284,10 @@ export async function installComponents(options: InstallOptions): Promise<{ comp
   for (const name of names) {
     try {
       options.signal?.throwIfAborted();
-      const installed = name === 'ghgrab' ? await ghgrab(options, env) : await pythonComponent(name, options, env);
+      const installed = name === 'ghgrab' ? await ghgrab(options, env)
+        : name === 'gods-eye-view' ? await geospatial(options, env)
+        : name === 'aliens-eye' || name === 'sherlock' ? await accounts(name, options, env)
+        : await pythonComponent(name, options, env);
       options.signal?.throwIfAborted();
       let config: Record<string, unknown> = {};
       try { config = JSON.parse(await readFile(resolve(options.file), 'utf8')) as Record<string, unknown>; }

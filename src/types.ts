@@ -1,6 +1,8 @@
-export const sourceNames = ['exa', 'tavily', 'brave', 'github', 'agent-reach', 'opencli', 'bilibili', 'v2ex', 'web', 'zhipu', 'doubao', 'crossref', 'openalex', 'pubmed', 'serpapi', 'dataforseo', 'wiki', 'skills', 'bangumi', 'anilist', 'jikan', 'mangadex', 'vndb', 'musicbrainz', 'lastfm', 'listenbrainz', 'discogs', 'youtube', 'netease', 'baidu-images', 'sogou-images', 'trace-moe', 'saucenao', 'twitch', 'discord', 'instagram', 'bing', 'sites', 'wayback', 'archive', 'linuxdo', 'heybox', 'steam', 'nicovideo', 'ghgrab', 'scrapling', 'metadata-parser', 'google-news', 'iptv'] as const;
+export const sourceNames = ['exa', 'tavily', 'brave', 'github', 'agent-reach', 'opencli', 'bilibili', 'v2ex', 'web', 'zhipu', 'doubao', 'crossref', 'openalex', 'pubmed', 'serpapi', 'dataforseo', 'wiki', 'skills', 'bangumi', 'anilist', 'jikan', 'mangadex', 'vndb', 'musicbrainz', 'lastfm', 'listenbrainz', 'discogs', 'youtube', 'netease', 'baidu-images', 'sogou-images', 'trace-moe', 'saucenao', 'twitch', 'discord', 'instagram', 'bing', 'sites', 'wayback', 'archive', 'linuxdo', 'heybox', 'steam', 'nicovideo', 'ghgrab', 'scrapling', 'metadata-parser', 'google-news', 'iptv', 'aliens-eye', 'sherlock', 'gods-eye-view'] as const;
 export type SourceName = typeof sourceNames[number];
-export const backendNames = ['ghgrab', 'scrapling'] as const;
+export const extensionNames = ['aliens-eye', 'sherlock', 'gods-eye-view'] as const;
+export type ExtensionName = typeof extensionNames[number];
+export const backendNames = ['ghgrab', 'scrapling', ...extensionNames] as const;
 export type BackendName = typeof backendNames[number];
 export const intents = ['general', 'official', 'feedback', 'historical', 'game', 'galgame', 'academic', 'code', 'images'] as const;
 export type Intent = typeof intents[number];
@@ -70,6 +72,7 @@ export interface Config {
   linuxdo?: ApiConfig; heybox?: ApiConfig;
   steam?: ApiConfig; nicovideo?: ApiConfig;
   ghgrab?: CommandConfig; scrapling?: CommandConfig; 'metadata-parser'?: CommandConfig;
+  'aliens-eye'?: CommandConfig; sherlock?: CommandConfig; 'gods-eye-view'?: CommandConfig;
   'google-news'?: ApiConfig & { country?: string; edition?: string; topicId?: string };
   iptv?: ApiConfig;
   catalog?: SiteCatalog;
@@ -125,6 +128,7 @@ export interface Capability {
   name: SourceName;
   search: boolean;
   read: boolean;
+  backend?: boolean;
   comments?: boolean;
   images?: boolean;
   configured: boolean;

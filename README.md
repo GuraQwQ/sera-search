@@ -24,6 +24,8 @@ SERA connects your agent to tools for searching websites, code, communities, aca
 
 ## Quick start
 
+For Windows x64, download the [lightweight ZIP](https://github.com/GuraQwQ/sera-search/releases/download/v1.0.0/SERA-v1.0.0-lite-windows-x64.zip) or [full ZIP](https://github.com/GuraQwQ/sera-search/releases/download/v1.0.0/SERA-v1.0.0-full-windows-x64.zip), extract it, and run `sera.cmd`. The full package includes all six optional components and their dependencies. Both packages detect existing runtime programs and report missing requirements with download links. See the [release package guide](docs/releases.md).
+
 Requires **Node.js 22 or later**. Run from source; an npm release is not yet available.
 
 ```bash
@@ -50,6 +52,8 @@ node dist/cli.js install --home F:/tools/sera-data --components ghgrab,scrapling
 ```
 
 Use paths to your existing Python and Chromium-based browser. Components live under `<home>/tools`, with managed caches under `<home>/cache/integrations`. Repeating `install` verifies or repairs the selected components. See [optional integrations](docs/integrations.md) for compatibility and backend tool discovery.
+
+Optional account and geospatial extensions add scoped username discovery, profile correlation, avatar matching, and queries for geographic objects and events. Install `aliens-eye`, `sherlock`, or `gods-eye-view` with `install --components`, then discover each extension's tools with `backend SOURCE`. Your agent chooses the sites, signals, areas, and follow-up steps; structured results are saved as evidence. See [account and geospatial extensions](docs/extensions.md).
 
 Already have a URL or object ID? Read it directly:
 
@@ -118,7 +122,7 @@ Full material remains available under its evidence ID. Passages retain Unicode o
 
 ## What you can search
 
-SERA currently registers **49 sources** and exposes **13 MCP tools**. Available operations depend on configuration, permissions, and the provider's actual response.
+SERA currently registers **52 sources** and exposes **13 MCP tools**. Available operations depend on configuration, permissions, and the provider's actual response.
 
 | Material | Example sources | What you get |
 |---|---|---|
@@ -129,6 +133,7 @@ SERA currently registers **49 sources** and exposes **13 MCP tools**. Available 
 | Historical pages and lost information | Wayback Machine, Internet Archive | Capture indexes, actual snapshots, collection metadata, and file listings |
 | Communities, comments, and image sources | LinuxDo, Heybox, YouTube, NetEase Music, image and reverse-image providers | Original posts, comment pages, reply relationships, hosting pages, and match clues |
 | Repository and browser tools, news feeds, and channel catalogs | ghgrab, Scrapling, metadata_parser, Google News RSS, Free-TV IPTV | Repository trees and files, browser responses, declared HTML metadata, RSS records, and channel metadata |
+| Account and geospatial extensions | Aliens_eye, Sherlock, God's Eye View | Scoped account candidates, profile links, avatar similarity, geographic records, observations, and predictions |
 
 Game Wikis and visual-novel communities use catalogs loaded on demand:
 
@@ -155,6 +160,7 @@ Saved evidence can be located, paged, or refreshed from the chosen data director
 | [CLI](docs/cli.md) | Search, research, reading, comments, images, and exit codes |
 | [Evidence](docs/evidence.md) | Passages, caching, timestamps, gap tracking, and cleanup |
 | [Agent Skill and MCP](docs/mcp.md) | Skill links, server registration, and the tool catalog |
+| [Account and geospatial extensions](docs/extensions.md) | Scoped account discovery, profile correlation, avatar matching, and geospatial data queries |
 | [Optional integrations](docs/integrations.md) | Component installation, backend tools, sessions, and compatibility |
 | [Third-party notices](THIRD_PARTY.md) | Upstream projects, licenses, and content attribution |
 | [Routing Skill](skills/sera-search/SKILL.md) | Agent startup, source selection, and references loaded on demand |

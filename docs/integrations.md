@@ -1,5 +1,7 @@
 # 扩展来源与后端
 
+账号发现、关联、头像匹配和地理时空查询通过可选独立扩展接入，参见[账号与地理扩展](extensions.md)。
+
 SERA 将下列五个来源接入统一能力、搜索与读取流程；`ghgrab` 和 `scrapling` 还可通过 `backend`／`sera_backend` 调用上游完整工具。
 
 | 来源 | 统一接口 | 取得的材料 |
@@ -20,7 +22,7 @@ node .\dist\cli.js install --home 'F:\tools\sera-data' --components ghgrab,scrap
 node .\dist\cli.js capabilities --home 'F:\tools\sera-data' --sources ghgrab,scrapling,metadata-parser,google-news,iptv --json
 ```
 
-`--python` 选择已有 Python 3.10+，SERA 据此在数据目录建立虚拟环境。`--browser` 选择已有 Chromium／Edge 浏览器；省略时 Scrapling 的浏览器安装步骤使用数据目录内的浏览器位置。示例中的 Python、浏览器和数据目录需替换为实际路径。先选择数据目录，再执行组件安装，以控制依赖和缓存位置。
+`--python` 选择已有 Python 3.10+，SERA 据此在数据目录建立虚拟环境。`--browser` 选择已有 Chromium／Edge 浏览器；省略时检测本机常见位置，缺少浏览器时显示下载入口。示例中的 Python、浏览器和数据目录需替换为实际路径。先选择数据目录，再执行组件安装，以控制依赖和缓存位置。
 
 | 路径 | 用途 | `clean` 后 |
 |---|---|---|

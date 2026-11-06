@@ -29,7 +29,7 @@ export async function startMcp(config: Config) {
   };
   server.registerTool('sera_capabilities', { description: '首次查询按 sources 只查看当前任务相关来源、动作与登录状态。未登录渠道不可用，实际网络与配额调用时检查；group 按需选领域目录。', inputSchema: z.object({ sources: z.array(z.enum(sourceNames)).min(1).optional(), group }), annotations }, input => result(async () => (await fresh(input.group)).capabilities(input.sources)));
   server.registerTool('sera_channels', { description: '按来源、平台和 group 发现可匹配渠道及状态；发现成功不代表已读取帖子或评论。', inputSchema: z.object({ sources: z.array(z.enum(sourceNames)).min(1).optional(), platform: z.string().optional(), group }), annotations }, (input, context) => result(async () => (await fresh(input.group)).channels({ ...input, signal: context.mcpReq.signal })));
-  server.registerTool('sera_backend', { description: '先只传 source 发现 ghgrab / Scrapling 的原生工具和 schema，再用 tool 与 arguments 调用。支持仓库操作、浏览器会话、交互、网络和截图；保留原生结果，截图不生成正文证据。浏览器 session 在当前 MCP 连接内复用。', inputSchema: backendSchema }, async (input, context) => {
+  server.registerTool('sera_backend', { description: '先只传 source 发现后端工具与 schema，再传 tool/arguments；账号扩展按指定平台扫描、关联及头像匹配，gods-eye-view按领域/区域查询地理数据，工具决定输入范围。扩展结果保存metadata证据，图片保持原内容；timeoutMs设置本次外层预算。仓库和浏览器会话在当前MCP连接复用。', inputSchema: backendSchema }, async (input, context) => {
     try { return await backends.run((await fresh()).config, input, context.mcpReq.signal); }
     catch (error) { return { content: [{ type: 'text' as const, text: errorMessage(error, config) }], isError: true }; }
   });

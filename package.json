@@ -1,6 +1,6 @@
 {
   "name": "sera-search",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "搜索一切：面向 Agent 的多来源检索、原文读取与证据核验工具包",
   "type": "module",
   "license": "MIT",
@@ -18,15 +18,23 @@
   },
   "files": [
     "dist",
+    "portable.mjs",
+    "sera.cmd",
     "skills",
     "catalogs",
     "bridges",
+    "extensions/gods-eye-view/*.mjs",
+    "extensions/gods-eye-view/*.json",
+    "extensions/gods-eye-view/*.md",
+    "extensions/gods-eye-view/vendor",
     "docs/assets",
     "docs/cli.md",
     "docs/configuration.md",
     "docs/evidence.md",
     "docs/mcp.md",
     "docs/integrations.md",
+    "docs/extensions.md",
+    "docs/releases.md",
     "docs/readme",
     "README.md",
     "LICENSE",
@@ -36,7 +44,8 @@
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "release:windows": "node scripts/build-release.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.4.0",

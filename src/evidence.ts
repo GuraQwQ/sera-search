@@ -2,11 +2,12 @@ import { createHash } from 'node:crypto';
 import { readFile, readdir, rm, realpath, lstat, mkdir } from 'node:fs/promises';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { writeAtomic } from './files.js';
-import { sourceNames } from './types.js';
+import { sourceNames, extensionNames } from './types.js';
 import type { Config, Document, Evidence, SourceName } from './types.js';
 
 export function canonicalUrl(value: string): string {
   const url = new URL(value);
+  if (url.protocol === 'sera:' && url.hostname === 'extensions' && extensionNames.some(name => new RegExp(`^/${name}/[a-f0-9]{64}$`).test(url.pathname)) && !url.search && !url.hash && !url.username && !url.password && !url.port) return url.href;
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('内容地址需要 HTTP 或 HTTPS');
   if (url.hostname === 'web.archive.org' && url.pathname.startsWith('/web/')) { url.hash = ''; return url.href; }
   if (url.hostname === 'music.163.com' && /^#\/(song|album|playlist|djradio)\?/.test(url.hash)) {
