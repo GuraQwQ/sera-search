@@ -3,15 +3,12 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { parseArgs } from 'node:util';
 import { install, configLocation } from './dist/config.js';
 import { writeAtomic } from './dist/files.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
-const option = name => {
-  const index = args.indexOf(name);
-  return index >= 0 ? args[index + 1] : args.find(value => value.startsWith(name + '='))?.slice(name.length + 1);
-};
 const locate = (candidates, probe) => {
   for (const candidate of [...new Set(candidates.filter(Boolean))]) {
     try { const path = probe(candidate); if (path) return path; } catch {}
@@ -22,7 +19,13 @@ const commands = name => {
   try { return execute('where.exe', [name]).split(/\r?\n/); } catch { return []; }
 };
 
-try {
+async function main() {
+  const { values } = parseArgs({ args, allowPositionals: true, strict: false, options: {
+    home: { type: 'string' }, config: { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' },
+  } });
+  if (values.help || values.version || !args.length) {
+    return import('./dist/cli.js');
+  }
   const manifest = JSON.parse(await readFile(resolve(root, 'bundle.json'), 'utf8'));
   const full = manifest.components.length > 0;
   const node = locate([process.env.SERA_NODE, process.execPath, ...commands('node'), process.env.NODE_HOME && join(process.env.NODE_HOME, 'node.exe')], candidate => {
@@ -49,8 +52,8 @@ try {
       process.env.PYTHONPATH = [resolve(root, 'dependencies/python'), process.env.PYTHONPATH].filter(Boolean).join(delimiter);
       process.env.PLAYWRIGHT_NODEJS_PATH = node || process.execPath;
     }
-    const home = resolve(option('--home') ?? process.env.SERA_HOME ?? resolve(root, 'data'));
-    const location = configLocation({ home, file: option('--config') });
+    const home = resolve(values.home ?? process.env.SERA_HOME ?? resolve(root, 'data'));
+    const location = configLocation({ home, file: values.config });
     const initialized = await install(location);
     const config = JSON.parse(await readFile(location.file, 'utf8'));
     const template = JSON.parse(await readFile(resolve(root, 'config.example.json'), 'utf8'));
@@ -91,7 +94,9 @@ try {
     process.argv = [process.execPath, resolve(root, 'dist/cli.js'), ...args];
     await import('./dist/cli.js');
   }
-} catch (error) {
+}
+
+await main().catch(error => {
   process.stderr.write(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) + '\n');
   process.exitCode = 1;
-}
+});
