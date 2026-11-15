@@ -26,7 +26,7 @@ MCP 是同一核心的 Agent 接入口：
 }
 ```
 
-MCP 提供 13 个工具：`sera_capabilities`、`sera_channels`、`sera_search`、`sera_comments`、`sera_images`、`sera_research`、`sera_read`、`sera_read_many`、`sera_evidence`、`sera_login`、`sera_logout`、`sera_auth` 和 `sera_backend`。检索参数对应 CLI 的来源、平台、每源数量、域名及日期条件；`sera_comments` 使用 `url/cursor/parentId/order`，`sera_images` 使用 `query` 或 `imageUrl`，完整字段以工具 Schema 为准。
+MCP 提供 15 个工具：`sera_capabilities`、`sera_channels`、`sera_search`、`sera_comments`、`sera_images`、`sera_research`、`sera_migrate_state`、`sera_read`、`sera_read_many`、`sera_evidence`、`sera_record`、`sera_login`、`sera_logout`、`sera_auth` 和 `sera_backend`。检索参数对应 CLI 的来源、平台、每源数量、域名及日期条件；`sera_comments` 使用 `url/cursor/parentId/order`，`sera_images` 使用 `query` 或 `imageUrl`，完整字段以工具 Schema 为准。
 
 ## 完整后端工具
 
@@ -46,6 +46,10 @@ MCP 提供 13 个工具：`sera_capabilities`、`sera_channels`、`sera_search`�
 
 ## 首轮调用与续查
 
+`sera_search` 的 `terms` 是发现用词，`excludeUrls` 标记已知链接；默认来源继续取得足量新命中，显式来源保留原始候选。`relevance` 是词面排序诊断，`sera_research` 允许部分匹配取证；`readLimit:0` 可先发现来源。
+
+`sera_read`、`sera_read_many` 与 `sera_research` 的 `timeoutMs` 设置单次读取预算，`browser` 传已有 Chromium／Edge 路径，`raw:true` 让 `web` 保留原始 HTML。外部工具取得的内容用 `sera_record` 传 `url/title/content/method/observedAt` 保存，返回 `source:external` 的证据。
+
 先按任务缩小能力查询，例如 `sera_capabilities` 传 `sources:["bing","web","steam","wayback"]`；只需要站点或平台选择时再查询相应 `sera_channels`。账号状态与实际请求的权限、额度分别由 `runs` 确认。
 
-多字段问题首轮使用 `sera_research`，传 `query`、`goals`、所选 `sources`／`readSources` 和读取预算。审阅返回片段后更新 `state.fields` 的状态与证据 ID，下一轮将 `state` 对象传回同一工具，补查待确认或冲突项。`state.nextQuery` 给出优先冲突、聚焦一个剩余字段的建议问题；`accessFailures[].retryAt` 记录明确限流等待时间，下一轮先跳过仍需等待的URL，即使使用 `refresh` 也遵守该条件。已有原始链接用 `sera_read`／`sera_read_many`，已有证据用 `sera_evidence`；仅在需要完整上下文时扩大字符预算。输入和状态续查示例见[取证与续查](../skills/sera-search/references/workflows.md)。
+多对象问题传 `subjects` 与 `criteria`，判据 `kind` 区分必需条件和偏好，`targetCount` 表示需满足必需条件的对象数量；`query` 保留任务，`discoveryQuery` 控制本轮查询。更新 `state.assessments` 的结论、`outcome`、`scope` 和带原文坐标的 `citations` 后续查。工具先复用证据，再按进展执行换源或换查询；`coverage` 返回覆盖、引用与条件检查结果。`accessFailures[].retryAt` 保留明确等待条件。旧 `fields` 状态通过 `sera_migrate_state` 转换，返回新状态由调用方保存。输入与完整规则见[取证与续查](../skills/sera-search/references/workflows.md)。

@@ -1,4 +1,5 @@
-export { Engine, mergeHits, searchSchema, commentsSchema, imagesSchema, readSchema, focusSchema, researchSchema, researchStateSchema } from './core.js';
+export { Engine, mergeHits, searchSchema, commentsSchema, imagesSchema, readSchema, focusSchema, recordSchema, researchSchema, researchStateSchema } from './core.js';
+export { subjectSchema, criterionSchema, assessmentSchema, migrateResearchState } from './research.js';
 export { loadConfig, install } from './config.js';
 export { EvidenceStore, canonicalUrl, publisher, contentHash, focusText } from './evidence.js';
 export { createHttpSources } from './providers/http.js';

@@ -44,11 +44,12 @@ const providers = [
 ];
 
 export function scrub(value) {
-  let result = String(value);
-  for (const [name, secret] of Object.entries(process.env)) {
-    if (secret && /KEY|TOKEN|PASSWORD|SECRET/i.test(name)) result = result.split(secret).join('[隐藏]');
-  }
-  return result;
+  const secrets = Object.entries(process.env).filter(([name, secret]) => secret && /KEY|TOKEN|PASSWORD|SECRET/i.test(name)).map(([, secret]) => secret);
+  const patterns = [...new Set(secrets)].sort((a, b) => b.length - a.length).map(secret => {
+    const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return secret.length < 4 ? `(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])` : escaped;
+  });
+  return patterns.length ? String(value).replace(new RegExp(patterns.join('|'), 'gu'), '[隐藏]') : String(value);
 }
 
 function dispatcherFor(address) {

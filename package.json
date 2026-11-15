@@ -44,6 +44,7 @@
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
+    "test": "node --test",
     "prepack": "npm run build",
     "release:windows": "node scripts/build-release.mjs"
   },

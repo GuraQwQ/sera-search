@@ -46,7 +46,7 @@ node dist/cli.js backend scrapling --home F:/tools/sera-data --json
 node dist/cli.js backend scrapling TOOL_NAME --input ./backend-input.json --home F:/tools/sera-data --json
 ```
 
-将 `TOOL_NAME` 换成发现的工具名，`backend-input.json` 保存该工具接受的 UTF-8 JSON 对象。省略 `tool` 时返回上游工具清单和 Schema；CLI 合同为 `backend <ghgrab|scrapling> [tool] --input JSON文件`。工具名、参数、浏览器选项和会话操作以本次发现结果为准。
+将 `TOOL_NAME` 换成发现的工具名，`backend-input.json` 保存该工具接受的 UTF-8 JSON 对象。省略 `tool` 时返回上游工具清单和 Schema；CLI 合同为 `backend <ghgrab|scrapling|aliens-eye|sherlock|gods-eye-view> [tool] --input JSON文件`。工具名、参数、浏览器选项和会话操作以本次发现结果为准。
 
 MCP 使用 `sera_backend`，输入为 `{source, tool?, arguments?}`：
 
@@ -63,6 +63,8 @@ MCP 使用 `sera_backend`，输入为 `{source, tool?, arguments?}`：
 `ghgrab` 的搜索调用 GitHub。仓库树与文件读取支持其已识别的 forge，具体路径、ref 和认证按上游当前工具 Schema；它们不表示各 forge 都有统一搜索能力。先确认仓库、分支或提交，再核对实际返回的文件与范围。
 
 `scrapling` 的统一读取用于已知网页 URL；HTTP、动态浏览器、批量及会话能力通过完整后端工具发现。根据目标内容选择工具，并核对实际响应是否取得所需正文。浏览器执行、页面标题、验证页与目标内容分别判断。
+
+统一读取支持单次 `timeoutMs`／`--timeout-ms` 和已有浏览器路径 `browser`／`--browser`；浏览器内的页面预算与外层调用预算一起调整，取消信号仍会中断。常规原文或公开数据先用 `web`，原始 HTML 可用 `raw:true`／`--raw`；需要交互与更细等待条件时再发现 `backend` Schema。
 
 `metadata-parser` 解析调用方已取得的 HTML，不另行获取该 URL。输出保留官方分组原字段、解析方法及声明来源；canonical、OG URL 和网页日期都是页面声明。相对 URL 解析后仍保留原值，实际取得 URL 另行记录。启用该组件后，`web` 的原始 HTML 路径可做可选元数据增强；失败时继续保留已取得文本。它的直接读取返回 `contentKind:metadata`。页面声明支持来源分析，事实判断仍需对应证据。
 

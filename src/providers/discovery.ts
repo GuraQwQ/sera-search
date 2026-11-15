@@ -41,6 +41,7 @@ export function createDiscoverySources(config: Config): Source[] {
     const report = (attempt: SearchAttempt) => { attempts.push(attempt); request.onAttempt?.(attempt); };
     let lastError: unknown;
     let completed = false;
+    const partial = new Map<string, SearchHit>();
     const skipped = new Set<string>();
     // shortcut: 换引擎后最多重试一个显式别名，需要扩大查询预算时再增加别名轮次。
     const alias = request.aliases?.find(value => value.trim() && value.trim().toLowerCase() !== request.query.trim().toLowerCase());
@@ -51,17 +52,20 @@ export function createDiscoverySources(config: Config): Source[] {
       try {
         const raw = await provider.search!({ ...request, query, platform: undefined, domains });
         const scoped = raw.filter(item => { try { return permitted(domains, new URL(item.url).hostname); } catch { return false; } });
-        const relevant = assessRelevance(request.query, scoped, request.aliases);
+        const relevant = assessRelevance(request.query, scoped, request.aliases, request.terms);
         const reason = raw.length && !scoped.length ? 'DOMAIN_MISMATCH' : relevant.reason;
         completed = true;
-        report({ backend, query, status: relevant.hits.length ? 'ok' : raw.length ? 'irrelevant' : 'empty', elapsedMs: Date.now() - started, returned: relevant.hits.length, ...(reason ? { reason } : {}) });
-        if (relevant.hits.length) return relevant.hits.slice(0, request.limit).map(value => ({ ...value, source: 'sites' as const, metadata: { ...value.metadata, platform: request.platform, discoveryQuery: query, discoveryBackend: backend, discoveryAttempts: attempts } }));
+        const confirmed = relevant.hits.some(item => item.metadata?.relevance?.status === 'relevant');
+        report({ backend, query, status: confirmed ? 'ok' : raw.length ? 'irrelevant' : 'empty', elapsedMs: Date.now() - started, returned: relevant.hits.length, ...(reason ? { reason } : {}) });
+        const candidates = relevant.hits.map(value => ({ ...value, source: 'sites' as const, metadata: { ...value.metadata, platform: request.platform, discoveryQuery: query, discoveryBackend: backend, discoveryAttempts: attempts } }));
+        if (confirmed) return candidates.slice(0, request.limit);
+        for (const candidate of candidates) partial.set(candidate.url, candidate);
       } catch (error) {
         const detail = error as { code?: string; retryAfterSeconds?: number };
         report({ backend, query, status: request.signal.aborted ? 'cancelled' : 'error', elapsedMs: Date.now() - started, returned: 0, reason: errorMessage(error, config), code: detail.code, retryAfterSeconds: detail.retryAfterSeconds });
         if (request.signal.aborted) throw error;
         skipped.add(backend);
-        if (detail.code === 'NOT_LOGGED_IN') {
+        if (['NOT_LOGGED_IN', 'HTTP_401'].includes(detail.code ?? '') && provider.capability.requiresLogin) {
           const expected = config.credentials?.[backend];
           if (expected) await invalidateCredential(config.home, backend, undefined, expected);
           provider.capability.configured = false;
@@ -71,7 +75,7 @@ export function createDiscoverySources(config: Config): Source[] {
       }
     }
     if (!completed && lastError) throw lastError;
-    return [];
+    return [...partial.values()].slice(0, request.limit);
   };
   return [
     { capability: { name: 'bing', search: true, read: false, configured: config.bing?.enabled !== false, category: 'web', requiresLogin: false, loggedIn: true, requirement: '公开 Bing RSS；只表示本次搜索返回的结果' }, search: request => bing(config, request) },

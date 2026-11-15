@@ -2,9 +2,15 @@
 
 `search` 保留每个来源的执行结果和命中，合并重复 URL。`rankScore` 用于排序，表示召回位置，不能解释成事实可信度。
 
-`research` 在搜索后读取原始材料，返回 `documents` 和 `comparison`。证据保留 URL、读取来源、原始内容类型、获取时间及来源提供的发布时间。缺少发布时间时保持缺失；获取时间表示这次观察的时间。
+`retrievals[].metadata.relevance` 是查询词面的充分、部分或无关匹配，仍需核对对象、用途和必需条件。显式来源保留无关候选的诊断，默认选路对部分匹配继续找其他入口。
 
-通常先使用默认的短片段，再按字段补关键词或展开需要的上下文。`read` 默认返回前2000字符；传 `--query <问题>` 或重复 `--keyword <词>` 后返回相关片段与标题位置，`selection` 区分 `focused` 和 `leading`。`fragments` 保留原文坐标，全文仍可通过 `evidence.id` 读取。`--length` 控制返回字符预算，分页使用 `nextOffset`。坐标按 Unicode 码点计数，例如 `😀` 算一个字符。
+搜索、读取、评论、图片和渠道请求的 `runs[].network` 记录当前 SERA 进程可观察的 HTTP：`requestCount`、`redirectResponseCount`、逐次 URL／方法／状态和到响应头或错误的耗时；并发来源分别归属，缓存命中为零请求。已登记凭据从记录中隐藏。`scope:sera-http` 不包含外部进程、浏览器子资源或上游服务内部请求，`upstreamRequestCount:null` 表示这部分不可观察；不要用它代替整个调查的请求总数。
+
+`record`／`sera_record` 把外部取得的内容保存为 `source:external`，与正常证据一样按内容和 URL 得到稳定 ID。`metadata.acquisition` 是实际取得方法和观察时间，`retrievedAt` 是导入时间；导入记录仍需核验原文支持关系。
+
+`research` 先检查已有证据，材料仍有缺口时再搜索和读取，返回 `documents`、`coverage` 和 `comparison`。证据保留 URL、读取来源、原始内容类型、获取时间及来源提供的发布时间。缺少发布时间时保持缺失；获取时间表示这次观察的时间。
+
+通常先使用默认的短片段，再按字段补关键词或展开需要的上下文。`read` 默认返回前2000字符；传 `--query <问题>` 或重复 `--keyword <词>` 后返回相关片段与标题位置，`selection` 区分 `focused` 和 `leading`。`fragments` 保留原文坐标；`contexts` 补充相关标题与表头，额外上下文最多为 `min(1000, length)` 个码点。全文仍可通过 `evidence.id` 读取。`--length` 控制返回字符预算，分页使用 `nextOffset`。坐标按 Unicode 码点计数，例如 `😀` 算一个字符。
 
 多个已知链接用 `read-many`（MCP：`sera_read_many`），最多20项、三路并行；重复 URL 合并请求，结果保持输入顺序，失败逐项返回。已知 Steam AppID、Niconico ID、DOI、PMID 可直接传给 `read` 或 `research`，无需先跑搜索。
 
@@ -15,11 +21,11 @@ node dist/cli.js evidence EVIDENCE_ID --keyword "発売日" --length 1000 --json
 node dist/cli.js research "某作品" --goal "发行日期" --goal "中文支持" --sources bing --read-sources web --state ./research-state.json --json
 ```
 
-`research` 的 `goals` 建立待核验字段，返回 `state`。多轮CLI任务从首轮传 `--state ./research-state.json`：文件不存在时按goals建立，存在时读取，并在本轮完成后原子写回同一文件。Agent核验原文后编辑文件中的 `fields[].status`（`pending`、`supported`、`conflict`）、`evidenceIds` 和需要的 `note`，再执行原命令；重复执行保留已核验状态。MCP下一轮直接传回更新后的 `state` 对象。
+`research` 使用 `version:2` 状态，分别保存 `subjects`、`criteria` 与 `assessments`；`goals` 是建立必需判据的简便入口。CLI 从首轮传 `--state ./research-state.json`，创建或原子更新状态；Agent 核验后填写单元的 `status`、`outcome`、`conclusion`、`scope` 和 `citations` 原文坐标，MCP 下一轮传回同一 `state`。已有证据可为另一个判据重新定位，不因页面已经取证而跳过核验。
 
-后续查询优先聚焦一个冲突或未确认字段，建议问题见 `state.nextQuery`；已取证URL跳过，失败URL保留重试机会。上游明确给出 `Retry-After` 时，`accessFailures[].retryAt` 记录允许重试的时间；下一轮在等待期先处理其他URL，`refresh` 也遵守该时间。`candidates` 供审阅，关键词命中不自动确认事实。`nextAction` 提示继续检索、审阅证据或完成；全部字段由调用方确认后停止联网。
+后续先复用材料，再围绕当前对象与判据补证；新增 URL、证据与通过检查的核验单元见 `comparison.progress`。零进展时调整默认来源顺序或建议查询，`discoveryQuery` 可显式指定本轮查询；已知 URL 不计入新增命中预算。`accessFailures[].retryAt` 在跨轮保持限流等待，`refresh` 仍遵守。`candidates` 是待审阅关联，`reviewedEvidenceIds` 记录已审阅而不足以支持当前判据的材料。
 
-状态文件保存失败时仍交付研究结果及返回状态，`stateWarnings` 说明原因；修复后可以继续。首轮输入、编辑状态与下一轮调用见[取证与续查](../skills/sera-search/references/workflows.md)。
+`coverage` 检查对象与判据、原文引用、坐标、适用范围和 `targetCount`。必需条件不满足时排除对象，偏好单独记录；工具通过检查的引用仍需 Agent 核验语义。`comparison.groups` 按判据、范围和单位分组，显式 `measurement.normalization` 保留原值与换算依据。CLI 自动迁移旧状态并保留原子备份，MCP 使用 `sera_migrate_state`。状态文件保存失败时仍交付研究结果及返回状态，`stateWarnings` 说明原因；修复后可以继续。首轮输入、编辑状态与下一轮调用见[取证与续查](../skills/sera-search/references/workflows.md)。
 
 相同正文可以归为重复内容组；`publisherGroups` 用于组织发布者线索。两个引擎找到同一篇文章、多个页面属于同一发布者，或文章互相转载，都不能直接算作独立证据。Agent 应根据原文和引用关系记录支持、冲突及仍待核验的事实。
 

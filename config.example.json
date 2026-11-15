@@ -22,7 +22,7 @@
   "baidu-images": {}, "sogou-images": {}, "trace-moe": {}, "saucenao": {},
   "twitch": {}, "discord": {}, "instagram": {}, "bing": {}, "sites": {},
   "wayback": {}, "archive": {},
-  "linuxdo": {}, "heybox": {},
+  "linuxdo": {}, "heybox": {}, "steam": {}, "nicovideo": {},
   "google-news": { "languageCode": "zh-CN", "country": "CN", "edition": "CN:zh-Hans" },
   "iptv": { "baseUrl": "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8" },
   "ghgrab": { "command": "ghgrab", "args": ["mcp"], "enabled": false },

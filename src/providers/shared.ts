@@ -1,5 +1,4 @@
 import type { ApiConfig, Document, SearchHit, SourceName } from '../types.js';
-import { NotLoggedInError } from '../credentials.js';
 import { EnvHttpProxyAgent } from 'undici';
 
 export type Row = Record<string, unknown>;
@@ -96,7 +95,6 @@ export async function response(url: URL | string, init: RequestInit, name: strin
   if (deadline) retryDeadlines.delete(key);
   const result = await fetchResponse(url, init);
   if (!result.ok) {
-    if (result.status === 401) throw new NotLoggedInError();
     const detail = result.status === 401 || result.status === 403 ? '，请核对访问权限或来源配置' : '';
     const retry = result.status === 429 && result.headers.get('retry-after');
     const retryAfterSeconds = retry ? (/^\d+$/.test(retry) ? Number(retry) : Math.max(0, Math.ceil((Date.parse(retry) - Date.now()) / 1000))) : undefined;

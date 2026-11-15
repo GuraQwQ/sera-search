@@ -115,14 +115,14 @@ flowchart LR
 
 - **Choose the right material.** Prefer official pages for versions, dates, and specifications; read original posts and comments for user feedback; locate original URLs and snapshots for historical questions. Account sources without valid credentials report that they are unavailable.
 - **Read less, keep the original.** Use `query` and `keywords` to locate relevant passages. `read-many` deduplicates URLs and reads up to three documents concurrently. Fresh cached evidence can be reused; `refresh` requests a new copy.
-- **Follow the remaining gaps.** Start a multi-part task with `research` and `goals`, review the returned passages, then send back the updated `state` for the remaining fields. For a multi-round CLI task, pass `--state ./research-state.json` from the first call; the CLI creates or updates that file, and you can edit verified fields before repeating the command. Previously examined URLs are skipped; fields become supported only after the agent verifies the evidence. See the [workflow examples](skills/sera-search/references/workflows.md).
+- **按缺口续查。** `research` 分开维护对象、必需判据与偏好，先复用已有材料再搜索；Agent 核验结论和引用片段，工具检查条件、覆盖与数量，并根据新增材料调整续查。CLI 使用 `--state` 保存，新契约及旧状态迁移见[取证与续查](skills/sera-search/references/workflows.md)。
 - **Inspect the route taken.** Default search selects sources by intent and switches backends after empty, unrelated, or failed results. Explicit `sources` aggregates the selected providers in parallel. Follow `runs` and any `retryAfterSeconds` before retrying a limited source; keep successful evidence while continuing other leads.
 
 Full material remains available under its evidence ID. Passages retain Unicode offsets, and ranking organizes retrieval results. Multiple engines finding the same article still provide one original source. See the [evidence guide](docs/evidence.md) for reading scope, content types, and follow-up retrieval.
 
 ## What you can search
 
-SERA currently registers **52 sources** and exposes **13 MCP tools**. Available operations depend on configuration, permissions, and the provider's actual response.
+SERA currently registers **52 sources** and exposes **15 MCP tools**. Available operations depend on configuration, permissions, and the provider's actual response.
 
 | Material | Example sources | What you get |
 |---|---|---|

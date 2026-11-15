@@ -192,20 +192,20 @@ export function createHttpSources(config: Config): Source[] {
   };
   const web: Source = {
     capability: { name: 'web', search: false, read: true, configured: config.web?.enabled !== false, requirement: '公开 API 和文本直读；网页通过 Jina 或公开 HTML 读取，页面框架与正文分别标记' },
-    async read(url, signal) {
+    async read(url, signal, options) {
       const parsed = new URL(url);
       if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('网页读取仅支持 HTTP 或 HTTPS 链接');
-      const textResource = /\.(md|txt|csv|json|xml|vtt|srt)$/i.test(parsed.pathname);
+      const textResource = /\.(md|txt|csv|json|xml|vtt|srt|js|mjs)$/i.test(parsed.pathname);
       const raw = async () => {
         const page = await response(url, { signal, headers: { 'User-Agent': config.web?.userAgent ?? 'SERA page-reader', Accept: 'text/html,text/plain,application/json,application/xml' } }, '公开原文');
         const actualUrl = page.url || url;
-        if (page.redirected && /\/(?:login|signin|sign-in)(?:\/|$)/i.test(new URL(actualUrl).pathname)) throw new NotLoggedInError();
+        if (page.redirected && /\/(?:login|signin|sign-in)(?:\/|$)/i.test(new URL(actualUrl).pathname)) throw Object.assign(new Error('公开原文被重定向到登录页面'), { code: 'PAGE_AUTH_REQUIRED' });
         const type = page.headers.get('content-type') ?? '';
-        if (!/text\/|json|xml/.test(type) && !textResource) { await page.body?.cancel(); throw new Error('该资源需要对应的内容读取来源'); }
+        if (!/text\/|json|xml|javascript/.test(type) && !textResource) { await page.body?.cancel(); throw new Error('该资源需要对应的内容读取来源'); }
         const decoded = await textResponse(page), text = decoded.text;
         const html = /html/i.test(type);
         const title = html ? text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? url : url;
-        const content = html ? htmlText(text, actualUrl) : text;
+        const content = html && !options?.raw ? htmlText(text, actualUrl) : text;
         if (/json/i.test(type) || /\.json$/i.test(parsed.pathname)) {
           try { JSON.parse(text); } catch { throw Object.assign(new Error('公开 API 未返回有效 JSON'), { code: 'CONTENT_INVALID' }); }
         }
@@ -219,10 +219,10 @@ export function createHttpSources(config: Config): Source[] {
         }
         return document('web', actualUrl, title, content || plain(title), {
           contentKind: /\.(vtt|srt)$/i.test(parsed.pathname) ? 'subtitle' : /json|xml|text\/csv/i.test(type) || /\.(csv|json|xml)$/i.test(parsed.pathname) ? 'metadata' : 'page',
-          metadata: { extraction: html ? 'html-source-text' : 'direct-text', contentScope: bodyAvailable ? 'server-returned-text' : 'page-shell', bodyAvailable, renderedScripts: false, encoding: decoded.encoding, ...pageMetadata, ...(page.redirected ? { requestedUrl: url } : {}) },
+          metadata: { extraction: html ? options?.raw ? 'html-source' : 'html-source-text' : 'direct-text', contentScope: bodyAvailable ? options?.raw && html ? 'server-returned-html' : 'server-returned-text' : 'page-shell', bodyAvailable, renderedScripts: false, encoding: decoded.encoding, raw: Boolean(options?.raw), ...pageMetadata, ...(page.redirected ? { requestedUrl: url } : {}) },
         });
       };
-      if (textResource || parsed.hostname.startsWith('api.') || /(?:^|\/)api(?:\/|$)/i.test(parsed.pathname) || ['format', 'output', 'f'].some(key => parsed.searchParams.get(key) === 'json')) return raw();
+      if (options?.raw || textResource || parsed.hostname.startsWith('api.') || /(?:^|\/)api(?:\/|$)/i.test(parsed.pathname) || ['format', 'output', 'f'].some(key => parsed.searchParams.get(key) === 'json')) return raw();
       let shell: Document | undefined, readerError: unknown;
       try {
         const result = await response(`${(config.web?.baseUrl ?? 'https://r.jina.ai/').replace(/\/$/, '')}/${url}`, { headers: { Accept: 'application/json' }, signal }, 'Jina Reader');
@@ -230,7 +230,7 @@ export function createHttpSources(config: Config): Source[] {
         if (result.headers.get('content-type')?.includes('application/json')) {
           const data = object(object(await result.json(), 'Jina Reader').data, 'Jina Reader');
           actualUrl = string(data.url) || url; title = string(data.title); content = string(data.content); warning = data.warning;
-          if (actualUrl !== url && /\/(?:login|signin|sign-in)(?:\/|$)/i.test(new URL(actualUrl).pathname)) throw new NotLoggedInError();
+          if (actualUrl !== url && /\/(?:login|signin|sign-in)(?:\/|$)/i.test(new URL(actualUrl).pathname)) throw Object.assign(new Error('Jina Reader 被重定向到登录页面'), { code: 'PAGE_AUTH_REQUIRED' });
         } else {
           const text = await result.text(), marker = 'Markdown Content:', start = text.indexOf(marker);
           if (start < 0) throw new Error('Jina Reader 未返回可识别的正文');

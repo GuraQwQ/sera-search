@@ -11,6 +11,8 @@ import { credentialsSchema, notLoggedIn } from './credentials.js';
 import { writeAtomic } from './files.js';
 import { backendSchema } from './backends.js';
 import { componentNames, cleanIntegrationCache } from './components.js';
+import { migrateResearchState } from './research.js';
+import { contentHash } from './evidence.js';
 
 const help = `SERA — Search, Extract, Research for Agents
 
@@ -29,6 +31,8 @@ const help = `SERA — Search, Extract, Research for Agents
   image-search <查询>  关键词图片检索，保留图片及来源页
   reverse-image <URL>  反向识图，查来源页或动画帧匹配
   research <查询>      检索、按发布者分散读取原文并整理证据
+  migrate-state        迁移 --state 文件，保留原文件备份
+  record --input <文件> 保存外部工具实际取得的材料、原始URL、方法与观察时间
   read <URL或ID>       获取原文，保存证据并定位相关片段
   read-many <URL...>   批量读取，最多20个地址，三路并行
   evidence <ID>        定位或分页读取已保存证据
@@ -56,10 +60,14 @@ const help = `SERA — Search, Extract, Research for Agents
   --at <时间>          Wayback 目标时间，YYYYMMDD 或 YYYYMMDDhhmmss
   --intent <意图>      general、official、feedback、historical、game、galgame、academic、code、images
   --alias <别名>       可重复，补充实体别名；无有效结果时尝试首个不同别名
+  --term <词>          可重复，指定发现用词，独立于任务条件
+  --exclude-url <URL>  可重复，已知链接不计入搜索新增结果预算
   --query <问题>       read/read-many/evidence 的正文定位问题
   --keyword <关键词>  可重复，定位原文；同义或跨语言词由调用方补充
-  --goal <字段>        research 待核验字段，可重复
+  --goal <判据>        research 必需判据，可重复；对象与偏好用 --input
   --state <JSON文件>   research 读取并更新 state；新文件按 goals 建立
+  --discovery-query <查询> research 本轮发现查询，独立于完整任务
+  --target-count <数量> research 需要满足必需条件的对象数量
   --refresh            强制重新读取，跳过 URL 缓存
   --max-age <毫秒>     read/read-many 可复用缓存的最大时长
   --read-limit <数量>  research 的原文预算，默认 5，最大 20
@@ -72,10 +80,11 @@ const help = `SERA — Search, Extract, Research for Agents
   --skill-dir <目录>   install 时链接 sera-search 到此技能根目录
   --components <列表>  install 可选组件：ghgrab,scrapling,metadata-parser,aliens-eye,sherlock,gods-eye-view
   --python <路径>      install 使用已有 Python 创建工具环境
-  --browser <路径>     install 复用已有 Chromium / Edge
+  --browser <路径>     install 或读取时复用已有 Chromium / Edge
   --node <路径>        install 地理扩展使用已有 Node.js 24+
-  --input <JSON文件>   backend 的原生工具参数；先不带工具名查看 schema
-  --timeout-ms <毫秒>  backend 调用预算，最大300000；扫描内部预算由工具参数指定
+  --input <JSON文件>   backend、record 或 research 的结构化参数
+  --timeout-ms <毫秒>  backend/read/read-many/research 单次调用预算，最大300000
+  --raw               web 直接取得原始 HTML/JSON/文本，跳过 Jina
 
 示例：
   sera search "MCP 文档" --sources exa,tavily,brave --json
@@ -92,6 +101,19 @@ function integer(value: string | undefined, fallback: number) {
 
 function sources(value?: string): SourceName[] | undefined {
   return value === undefined ? undefined : z.array(z.enum(sourceNames)).min(1).parse(value.split(',').map(item => item.trim()));
+}
+
+async function readResearchState(path: string) {
+  let original: string;
+  try { original = await readFile(path, 'utf8'); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
+  const migration = migrateResearchState(JSON.parse(original));
+  if (migration.changed) {
+    const backup = `${path}.v1-${contentHash(original).slice(0, 16)}.json`;
+    if (!await writeAtomic(backup, original, true) && await readFile(backup, 'utf8') !== original) throw new Error('迁移备份与原状态不一致，原状态已保留');
+    await writeAtomic(path, JSON.stringify(migration.state, null, 2) + '\n');
+  }
+  return migration;
 }
 
 function display(value: unknown): string {
@@ -121,6 +143,8 @@ function display(value: unknown): string {
         else lines.push(document.runs.map((run: any) => `${run.source}: ${run.message ?? run.status}`).join('\n'));
       }
       lines.push(...report.comparison.nextSteps);
+      if (report.coverage) lines.push(`满足必需条件：${report.coverage.qualified.length}；已排除：${report.coverage.excluded.length}；待查：${report.coverage.unresolved.length}`,
+        ...report.coverage.gaps.map((gap: any) => `${gap.subjectId ?? '任务'}${gap.criterionId ? ' / ' + gap.criterionId : ''}：${gap.reason}`));
       if (report.stateWarnings?.length) lines.push(...report.stateWarnings);
     }
     return lines.join('\n');
@@ -133,7 +157,8 @@ function display(value: unknown): string {
 async function main(args = process.argv.slice(2)): Promise<void> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
     home: { type: 'string' }, config: { type: 'string' }, catalog: { type: 'string' }, group: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' },
-    query: { type: 'string' }, keyword: { type: 'string', multiple: true }, alias: { type: 'string', multiple: true }, intent: { type: 'string' }, goal: { type: 'string', multiple: true }, state: { type: 'string' }, refresh: { type: 'boolean' }, 'max-age': { type: 'string' },
+    query: { type: 'string' }, keyword: { type: 'string', multiple: true }, alias: { type: 'string', multiple: true }, intent: { type: 'string' }, goal: { type: 'string', multiple: true }, state: { type: 'string' }, refresh: { type: 'boolean' }, raw: { type: 'boolean' }, 'max-age': { type: 'string' },
+    term: { type: 'string', multiple: true }, 'exclude-url': { type: 'string', multiple: true }, 'discovery-query': { type: 'string' }, 'target-count': { type: 'string' },
     cursor: { type: 'string' }, parent: { type: 'string' }, order: { type: 'string' },
     sources: { type: 'string' }, platform: { type: 'string' }, stdin: { type: 'boolean' }, 'from-env': { type: 'string' }, limit: { type: 'string' }, 'github-type': { type: 'string' },
     domain: { type: 'string', multiple: true }, since: { type: 'string' }, at: { type: 'string' }, 'read-limit': { type: 'string' }, 'read-sources': { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' }, 'skill-dir': { type: 'string' },
@@ -142,6 +167,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
   if (values.help || (!positionals.length && !values.version)) { process.stdout.write(help); return; }
   if (values.version) { process.stdout.write(JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version + '\n'); return; }
   const command = positionals[0], text = positionals.slice(1).join(' ');
+  if (command === 'read' && positionals.length !== 2) throw new Error('read 需要一个 URL；批量读取请使用 read-many');
   const location = { home: values.home, file: values.config, catalog: values.catalog, group: values.group === undefined ? undefined : z.enum(catalogGroups).parse(values.group) };
   if (command === 'install') {
     const controller = new AbortController(), cancel = () => controller.abort();
@@ -164,8 +190,8 @@ async function main(args = process.argv.slice(2)): Promise<void> {
   try {
     let result: unknown;
     const selected = sources(values.sources);
-    const search = { query: text, sources: selected, platform: values.platform, limit: integer(values.limit, 5), githubType: values['github-type'] as any, domains: values.domain, since: values.since, at: values.at, aliases: values.alias, intent: values.intent === undefined ? undefined : z.enum(intents).parse(values.intent), signal: controller.signal };
-    const read = { sources: selected, query: values.query, keywords: values.keyword, length: integer(values.length, 2000), refresh: values.refresh, maxAgeMs: values['max-age'] === undefined ? undefined : integer(values['max-age'], 0), signal: controller.signal };
+    const search = { query: text, sources: selected, platform: values.platform, limit: integer(values.limit, 5), githubType: values['github-type'] as any, domains: values.domain, since: values.since, at: values.at, aliases: values.alias, terms: values.term, excludeUrls: values['exclude-url'], intent: values.intent === undefined ? undefined : z.enum(intents).parse(values.intent), signal: controller.signal };
+    const read = { sources: selected, query: values.query, keywords: values.keyword, length: integer(values.length, 2000), refresh: values.refresh, maxAgeMs: values['max-age'] === undefined ? undefined : integer(values['max-age'], 0), timeoutMs: values['timeout-ms'] === undefined ? undefined : integer(values['timeout-ms'], 20000), browser: values.browser, raw: values.raw, signal: controller.signal };
     switch (command) {
       case 'login': {
         const source = z.enum(sourceNames).parse(text);
@@ -196,20 +222,37 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       case 'image-search': result = await engine.images({ query: text, sources: selected, platform: values.platform, limit: integer(values.limit, 5), signal: controller.signal }); break;
       case 'reverse-image': result = await engine.images({ imageUrl: text, sources: selected, platform: values.platform, limit: integer(values.limit, 5), signal: controller.signal }); break;
       case 'research': {
-        let state;
+        const task = values.input ? JSON.parse(await readFile(values.input, 'utf8')) : {};
+        let state = task.state, migrationWarnings: string[] = [];
         if (values.state) {
-          try { state = JSON.parse(await readFile(values.state, 'utf8')); }
-          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+          const migration = await readResearchState(values.state);
+          if (migration) { state = migration.state; migrationWarnings = migration.warnings; }
         }
-        const report = await engine.research({ ...search, readLimit: integer(values['read-limit'], 5), readSources: sources(values['read-sources']), goals: values.goal, state, keywords: values.keyword, length: read.length, refresh: values.refresh });
+        const report = await engine.research({ ...search, ...task, query: text || task.query, sources: selected ?? task.sources, signal: controller.signal,
+          limit: integer(values.limit, task.limit ?? 5), aliases: values.alias ?? task.aliases, terms: values.term ?? task.terms, excludeUrls: values['exclude-url'] ?? task.excludeUrls,
+          platform: values.platform ?? task.platform, githubType: values['github-type'] ?? task.githubType, domains: values.domain ?? task.domains, since: values.since ?? task.since, at: values.at ?? task.at, intent: search.intent ?? task.intent,
+          discoveryQuery: values['discovery-query'] ?? task.discoveryQuery, targetCount: values['target-count'] === undefined ? task.targetCount : integer(values['target-count'], 1),
+          readLimit: integer(values['read-limit'], task.readLimit ?? 5), readSources: sources(values['read-sources']) ?? task.readSources, goals: values.goal ?? task.goals, state,
+          keywords: values.keyword ?? task.keywords, length: integer(values.length, task.length ?? 2000), refresh: values.refresh ?? task.refresh, timeoutMs: read.timeoutMs ?? task.timeoutMs, browser: read.browser ?? task.browser, raw: read.raw ?? task.raw });
+        if (migrationWarnings.length) report.stateWarnings = [...migrationWarnings, ...(report.stateWarnings ?? [])];
         if (values.state && report.state) {
           try { await writeAtomic(values.state, JSON.stringify(report.state, null, 2) + '\n'); }
           catch (error) { if (report.status !== 'error') report.status = 'partial'; report.stateWarnings = [`状态文件未保存：${errorMessage(error, config)}`]; }
         }
         result = report; break;
       }
+      case 'migrate-state': {
+        if (!values.state) throw new Error('migrate-state 需要 --state JSON文件');
+        const migration = await readResearchState(values.state);
+        if (!migration) throw new Error('研究状态文件尚不存在，首次研究会创建状态');
+        result = { status: 'ok', ...migration }; break;
+      }
       case 'read': result = await engine.read(text, read); break;
       case 'read-many': result = await engine.readMany(positionals.slice(1), read); break;
+      case 'record': {
+        if (!values.input) throw new Error('record 需要 --input JSON文件');
+        result = await engine.record(JSON.parse(await readFile(values.input, 'utf8'))); break;
+      }
       case 'evidence': result = await engine.store.get(text, integer(values.offset, 0), integer(values.length, 4000), { query: values.query, keywords: values.keyword }); break;
       case 'clean': {
         const evidence = await engine.store.clean();

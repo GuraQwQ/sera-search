@@ -60,7 +60,7 @@ export async function loadConfig(options: ConfigLocation = {}): Promise<Config> 
   config.group = z.enum(catalogGroups).parse(options.group ?? 'default');
   if (config.group === 'game-wikis') {
     const group = schema.parse(JSON.parse(await readFile(new URL('../catalogs/game-wikis.json', import.meta.url), 'utf8')));
-    config.wiki = { ...config.wiki, sites: { ...config.wiki?.sites, ...group.wiki.sites } };
+    config.wiki = { ...config.wiki, sites: { ...group.wiki.sites, ...config.wiki?.sites } };
   }
   config.catalogFile = options.catalog ? resolve(options.catalog) : config.group === 'galgame' ? fileURLToPath(new URL('../catalogs/galgame.json', import.meta.url)) : parsed.data.catalogFile ? resolve(dirname(location.file), parsed.data.catalogFile) : fileURLToPath(new URL('../catalogs/sites.json', import.meta.url));
   const catalogSchema = z.object({ sites: z.record(z.string().regex(platformIdPattern), z.object({ domains: z.array(z.string().min(1)).min(1), label: z.string().min(1), description: z.string().optional() })) });
@@ -96,12 +96,13 @@ export async function install(options: ConfigLocation & { skillDir?: string; com
 }
 
 export function errorMessage(error: unknown, config: Config): string {
-  if (['NOT_LOGGED_IN', 'NEED_LOGIN', 'AUTH_REQUIRED', 'HTTP_401'].includes(String((error as { code?: unknown })?.code))) return notLoggedIn;
-  let message = error instanceof Error ? error.message : String(error);
+  if (['NOT_LOGGED_IN', 'NEED_LOGIN', 'AUTH_REQUIRED'].includes(String((error as { code?: unknown })?.code))) return notLoggedIn;
+  const message = error instanceof Error ? error.message : String(error);
   const secrets = Object.values(config.credentials ?? {}).flatMap(record => Object.values(record.credentials));
   for (const name of apiSources) secrets.push(config[name]?.apiKey, config[name]?.username, config[name]?.password);
-  for (const key of secrets) {
-    if (key) message = message.split(key).join('[已隐藏]');
-  }
-  return message;
+  const patterns = [...new Set(secrets.filter((key): key is string => Boolean(key)))].sort((a, b) => b.length - a.length).map(key => {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return key.length < 4 ? `(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])` : escaped;
+  });
+  return patterns.length ? message.replace(new RegExp(patterns.join('|'), 'gu'), '[已隐藏]') : message;
 }

@@ -3,7 +3,7 @@ import { readFile, readdir, rm, realpath, lstat, mkdir } from 'node:fs/promises'
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { writeAtomic } from './files.js';
 import { sourceNames, extensionNames } from './types.js';
-import type { Config, Document, Evidence, SourceName } from './types.js';
+import type { Config, Document, Evidence, SourceName, EvidenceSource } from './types.js';
 
 export function canonicalUrl(value: string): string {
   const url = new URL(value);
@@ -107,8 +107,32 @@ export function focusText(content: string, options: FocusOptions, length = 4000)
     used += size + (fragments.length > 1 ? 5 : 0);
   }
   fragments.sort((a, b) => a.offset - b.offset);
+  const contexts: { content: string; offset: number; endOffset: number; kind: 'heading' | 'table-header' }[] = [];
+  const lines = content.split('\n'), positions: number[] = [];
+  let position = 0;
+  for (const line of lines) { positions.push(position); position += Array.from(line).length + 1; }
+  const addContext = (first: number, last: number, kind: 'heading' | 'table-header') => {
+    const offset = positions[first]!, endOffset = Math.min(characters.length, positions[last]! + Array.from(lines[last]!).length);
+    if (contexts.some(item => item.offset === offset) || fragments.some(item => item.offset <= offset && item.endOffset >= endOffset)
+      || contexts.reduce((sum, item) => sum + Array.from(item.content).length, 0) + endOffset - offset > Math.min(1000, length)) return;
+    contexts.push({ content: characters.slice(offset, endOffset).join(''), offset, endOffset, kind });
+  };
+  for (const fragment of fragments) {
+    const start = positions.findLastIndex(offset => offset <= fragment.offset), end = positions.findLastIndex(offset => offset < fragment.endOffset);
+    const headings = new Map<number, number>();
+    for (let index = 0; index <= start; index++) {
+      const depth = lines[index]!.match(/^\s{0,3}(#{1,6})\s/)?.[1]?.length;
+      if (depth) { for (const key of headings.keys()) if (key >= depth) headings.delete(key); headings.set(depth, index); }
+    }
+    for (const index of headings.values()) addContext(index, index, 'heading');
+    for (let index = start; index <= end; index++) if (/\|/.test(lines[index]!)) {
+      let first = index;
+      while (first > 0 && /\|/.test(lines[first - 1]!)) first--;
+      if (/^\s*\|?\s*:?-{3,}/.test(lines[first + 1] ?? '')) addContext(first, first + 1, 'table-header');
+    }
+  }
   return { content: fragments.map(item => item.content).join('\n\n…\n\n'), offset: fragments[0]?.offset ?? 0, totalCharacters: characters.length, nextOffset: null,
-    selection: 'focused' as const, fragments, sections };
+    selection: 'focused' as const, fragments, contexts, sections };
 }
 
 function owned(value: unknown): value is Evidence {
@@ -118,14 +142,14 @@ function owned(value: unknown): value is Evidence {
     && typeof item.content === 'string' && typeof item.retrievedAt === 'string' && Array.isArray(item.retrievedBy);
 }
 
-interface UrlReference { kind: 'sera-url-cache'; key: string; url: string; source: SourceName; id: string; retrievedAt: string }
-const referenceKey = (url: string, source: SourceName) => contentHash(canonicalUrl(url) + '\n' + source);
+interface UrlReference { kind: 'sera-url-cache'; key: string; url: string; source: EvidenceSource; id: string; retrievedAt: string }
+const referenceKey = (url: string, source: EvidenceSource) => contentHash(canonicalUrl(url) + '\n' + source);
 function ownedReference(value: unknown): value is UrlReference {
   if (!value || typeof value !== 'object') return false;
   const item = value as Partial<UrlReference>;
-  if (item.kind !== 'sera-url-cache' || typeof item.url !== 'string' || !sourceNames.includes(item.source as SourceName)
+  if (item.kind !== 'sera-url-cache' || typeof item.url !== 'string' || item.source !== 'external' && !sourceNames.includes(item.source as SourceName)
     || typeof item.id !== 'string' || !/^[a-f0-9]{64}$/.test(item.id) || typeof item.retrievedAt !== 'string') return false;
-  try { return item.key === referenceKey(item.url, item.source as SourceName); } catch { return false; }
+  try { return item.key === referenceKey(item.url, item.source as EvidenceSource); } catch { return false; }
 }
 const cleanupTasks = new Map<string, Promise<{ removed: number; preserved: number; failures: { file: string; code: string }[] }>>();
 
@@ -185,7 +209,7 @@ export class EvidenceStore {
     await writeAtomic(path, JSON.stringify(reference) + '\n');
   }
 
-  async forget(value: string, source: SourceName, id: string) {
+  async forget(value: string, source: EvidenceSource, id: string) {
     const key = referenceKey(value, source), path = join(this.directory, `url-${key}.json`);
     let reference: unknown;
     try { reference = JSON.parse(await readFile(path, 'utf8')); }
@@ -194,13 +218,13 @@ export class EvidenceStore {
     if (reference.id === id) await rm(path, { force: true });
   }
 
-  async find(value: string, sources?: SourceName[], maxAgeMs?: number, accept?: (evidence: Evidence) => boolean): Promise<Evidence | undefined> {
+  async find(value: string, sources?: EvidenceSource[], maxAgeMs?: number, accept?: (evidence: Evidence) => boolean): Promise<Evidence | undefined> {
     const url = canonicalUrl(value);
     if (maxAgeMs !== undefined && (!Number.isFinite(maxAgeMs) || maxAgeMs < 0)) throw new Error('缓存时长需要非负毫秒数');
     if (maxAgeMs === 0) return undefined;
     const address = new URL(url), retentionMs = this.config.retentionDays * 86400000;
     const snapshot = address.hostname === 'web.archive.org' && /^\/web\/\d{14}(?:[a-z_]+)?\//i.test(address.pathname);
-    for (const source of [...new Set(sources ?? sourceNames)]) {
+    for (const source of [...new Set<EvidenceSource>(sources ?? [...sourceNames, 'external'])]) {
       const immutable = snapshot || source === 'wiki' && /^\d+$/.test(address.searchParams.get('oldid') ?? '');
       const freshness = Math.min(maxAgeMs ?? (immutable ? retentionMs : 15 * 60000), retentionMs);
       const key = referenceKey(url, source);
@@ -221,16 +245,21 @@ export class EvidenceStore {
     return undefined;
   }
 
-  async get(id: string, offset = 0, length = 4000, focus?: FocusOptions) {
+  async load(id: string): Promise<Evidence> {
     if (!/^[a-f0-9]{64}$/.test(id)) throw new Error('证据 ID 应为 64 位十六进制字符串');
-    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 1 || length > 20000) throw new Error('分页需要非负 offset 和 1–20000 的 length');
     let evidence: unknown;
     try { evidence = JSON.parse(await readFile(join(this.directory, `${id}.json`), 'utf8')); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('证据不存在或已过期，请重新读取原始链接');
       throw error;
     }
-    if (!owned(evidence)) throw new Error('证据文件格式不正确');
+    if (!owned(evidence) || evidence.id !== id || evidence.contentHash !== contentHash(evidence.content)) throw new Error('证据文件格式或正文校验不正确');
+    return evidence;
+  }
+
+  async get(id: string, offset = 0, length = 4000, focus?: FocusOptions) {
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 1 || length > 20000) throw new Error('分页需要非负 offset 和 1–20000 的 length');
+    const evidence = await this.load(id);
     const { content, ...metadata } = evidence;
     return { ...metadata, ...(focus?.query || focus?.keywords?.length ? focusText(content, focus, length) : textPage(content, offset, length)) };
   }

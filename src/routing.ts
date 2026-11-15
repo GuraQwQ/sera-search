@@ -37,7 +37,7 @@ export function directTarget(query: string): string | undefined {
 export function taskRoute(query = '', intent?: Intent) {
   const inferred: Intent = intent ?? (/失传|历史|旧官网|快照|归档|时光机|wayback|lost media/i.test(query) ? 'historical'
     : /galgame|视觉小说|汉化考据/i.test(query) ? 'galgame'
-    : /评论|口碑|用户反馈|体验|评价|感想/i.test(query) ? 'feedback'
+    : /评论|口碑|风评|用户反馈|体验|评价|感想/i.test(query) ? 'feedback'
     : /游戏.*(?:wiki|百科|攻略|机制)|(?:wiki|攻略).*游戏/i.test(query) ? 'game'
     : /论文|doi|pmid|文献|学术/i.test(query) ? 'academic'
     : /github|代码|仓库|issue|pull request/i.test(query) ? 'code'
@@ -49,6 +49,11 @@ export function taskRoute(query = '', intent?: Intent) {
 }
 
 export function preferredSources(intent: Intent, query = ''): SourceName[] {
+  if (['general', 'official', 'feedback', 'code'].includes(intent) && /中转|服务商|替代方案|性价比|选型|套餐对比|service providers?|alternatives?|compare/i.test(query)) {
+    const community: SourceName[] = /\p{Script=Han}/u.test(query) ? ['bilibili', 'linuxdo'] : [];
+    return /软件|模型|中转|插件|客户端|\bapi\b/i.test(query) ? ['github', ...community, ...webSearchOrder, 'agent-reach', 'opencli']
+      : [...webSearchOrder, ...community, 'github', 'agent-reach', 'opencli'];
+  }
   if (intent === 'historical') return ['wayback', 'archive', ...webSearchOrder];
   if (intent === 'game') return ['wiki', 'steam', ...webSearchOrder];
   if (intent === 'galgame') return ['vndb', 'bangumi', 'steam', 'sites', ...webSearchOrder];

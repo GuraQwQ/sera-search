@@ -28,9 +28,15 @@ node dist/cli.js backend scrapling --home F:/tools/sera-data --json
 node dist/cli.js backend scrapling TOOL_NAME --input ./backend-input.json --home F:/tools/sera-data --json
 ```
 
-`backend` 仅接受 `ghgrab` 或 `scrapling`，按上游 Schema 传参。组件位于 `<home>/tools`，安装与运行缓存位于 `<home>/cache/integrations`；重复 `install --components` 会核对、补全或修复所选组件。Scrapling 的内存会话在同一 MCP 连接内保持；每次 CLI `backend` 是独立进程，需要跨进程会话时使用上游发现的 save／load 工具。完整能力与兼容范围见[扩展来源与后端](integrations.md)。
+`backend` 接受 `ghgrab`、`scrapling`、`aliens-eye`、`sherlock` 或 `gods-eye-view`，按上游 Schema 传参。组件位于 `<home>/tools`，安装与运行缓存位于 `<home>/cache/integrations`；重复 `install --components` 会核对、补全或修复所选组件。Scrapling 的内存会话在同一 MCP 连接内保持；每次 CLI `backend` 是独立进程，需要跨进程会话时使用上游发现的 save／load 工具。完整能力与兼容范围见[扩展来源与后端](integrations.md)。
 
 ## 检索与取证
+
+搜索返回 `retrievals[].metadata.relevance` 的词面诊断，显式来源仍保留原始候选。默认搜索继续取得足量新命中，`--exclude-url` 标记已知 URL，`--term` 单独指定发现用词。`research` 优先充分匹配的候选，也允许部分匹配取证；需要先审阅来源时设 `--read-limit 0`，确认后直接 `read`。
+
+`read`／`read-many`／`research` 可传 `--timeout-ms` 调整本次读取预算、`--browser` 使用已有 Chromium／Edge。`web` 读取公开 JSON、文本与 JS 时直读；`--raw` 跳过 Jina 并保留 HTML，便于定位页面已有的原文、数据和脚本入口。不同取得方式的正文缓存分别匹配，`--refresh` 取得新观察。
+
+`record --input JSON文件` 保存外部工具实际取得的材料，必填 `url`、`title`、`content`、`method` 与 ISO 时间 `observedAt`；可传 `publishedAt`、`contentKind` 和 `metadata`。返回的 `source:external`、`metadata.acquisition` 与导入时间可通过 `evidence` 继续读取；状态文件关联该证据 ID。示例见[取证与续查](../skills/sera-search/references/workflows.md)。
 
 ```bash
 # 多来源召回，每个来源最多返回 5 条
@@ -116,7 +122,9 @@ node dist/cli.js clean --json
 
 未指定 `--sources` 时，`search` 按 `intent` 选择可用来源，空结果、无关候选或错误继续换源，有有效候选后停止。显式来源保持并行聚合。`--intent` 可指定 `official`、`feedback`、`historical`、`game`、`galgame`、`academic`、`code`、`images` 或 `general`；重复 `--alias` 补充别名，初始后端无有效结果时最多重试首个不同别名。`runs[].attempts` 记录实际查询、后端和换路原因。相关性为保守词面判断，跨语言名称或歧义短名需 agent 消歧。
 
-跨轮研究可从首轮传 `--state ./research-state.json`，配合重复 `--goal` 指定待核验字段。CLI创建或读取该文件，并将新状态原子写回；审阅原文后编辑字段状态与 `evidenceIds`，再执行原命令。`state.nextQuery` 建议下一轮关注一个字段，优先冲突项。已取证URL跳过；明确 `Retry-After` 对应的 `retryAt` 未到时，先查其他URL，`--refresh` 也遵守等待条件。文件保存失败保留结果并返回 `stateWarnings`。
+跨轮研究从首轮传 `--state ./research-state.json`；重复 `--goal` 建立必需判据，多对象与偏好通过 `research --input ./request.json` 的 `subjects`、`criteria` 定义。`--discovery-query` 控制本轮查询，`--target-count` 指定合格对象数量。新状态采用 `version:2`；审阅后填写 `assessments` 的结论、`outcome`、`scope` 和引用坐标。工具先复用旧证据再补缺口，通过 `coverage` 检查覆盖和引用，通过 `comparison.progress` 驱动续查。Retry-After 在跨轮保持，保存失败返回 `stateWarnings`。
+
+CLI 读取旧 `fields` 状态时先原子备份并迁移，也可以用 `migrate-state --state ./research-state.json` 单独迁移。迁移重跑复用同一备份；旧结论和证据 ID 保留，明确条件判断及原文坐标后再完成核验。完整结构见[取证与续查](../skills/sera-search/references/workflows.md)。
 
 `research --sources` 同时约束搜索和正文读取的来源范围。需要使用另一组读取后端时，传入 `--read-sources`；例如 `--sources brave --read-sources web`。MCP／库接口对应字段为 `readSources`。这样可以显式控制参与任务的来源及 API 调用预算。
 

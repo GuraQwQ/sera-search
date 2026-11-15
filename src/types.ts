@@ -98,6 +98,7 @@ export interface SearchRequest {
   since?: string;
   at?: string;
   aliases?: string[];
+  terms?: string[];
   onAttempt?: (attempt: SearchAttempt) => void;
   signal: AbortSignal;
 }
@@ -109,13 +110,14 @@ export interface SearchHit {
   url: string;
   snippet: string;
   publishedAt?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown> & { relevance?: { status: string; matchedTerms?: string[]; missingTerms?: string[]; score?: number } };
 }
 
 export type ContentKind = 'page' | 'post' | 'subtitle' | 'metadata';
+export type EvidenceSource = SourceName | 'external';
 
 export interface Document {
-  source: SourceName;
+  source: EvidenceSource;
   url: string;
   title: string;
   content: string;
@@ -145,7 +147,7 @@ export interface Source {
   login?: (platform: string, signal: AbortSignal) => Promise<void>;
   logout?: (platform: string, signal: AbortSignal) => Promise<void>;
   search?: (request: SearchRequest) => Promise<SearchHit[]>;
-  read?: (url: string, signal: AbortSignal) => Promise<Document>;
+  read?: (url: string, signal: AbortSignal, options?: ReadOptions) => Promise<Document>;
   comments?: (request: CommentRequest) => Promise<CommentPage>;
   images?: (request: ImageRequest) => Promise<SearchHit[]>;
 }
@@ -168,7 +170,7 @@ export interface Retrieval {
   source: SourceName;
   rank: number;
   snippet: string;
-  metadata?: Record<string, unknown>;
+  metadata?: SearchHit['metadata'];
 }
 
 export interface AggregatedHit {
@@ -194,7 +196,12 @@ export interface SourceRun {
   fallbackUrl?: string;
   attempts?: SearchAttempt[];
   cacheHit?: boolean;
+  network?: NetworkTrace;
+  newUrls?: number;
 }
+
+export interface NetworkRequest { url: string; method: string; startedAt: string; elapsedMs?: number; status?: number; error?: string }
+export interface NetworkTrace { scope: 'sera-http'; requestCount: number; redirectResponseCount: number; requests: NetworkRequest[]; upstreamRequestCount: null }
 
 export interface SearchOptions {
   query: string;
@@ -206,6 +213,8 @@ export interface SearchOptions {
   since?: string;
   at?: string;
   aliases?: string[];
+  terms?: string[];
+  excludeUrls?: string[];
   intent?: Intent;
   signal?: AbortSignal;
 }
@@ -223,7 +232,7 @@ export interface Evidence extends Document {
   id: string;
   contentHash: string;
   retrievedAt: string;
-  retrievedBy: SourceName[];
+  retrievedBy: EvidenceSource[];
 }
 
 export interface ReadReport {
@@ -236,6 +245,7 @@ export interface ReadReport {
   offset?: number;
   selection?: 'focused' | 'leading';
   fragments?: { content: string; offset: number; endOffset: number; matchedTerms: string[] }[];
+  contexts?: { content: string; offset: number; endOffset: number; kind: 'heading' | 'table-header' }[];
   sections?: { title: string; offset: number }[];
   cacheHit?: boolean;
   cacheAgeMs?: number;
@@ -243,27 +253,54 @@ export interface ReadReport {
   nextSteps?: string[];
   runs: SourceRun[];
 }
-export interface ReadOptions { sources?: SourceName[]; signal?: AbortSignal; query?: string; keywords?: string[]; length?: number; refresh?: boolean; maxAgeMs?: number }
+export interface ReadOptions { sources?: SourceName[]; signal?: AbortSignal; query?: string; keywords?: string[]; length?: number; refresh?: boolean; maxAgeMs?: number; timeoutMs?: number; browser?: string; raw?: boolean }
 export interface BatchReadReport { status: 'ok' | 'partial' | 'error'; documents: ReadReport[] }
-export interface ResearchField { name: string; status: 'pending' | 'supported' | 'conflict'; evidenceIds: string[]; note?: string }
-export interface ResearchState {
-  fields: ResearchField[];
-  examinedUrls: string[];
-  candidates?: { field: string; evidenceId: string; url: string }[];
-  accessFailures?: { url: string; codes: string[]; retryAt?: string }[];
-  nextAction?: 'continue' | 'review-evidence' | 'complete';
-  nextQuery?: string;
+export interface ResearchSubject { id: string; name: string; aliases?: string[]; urls?: string[] }
+export interface ResearchCriterion { id: string; description: string; kind: 'required' | 'preference'; intent?: Intent; scope?: Record<string, string>; keywords?: string[] }
+export interface ResearchCitation { evidenceId: string; offset?: number; endOffset?: number }
+export interface ResearchAssessment {
+  subjectId: string;
+  criterionId: string;
+  status: 'pending' | 'supported' | 'conflict';
+  outcome: 'unknown' | 'satisfied' | 'violated';
+  conclusion?: string;
+  scope?: Record<string, string>;
+  citations: ResearchCitation[];
+  reviewedEvidenceIds: string[];
+  measurement?: { value: number; unit: string; normalization?: { factor: number; unit: string; note: string } };
 }
-export interface ResearchOptions extends SearchOptions { readLimit?: number; readSources?: SourceName[]; goals?: string[]; state?: ResearchState; keywords?: string[]; length?: number; refresh?: boolean }
+export interface ResearchCandidate { subjectId: string; criterionId: string; evidenceId: string; url: string }
+export interface ResearchRound { query: string; sources: SourceName[]; newUrls: number; newEvidence: number; resolved: number }
+export interface ResearchState {
+  version: 2;
+  subjects: ResearchSubject[];
+  criteria: ResearchCriterion[];
+  assessments: ResearchAssessment[];
+  targetCount?: number;
+  evidenceIds: string[];
+  discoveredUrls: string[];
+  examinedUrls: string[];
+  candidates: ResearchCandidate[];
+  accessFailures: { url: string; codes: string[]; retryAt?: string }[];
+  history: ResearchRound[];
+  resolvedCount: number;
+  nextAction?: 'continue' | 'review-evidence' | 'change-query' | 'change-source' | 'waiting' | 'complete';
+  nextQuery?: string;
+  nextSources?: SourceName[];
+}
+export interface ResearchOptions extends SearchOptions { readLimit?: number; readSources?: SourceName[]; goals?: string[]; subjects?: ResearchSubject[]; criteria?: ResearchCriterion[]; targetCount?: number; discoveryQuery?: string; state?: ResearchState; keywords?: string[]; length?: number; refresh?: boolean; timeoutMs?: number; browser?: string; raw?: boolean }
 
 export interface ResearchReport extends SearchReport {
   documents: ReadReport[];
   state?: ResearchState;
   stateWarnings?: string[];
+  coverage?: { qualified: string[]; excluded: string[]; unresolved: string[]; verified: { subjectId: string; criterionId: string }[]; gaps: { subjectId?: string; criterionId?: string; reason: string }[]; complete: boolean };
   comparison: {
     documentsRead: number;
     publisherGroups: { publisher: string; evidenceIds: string[] }[];
     duplicateContent: { contentHash: string; evidenceIds: string[] }[];
+    groups?: { criterionId: string; scope: Record<string, string>; unit?: string; values: { subjectId: string; conclusion: string; value?: number; originalValue?: number; originalUnit?: string; conversion?: string }[] }[];
+    progress?: ResearchRound;
     nextSteps: string[];
   };
 }

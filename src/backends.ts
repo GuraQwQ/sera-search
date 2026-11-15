@@ -5,6 +5,7 @@ import { backendNames, extensionNames } from './types.js';
 import type { BackendName, Config, Source } from './types.js';
 import { integrationEnvironment } from './components.js';
 import { contentHash, EvidenceStore } from './evidence.js';
+import { errorMessage } from './config.js';
 import { document, hit, object, permitted, rows, string } from './providers/shared.js';
 
 export const backendSchema = z.object({ source: z.enum(backendNames), tool: z.string().min(1).optional(), arguments: z.record(z.string(), z.unknown()).optional(), timeoutMs: z.number().int().min(100).max(300000).optional() });
@@ -102,13 +103,13 @@ export class BackendPool {
       const { content: _content, ...seraEvidence } = evidence;
       return { ...result, isError: data.status === 'error', structuredContent: { ...data, seraEvidence }, content: [...result.content, { type: 'text' as const, text: JSON.stringify({ seraEvidence }) }] };
     } catch (error) {
-      const cacheWarnings = ['扩展结果已返回，证据保存失败：' + (error instanceof Error ? error.message : String(error))];
+      const cacheWarnings = ['扩展结果已返回，证据保存失败：' + errorMessage(error, config)];
       return { ...result, isError: data.status === 'error', structuredContent: { ...data, cacheWarnings }, content: [...result.content, { type: 'text' as const, text: JSON.stringify({ cacheWarnings }) }] };
     }
   }
 
-  async data(config: Config, source: BackendName, tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
-    const result = await this.run(config, { source, tool, arguments: args }, signal);
+  async data(config: Config, source: BackendName, tool: string, args: Record<string, unknown>, signal: AbortSignal, timeoutMs?: number): Promise<unknown> {
+    const result = await this.run(config, { source, tool, arguments: args, timeoutMs }, signal);
     const text = result.content.filter(item => item.type === 'text').map(item => item.text).join('\n');
     if (result.isError) throw failure('BACKEND_ERROR', `${source} ${tool}：${text || '上游工具执行失败'}`);
     if (result.structuredContent) return result.structuredContent;
@@ -146,31 +147,36 @@ export function createBackendSources(config: Config, pool: BackendPool): Source[
         const [owner, repo, ...tail] = target.pathname.split('/').filter(Boolean);
         target.hostname = 'github.com'; target.pathname = `/${owner}/${repo}/blob/${tail.join('/')}`;
       }
-      const file = /\/(?:blob|raw)\/|\/src\/(?:branch|tag|commit)\//.test(target.pathname);
-      if (file) {
-        const info = object(await pool.data(config, 'ghgrab', 'repo_info', { url: target.href }, signal), 'ghgrab');
-        const path = string(info.url_path);
-        if (!path) throw failure('BAD_INPUT', '仓库链接缺少文件路径');
-        const data = object(await pool.data(config, 'ghgrab', 'read_file', { url: target.href, path }, signal), 'ghgrab');
-        if (typeof data.content !== 'string') throw failure('BAD_OUTPUT', 'ghgrab 未返回文件正文');
-        return document('ghgrab', url, string(data.path) || path, data.content, { metadata: { extraction: 'repository-file', platform: info.platform, branch: info.url_branch ?? info.default_branch, path } });
+      const ambiguous = /\/src\/(?:branch|tag|commit)\//.test(target.pathname);
+      let tree: Record<string, unknown> | undefined;
+      if (/\/(?:blob|raw)\//.test(target.pathname) || ambiguous) {
+        const info = object(await pool.data(config, 'ghgrab', ambiguous ? 'repo_tree' : 'repo_info', { url: target.href }, signal), 'ghgrab');
+        const path = string(ambiguous ? info.path : info.url_path);
+        if (ambiguous) tree = info;
+        else if (!path) throw failure('BAD_INPUT', '仓库链接缺少文件路径');
+        if (path && (!ambiguous || rows(info.entries, 'ghgrab 目录').some(entry => entry.path === path && entry.kind === 'file'))) {
+          const data = object(await pool.data(config, 'ghgrab', 'read_file', { url: target.href, path }, signal), 'ghgrab');
+          if (typeof data.content !== 'string') throw failure('BAD_OUTPUT', 'ghgrab 未返回文件正文');
+          return document('ghgrab', url, string(data.path) || path, data.content, { metadata: { extraction: 'repository-file', platform: info.platform, branch: info.branch ?? info.url_branch ?? info.default_branch, path } });
+        }
       }
-      const data = object(await pool.data(config, 'ghgrab', 'repo_tree', { url: target.href }, signal), 'ghgrab');
+      const data = tree ?? object(await pool.data(config, 'ghgrab', 'repo_tree', { url: target.href }, signal), 'ghgrab');
       rows(data.entries, 'ghgrab 目录');
       return document('ghgrab', url, `${string(data.owner)}/${string(data.repo)}`, JSON.stringify(data, null, 2), { contentKind: 'metadata', metadata: { extraction: 'repository-tree', contentScope: 'directory', branch: data.branch, path: data.path, truncated: data.truncated } });
     },
   }, {
     capability: { name: 'scrapling', search: false, read: true, configured: configured('scrapling'), category: 'web', requirement: '安装 Scrapling 与浏览器；渲染网页正文，交互与截图通过 backend 入口发现' },
-    async read(url, signal) {
+    async read(url, signal, options) {
       if (!['http:', 'https:'].includes(new URL(url).protocol)) throw failure('BAD_INPUT', '浏览器读取需要 HTTP 或 HTTPS 链接');
-      const data = object(await pool.data(config, 'scrapling', 'browser_fetch_once', { url, extraction_type: 'markdown', timeout: config.timeoutMs }, signal), 'Scrapling');
+      const timeoutMs = options?.timeoutMs ?? config.timeoutMs;
+      const data = object(await pool.data(config, 'scrapling', 'browser_fetch_once', { url, extraction_type: 'markdown', timeout: timeoutMs, ...(options?.browser ? { executable_path: options.browser } : {}) }, signal, timeoutMs), 'Scrapling');
       if (typeof data.status !== 'number' || !Number.isInteger(data.status)) throw failure('BAD_OUTPUT', 'Scrapling 未返回 HTTP 状态');
       if (data.status < 200 || data.status >= 400) throw failure(`HTTP_${data.status}`, `Scrapling 页面返回 HTTP ${data.status}`);
       const actualUrl = string(data.url) || url;
-      if (actualUrl !== url && /\/(?:login|signin|sign-in)(?:\/|$)/i.test(new URL(actualUrl).pathname)) throw failure('AUTH_REQUIRED', '浏览器被重定向到登录页面');
+      if (actualUrl !== url && /\/(?:login|signin|sign-in)(?:\/|$)/i.test(new URL(actualUrl).pathname)) throw failure('PAGE_AUTH_REQUIRED', '浏览器被重定向到登录页面');
       if (!Array.isArray(data.content) || !data.content.every(item => typeof item === 'string')) throw failure('BAD_OUTPUT', 'Scrapling 未返回正文文本列表');
       const content = data.content.join('\n\n');
-      return document('scrapling', actualUrl, content.match(/^#\s+(.+)$/m)?.[1] ?? actualUrl, content, { metadata: { extraction: 'browser-rendered-markdown', contentScope: 'rendered-page', renderedScripts: true, httpStatus: data.status, requestedUrl: url, bodyAvailable: Boolean(content.trim()) } });
+      return document('scrapling', actualUrl, content.match(/^#\s+(.+)$/m)?.[1] ?? actualUrl, content, { metadata: { extraction: 'browser-rendered-markdown', contentScope: 'rendered-page', renderedScripts: true, httpStatus: data.status, requestedUrl: url, bodyAvailable: Boolean(content.trim()), timeoutMs, ...(options?.browser ? { browser: options.browser } : {}) } });
     },
   }];
 }
