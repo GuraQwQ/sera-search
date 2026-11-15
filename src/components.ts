@@ -87,9 +87,11 @@ export async function cleanIntegrationCache(home: string): Promise<{ removed: bo
     for (const path of [join(resolve(home), 'cache'), cache]) if ((await lstat(path)).isSymbolicLink()) throw new Error('组件缓存路径包含符号链接，已保留内容');
     if (JSON.parse(await readFile(join(cache, markerName), 'utf8')).kind !== markerKind) throw new Error('组件缓存目录缺少有效的 SERA 管理标记');
     const check = async (path: string): Promise<void> => {
-      const info = await lstat(path);
-      if (info.isSymbolicLink() || !inside(root, await realpath(path))) throw new Error('组件缓存包含符号链接或外部路径，已保留内容');
-      if (info.isDirectory()) for (const name of await readdir(path)) await check(join(path, name));
+      if ((await lstat(path)).isSymbolicLink() || !inside(root, await realpath(path))) throw new Error('组件缓存包含符号链接或外部路径，已保留内容');
+      for (const entry of await readdir(path, { withFileTypes: true })) {
+        if (entry.isSymbolicLink()) throw new Error('组件缓存包含符号链接或外部路径，已保留内容');
+        if (entry.isDirectory()) await check(join(path, entry.name));
+      }
     };
     await check(cache);
     await rm(cache, { recursive: true });
