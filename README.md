@@ -115,25 +115,32 @@ flowchart LR
 
 - **Choose the right material.** Prefer official pages for versions, dates, and specifications; read original posts and comments for user feedback; locate original URLs and snapshots for historical questions. Account sources without valid credentials report that they are unavailable.
 - **Read less, keep the original.** Use `query` and `keywords` to locate relevant passages. `read-many` deduplicates URLs and reads up to three documents concurrently. Fresh cached evidence can be reused; `refresh` requests a new copy.
-- **按缺口续查。** `research` 分开维护对象、必需判据与偏好，先复用已有材料再搜索；Agent 核验结论和引用片段，工具检查条件、覆盖与数量，并根据新增材料调整续查。CLI 使用 `--state` 保存，新契约及旧状态迁移见[取证与续查](skills/sera-search/references/workflows.md)。
+- **Follow the missing evidence.** `research` tracks subjects, required criteria, and preferences, reuses saved material, and searches for remaining gaps. The agent reviews claims and cited passages; SERA checks coverage and counts. Save CLI progress with `--state`; see the [research workflow](skills/sera-search/references/workflows.md).
 - **Inspect the route taken.** Default search selects sources by intent and switches backends after empty, unrelated, or failed results. Explicit `sources` aggregates the selected providers in parallel. Follow `runs` and any `retryAfterSeconds` before retrying a limited source; keep successful evidence while continuing other leads.
 
 Full material remains available under its evidence ID. Passages retain Unicode offsets, and ranking organizes retrieval results. Multiple engines finding the same article still provide one original source. See the [evidence guide](docs/evidence.md) for reading scope, content types, and follow-up retrieval.
 
 ## What you can search
 
-SERA currently registers **52 sources** and exposes **15 MCP tools**. Available operations depend on configuration, permissions, and the provider's actual response.
+SERA currently registers **125 built-in source IDs** and exposes **16 MCP tools**. Configuration can add source IDs through structured connectors. Registration does not mean every source is available: operations depend on configuration, permissions, coverage, and the provider's actual response.
 
 | Material | Example sources | What you get |
 |---|---|---|
-| Websites, news, and official documentation | Bing, Exa, Tavily, Brave, Zhipu, Doubao, SerpAPI, DataForSEO | Candidate URLs and snippets; original text through supported reading backends |
+| Websites, news, and official documentation | Bing, Exa, Tavily, Brave, Zhipu, Doubao, SerpAPI | Candidate URLs and snippets; original text through supported reading backends |
 | Repositories, code, and platform content | GitHub, Agent Reach, OpenCLI, Bilibili, V2EX | Repositories, files, posts, or platform records through discoverable operations |
 | Academic records and encyclopedias | Crossref, OpenAlex, PubMed, MediaWiki | Bibliography, abstracts, page source, and specific revisions |
+| Research artifacts and public data | OpenReview, Europe PMC, Hugging Face, UniProt, World Bank, Eurostat | Reviews, open research material, scientific records, and bounded data queries |
+| Subtitles, live archives, and event histories | Filmot, Holodex, Aicu, Danmakus, GH Archive | Matching segments, timestamps, event records, and reported collection limits |
 | Games, animation, music, and media records | Steam, Niconico, VNDB, Bangumi, MusicBrainz, and others | Object IDs, release records, specifications, credits, and metadata |
 | Historical pages and lost information | Wayback Machine, Internet Archive | Capture indexes, actual snapshots, collection metadata, and file listings |
 | Communities, comments, and image sources | LinuxDo, Heybox, YouTube, NetEase Music, image and reverse-image providers | Original posts, comment pages, reply relationships, hosting pages, and match clues |
 | Repository and browser tools, news feeds, and channel catalogs | ghgrab, Scrapling, metadata_parser, Google News RSS, Free-TV IPTV | Repository trees and files, browser responses, declared HTML metadata, RSS records, and channel metadata |
 | Account and geospatial extensions | Aliens_eye, Sherlock, God's Eye View | Scoped account candidates, profile links, avatar similarity, geographic records, observations, and predictions |
+| Known QQ resources and WeChat publications | QQ avatar and profile connectors, WeChat account and article connectors | Visible object metadata, article discovery, and authorized publication records within each operation's scope |
+
+Discover relevant connector definitions with `sera connectors --sources modrinth,scryfall --json`, or `node dist/cli.js connectors` from source. MCP clients use `sera_connectors`. Definitions describe operations, input schemas, access conditions, quotas, and limitations; configure `sources`, `connectorFiles`, or `connectors` to add or customize them. See the [connector guide](docs/connectors.md).
+
+Automatic routing prefers anonymous free access, then free authenticated access, then recurring free quotas; authenticated quota sources rank below anonymous quota sources. Paid operations and one-time trials are excluded. Mixed or unverified billing requires `freeTierConfirmed: true` in the source configuration after checking the account's free tier. This declaration does not cap the provider's billing; verify account settings and reported quotas.
 
 Game Wikis and visual-novel communities use catalogs loaded on demand:
 
@@ -157,6 +164,7 @@ Saved evidence can be located, paged, or refreshed from the chosen data director
 | Guide | Contents |
 |---|---|
 | [Configuration](docs/configuration.md) | Credentials, proxies, Agent Reach, OpenCLI, and data directories |
+| [Connectors](docs/connectors.md) | Dynamic source definitions, operation schemas, access policies, and quotas |
 | [CLI](docs/cli.md) | Search, research, reading, comments, images, and exit codes |
 | [Evidence](docs/evidence.md) | Passages, caching, timestamps, gap tracking, and cleanup |
 | [Agent Skill and MCP](docs/mcp.md) | Skill links, server registration, and the tool catalog |

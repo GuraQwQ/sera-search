@@ -1,13 +1,14 @@
+import { sourceNameSchema } from './source-schema.js';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { Engine } from './core.js';
-import { sourceNames, platformIdPattern } from './types.js';
+import { sourceNames, structuredSourceNames, platformIdPattern } from './types.js';
 import type { Config, SavedCredentials, SourceName } from './types.js';
 import { apiSources, authKey, loadCredentials, notLoggedIn, removeCredential, saveCredential } from './credentials.js';
 import { writeAtomic } from './files.js';
 
 function validate(source: SourceName, platform?: string) {
-  z.enum(sourceNames).parse(source);
+  sourceNameSchema.parse(source);
   if (platform) z.string().regex(platformIdPattern).parse(platform);
 }
 
@@ -17,8 +18,12 @@ async function enable(config: Config, source: SourceName) {
   try { input = JSON.parse(await readFile(config.configFile, 'utf8')); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const key = source === 'agent-reach' ? 'agentReach' : source;
-  const settings = input[key];
-  input[key] = { ...(settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}), enabled: true };
+  const custom = !sourceNames.includes(source as typeof sourceNames[number]) || structuredSourceNames.includes(source as typeof structuredSourceNames[number])
+    || config.connectors?.some(item => item.id === source) || Boolean(input.sources && typeof input.sources === 'object' && Object.hasOwn(input.sources, source));
+  if (custom) {
+    const all = input.sources && typeof input.sources === 'object' && !Array.isArray(input.sources) ? input.sources as Record<string, unknown> : {};
+    const settings = all[source]; all[source] = { ...(settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}), enabled: true }; input.sources = all;
+  } else { const settings = input[key]; input[key] = { ...(settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}), enabled: true }; }
   await writeAtomic(config.configFile, JSON.stringify(input, null, 2) + '\n');
 }
 
@@ -33,7 +38,10 @@ export async function login(config: Config, source: SourceName, credentials?: Sa
     await enable(config, source);
     return { ...result, status: '已登录' };
   }
-  if (!(apiSources as readonly string[]).includes(source)) return { source, status: '公开渠道可直接使用' };
+  if (!(apiSources as readonly string[]).includes(source) && !config.connectors?.some(item => item.id === source) && !config.sources?.[source]) {
+    const declared = new Engine(config).sources.find(item => item.capability.name === source)?.capability.access?.authentication;
+    if (!declared || declared === 'none' || declared === 'session') return { source, status: '公开渠道可直接使用' };
+  }
   if (!credentials) throw new Error('需要 apiKey 或 API 账号 username/password');
   const result = await saveCredential(config.home, source, credentials);
   await enable(config, source);

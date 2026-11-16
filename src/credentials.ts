@@ -1,16 +1,17 @@
+import { sourceNameSchema } from './source-schema.js';
 import { readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { writeAtomic } from './files.js';
-import { sourceNames, platformIdPattern, specialistSourceNames } from './types.js';
+import { platformIdPattern, specialistSourceNames } from './types.js';
 import type { AuthRecord, Config, SavedCredentials, SourceName } from './types.js';
 
 export const notLoggedIn = '未登录，不可用';
 export const apiSources = ['exa', 'tavily', 'brave', 'github', 'zhipu', 'doubao', 'openalex', 'pubmed', 'serpapi', 'dataforseo', 'bangumi', 'anilist', 'mangadex', 'vndb', 'lastfm', 'listenbrainz', 'discogs', 'youtube', 'netease', 'saucenao', 'twitch', 'discord', 'instagram', 'linuxdo', 'heybox', 'steam', ...specialistSourceNames] as const;
 export const credentialsSchema = z.object({ apiKey: z.string().min(1).optional(), username: z.string().min(1).optional(), password: z.string().min(1).optional(), clientId: z.string().min(1).optional() });
 const recordSchema = z.object({
-  kind: z.literal('sera-credential'), source: z.enum(sourceNames), platform: z.string().regex(platformIdPattern).optional(),
+  kind: z.literal('sera-credential'), source: sourceNameSchema, platform: z.string().regex(platformIdPattern).optional(),
   credentials: credentialsSchema, status: z.enum(['active', 'invalid']), updatedAt: z.string(),
 }).refine(record => record.platform || !(apiSources as readonly string[]).includes(record.source)
   || (record.source === 'dataforseo' ? Boolean(record.credentials.username && record.credentials.password) : Boolean(record.credentials.apiKey)));
@@ -23,7 +24,7 @@ export class NotLoggedInError extends Error {
 
 export function authKey(source: SourceName, platform?: string) { return platform ? `${source}:${platform}` : source; }
 function recordPath(home: string, source: SourceName, platform?: string) {
-  z.enum(sourceNames).parse(source);
+  sourceNameSchema.parse(source);
   if (platform) z.string().regex(platformIdPattern).parse(platform);
   return join(home, 'credentials', `${source}${platform ? '__' + platform : ''}.json`);
 }
@@ -80,19 +81,21 @@ export async function removeCredential(home: string, source: SourceName, platfor
 
 export async function migrateCredentials(home: string, file: string, input: Record<string, unknown>, original: string) {
   const records = await loadCredentials(home);
-  const legacy = apiSources.flatMap(source => {
-    const config = input[source];
-    if (!config || typeof config !== 'object' || Array.isArray(config)) return [];
-    const value = config as Record<string, unknown>;
-    const keys = ['apiKey', 'username', 'password'].filter(key => typeof value[key] === 'string' && value[key]);
-    return keys.length ? [{ source, value, keys }] : [];
+  const custom = input.sources && typeof input.sources === 'object' && !Array.isArray(input.sources) ? input.sources as Record<string, unknown> : {};
+  const legacy = [...new Set<string>([...apiSources, ...Object.keys(custom).filter(name => sourceNameSchema.safeParse(name).success)])].flatMap(source => {
+    return [input[source], custom[source]].flatMap(config => {
+      if (!config || typeof config !== 'object' || Array.isArray(config)) return [];
+      const value = config as Record<string, unknown>;
+      const keys = ['apiKey', 'username', 'password'].filter(key => typeof value[key] === 'string' && value[key]);
+      return keys.length ? [{ source, value, keys }] : [];
+    });
   });
   if (!legacy.length) return;
   // 先保留可校验的原配置，再逐文件迁移；中断后重复执行不会覆盖新登录。
   await writeAtomic(join(home, 'migrations', `config-${createHash('sha256').update(original).digest('hex')}.json`), original, true);
-  for (const { source, value, keys } of legacy) {
+  for (const source of new Set(legacy.map(item => item.source))) {
     if (!records[source]) {
-      const credentials = Object.fromEntries(keys.map(key => [key, value[key]])) as SavedCredentials;
+      const credentials = Object.assign({}, ...legacy.filter(item => item.source === source).map(({ value, keys }) => Object.fromEntries(keys.map(key => [key, value[key]])))) as SavedCredentials;
       await saveCredential(home, source, credentials);
     }
   }

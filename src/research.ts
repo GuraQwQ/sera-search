@@ -1,3 +1,4 @@
+import { sourceNameSchema } from './source-schema.js';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { canonicalUrl } from './evidence.js';
@@ -24,10 +25,10 @@ export const researchStateSchema = z.object({
   candidates: z.array(z.object({ subjectId: id, criterionId: id, evidenceId, url: z.string().url(), itemKey: z.string().optional() })).default([]),
   discoveredItems: z.array(z.string()).optional(), examinedItems: z.array(z.string()).optional(),
   accessFailures: z.array(z.object({ url: z.string().url(), codes: z.array(z.string()), retryAt: z.string().datetime({ offset: true }).optional() })).default([]),
-  history: z.array(z.object({ query: z.string(), sources: z.array(z.enum(sourceNames)), newUrls: z.number().int().nonnegative(), newItems: z.number().int().nonnegative().optional(), newEvidence: z.number().int().nonnegative(), resolved: z.number().int().nonnegative() })).max(100).default([]),
+  history: z.array(z.object({ query: z.string(), sources: z.array(sourceNameSchema), newUrls: z.number().int().nonnegative(), newItems: z.number().int().nonnegative().optional(), newEvidence: z.number().int().nonnegative(), resolved: z.number().int().nonnegative() })).max(100).default([]),
   resolvedCount: z.number().int().nonnegative().default(0),
   nextAction: z.enum(['continue', 'review-evidence', 'change-query', 'change-source', 'waiting', 'complete']).optional(),
-  nextQuery: z.string().optional(), nextSources: z.array(z.enum(sourceNames)).optional(),
+  nextQuery: z.string().optional(), nextSources: z.array(sourceNameSchema).optional(),
 });
 
 export function prepareResearch(input: ResearchOptions): ResearchState {

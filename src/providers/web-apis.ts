@@ -2,8 +2,8 @@ import type { ApiConfig, Config, SearchHit, SearchRequest, Source, SourceName } 
 import { NotLoggedInError, notLoggedIn } from '../credentials.js';
 import { object, rows, string, plain, date, hit, endpoint, json, apiHeaders, permitted } from './shared.js';
 
-function capability(name: SourceName, config: ApiConfig, account = false) {
-  const loggedIn = account ? Boolean(config.username && config.password) : Boolean(config.apiKey);
+function capability(name: SourceName, config: ApiConfig) {
+  const loggedIn = Boolean(config.apiKey);
   return { name, search: true, read: false, configured: config.enabled !== false && loggedIn,
     requiresLogin: true, loggedIn, requirement: loggedIn ? '已记录' : notLoggedIn, category: 'web' as const };
 }
@@ -51,7 +51,7 @@ function errorCode(value: unknown, name: string) {
 }
 
 export function createWebSources(config: Config): Source[] {
-  const zhipu = config.zhipu ?? {}, doubao = config.doubao ?? {}, serpapi = config.serpapi ?? {}, dataforseo = config.dataforseo ?? {};
+  const zhipu = config.zhipu ?? {}, doubao = config.doubao ?? {}, serpapi = config.serpapi ?? {};
   return [
     {
       capability: capability('zhipu', zhipu),
@@ -127,34 +127,6 @@ export function createWebSources(config: Config): Source[] {
         return filtered(items.flatMap(item => hit('serpapi', {
           title: string(item.title), url: string(item.link), snippet: plain(item.snippet), publishedAt: date(item.date),
           metadata: { searchEngine, publicationTimeRaw: item.date, timeFilter: request.since ? searchEngine === 'google' ? 'search-engine' : 'local-publication-date' : undefined },
-        })), request, searchEngine === 'google' && Boolean(request.since));
-      },
-    },
-    {
-      capability: capability('dataforseo', dataforseo, true),
-      async search(request) {
-        if (!dataforseo.username || !dataforseo.password) throw new NotLoggedInError();
-        const searchEngine = engine(dataforseo, request);
-        if (request.since && searchEngine === 'bing') throw Object.assign(new Error('当前 DataForSEO Bing 路径未提供可核验的日期过滤，请选择 Google 或调整查询条件'), { code: 'UNSUPPORTED_FILTER' });
-        const query = keyword(request);
-        boundedQuery(query, 700, 'DataForSEO');
-        const payload: Record<string, unknown> = { keyword: query, location_code: dataforseo.locationCode ?? 2840,
-          language_code: dataforseo.languageCode ?? 'en', depth: Math.max(10, request.limit) };
-        if (request.since && searchEngine === 'google') payload.search_param = `tbs=cdr:1,cd_min:${calendarDate(request.since)}`;
-        const data = await json(endpoint(dataforseo, 'https://api.dataforseo.com/', `v3/serp/${searchEngine}/organic/live/advanced`), {
-          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Basic ' + Buffer.from(`${dataforseo.username}:${dataforseo.password}`, 'utf8').toString('base64') },
-          body: JSON.stringify([payload]), signal: request.signal,
-        }, 'DataForSEO');
-        const checked = (value: Record<string, unknown>) => {
-          if (value.status_code === 40100) throw new NotLoggedInError();
-          if (value.status_code !== 20000) throw Object.assign(new Error(`DataForSEO 请求失败，错误码 ${String(value.status_code)}`), { code: `DATAFORSEO_${String(value.status_code)}` });
-        };
-        checked(data);
-        const items = rows(data.tasks, 'DataForSEO').flatMap(task => { checked(task); return task.result === null && task.result_count === 0 ? [] : rows(task.result, 'DataForSEO'); })
-          .flatMap(result => result.items === null ? [] : rows(result.items, 'DataForSEO')).filter(item => item.type === 'organic');
-        return filtered(items.flatMap(item => hit('dataforseo', {
-          title: string(item.title), url: string(item.url), snippet: string(item.description),
-          metadata: { searchEngine, locationCode: payload.location_code, languageCode: payload.language_code, timeFilter: request.since ? searchEngine === 'google' ? 'search-engine' : 'local-publication-date' : undefined },
         })), request, searchEngine === 'google' && Boolean(request.since));
       },
     },

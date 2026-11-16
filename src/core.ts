@@ -1,3 +1,8 @@
+import { sourceConfig } from './source-config.js';
+import { accessState, applyPolicy, allowedOperations } from './source-policy.js';
+import { adaptStructuredSource } from './connectors.js';
+import { createDeclaredSources, configuredSources } from './connector-registry.js';
+import { sourceNameSchema } from './source-schema.js';
 import { z } from 'zod';
 import { sourceNames, platformIdPattern, intents } from './types.js';
 import type { Channel, Config, Source, SourceName, SearchOptions, SearchReport, SearchHit, AggregatedHit, SourceRun, ReadReport, ResearchReport, Evidence, CommentReport, ImageRequest, ReadOptions, BatchReadReport, ResearchOptions, ResearchState, SearchAttempt } from './types.js';
@@ -5,7 +10,7 @@ import { canonicalUrl, retrievalKey, publisher, textPage, focusText, EvidenceSto
 import { errorMessage } from './config.js';
 import { createHttpSources } from './providers/http.js';
 import { createPlatformSources } from './providers/platform.js';
-import { authKey, invalidateCredential, notLoggedIn } from './credentials.js';
+import { authKey, invalidateCredential, notLoggedIn, apiSources } from './credentials.js';
 import { createWebSources } from './providers/web-apis.js';
 import { createAcademicSources } from './providers/academic.js';
 import { createCatalogSources } from './providers/catalog-apis.js';
@@ -34,7 +39,7 @@ import { createDirectorySources } from './providers/directory.js';
 
 export const searchSchema = z.object({
   query: z.string().trim().min(1).max(4096),
-  sources: z.array(z.enum(sourceNames)).min(1).optional(),
+  sources: z.array(sourceNameSchema).min(1).optional(),
   limit: z.number().int().min(1).max(20).default(5),
   platform: z.string().regex(platformIdPattern).optional(),
   githubType: z.enum(['repositories', 'code', 'issues']).optional(),
@@ -48,9 +53,9 @@ export const searchSchema = z.object({
   operation: z.string().regex(platformIdPattern).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
   contentTypes: z.array(z.string().trim().min(1).max(64)).min(1).max(20).optional(),
-  maxSources: z.number().int().min(1).max(sourceNames.length).optional(),
+  maxSources: z.number().int().min(1).max(256).optional(),
   strategy: z.enum(['fallback', 'cross-check']).optional(),
-  sourceOptions: z.partialRecord(z.enum(sourceNames), z.object({ operation: z.string().regex(platformIdPattern).optional(), params: z.record(z.string(), z.unknown()).optional() })).optional(),
+  sourceOptions: z.record(sourceNameSchema, z.object({ operation: z.string().regex(platformIdPattern).optional(), params: z.record(z.string(), z.unknown()).optional() })).optional(),
   aliases: z.array(z.string().trim().min(1).max(256)).max(10).optional(),
   terms: z.array(z.string().trim().min(1).max(256)).max(32).optional(),
   excludeUrls: z.array(z.string().url()).optional(),
@@ -59,19 +64,19 @@ export const searchSchema = z.object({
 });
 
 export const focusSchema = z.object({ query: z.string().trim().min(1).max(4096).optional(), keywords: z.array(z.string().trim().min(1).max(256)).max(32).optional(), length: z.number().int().min(1).max(20000).default(2000) });
-export const recordSchema = z.object({ url: z.string().url(), title: z.string().min(1), content: z.string().refine(value => Boolean(value.trim()), '外部材料需要实际取得的内容'), method: z.string().min(1), observedAt: z.string().datetime({ offset: true }), publishedAt: z.string().datetime({ offset: true }).optional(), contentKind: z.enum(['page', 'post', 'subtitle', 'metadata']).default('page'), metadata: z.record(z.string(), z.unknown()).optional(), originSource: z.enum(sourceNames).optional(), locator: locatorSchema.optional() });
+export const recordSchema = z.object({ url: z.string().url(), title: z.string().min(1), content: z.string().refine(value => Boolean(value.trim()), '外部材料需要实际取得的内容'), method: z.string().min(1), observedAt: z.string().datetime({ offset: true }), publishedAt: z.string().datetime({ offset: true }).optional(), contentKind: z.enum(['page', 'post', 'subtitle', 'metadata']).default('page'), metadata: z.record(z.string(), z.unknown()).optional(), originSource: sourceNameSchema.optional(), locator: locatorSchema.optional() });
 const readSettings = { timeoutMs: z.number().int().min(100).max(300000).optional(), browser: z.string().min(1).optional(), raw: z.boolean().default(false) };
-export const readSchema = focusSchema.extend({ sources: z.array(z.enum(sourceNames)).min(1).optional(), refresh: z.boolean().default(false), maxAgeMs: z.number().finite().nonnegative().optional(), locator: locatorSchema.optional(), ...readSettings });
+export const readSchema = focusSchema.extend({ sources: z.array(sourceNameSchema).min(1).optional(), refresh: z.boolean().default(false), maxAgeMs: z.number().finite().nonnegative().optional(), locator: locatorSchema.optional(), ...readSettings });
 export const researchSchema = searchSchema.extend({
-  readLimit: z.number().int().min(0).max(20).default(5), readSources: z.array(z.enum(sourceNames)).min(1).optional(),
+  readLimit: z.number().int().min(0).max(20).default(5), readSources: z.array(sourceNameSchema).min(1).optional(),
   goals: z.array(z.string().trim().min(1).max(256)).max(100).optional(), state: researchStateSchema.optional(),
   subjects: z.array(subjectSchema).max(100).optional(), criteria: z.array(criterionSchema).max(100).optional(),
   targetCount: z.number().int().min(1).max(100).optional(), discoveryQuery: z.string().trim().min(1).max(4096).optional(),
   keywords: focusSchema.shape.keywords, length: focusSchema.shape.length, refresh: z.boolean().default(false), ...readSettings,
 });
 
-export const commentsSchema = z.object({ url: z.string().url(), sources: z.array(z.enum(sourceNames)).min(1).optional(), limit: z.number().int().min(1).max(100).default(20), cursor: z.string().optional(), parentId: z.string().optional(), order: z.string().optional() });
-export const imagesSchema = z.object({ query: z.string().trim().min(1).optional(), imageUrl: z.string().url().optional(), sources: z.array(z.enum(sourceNames)).min(1).optional(), platform: z.string().optional(), limit: z.number().int().min(1).max(20).default(5) }).refine(value => value.query || value.imageUrl, '需要关键词或图片 URL');
+export const commentsSchema = z.object({ url: z.string().url(), sources: z.array(sourceNameSchema).min(1).optional(), limit: z.number().int().min(1).max(100).default(20), cursor: z.string().optional(), parentId: z.string().optional(), order: z.string().optional() });
+export const imagesSchema = z.object({ query: z.string().trim().min(1).optional(), imageUrl: z.string().url().optional(), sources: z.array(sourceNameSchema).min(1).optional(), platform: z.string().optional(), limit: z.number().int().min(1).max(20).default(5) }).refine(value => value.query || value.imageUrl, '需要关键词或图片 URL');
 
 export function mergeHits(hits: SearchHit[]): AggregatedHit[] {
   const merged = new Map<string, AggregatedHit>();
@@ -99,7 +104,17 @@ export class Engine {
   readonly store: EvidenceStore;
   readonly sources: Source[];
   constructor(readonly config: Config, sources?: Source[], readonly backends = new BackendPool()) {
-    this.sources = sources ?? [...createHttpSources(config), ...createWebSources(config), ...createAcademicSources(config), ...createPlatformSources(config), ...createCatalogSources(config), ...createSocialSources(config), ...createActionSources(config), ...createDiscoverySources(config), ...createArchiveSources(config), ...createForumSources(config), ...createEntitySources(config), ...createFeedSources(config), createMetadataSource(config), ...createBackendSources(config, backends), ...createExtensionSources(config, backends), ...createResearchApiSources(config), ...createSpecialistApiSources(config), ...createHistoryApiSources(config), ...createDirectorySources(config)];
+    if (!sources) {
+      config = { ...config };
+      for (const name of new Set([...apiSources, ...Object.keys(config.sources ?? {})])) Object.assign(config, { [name]: sourceConfig(config, name) });
+      this.config = config;
+    }
+    this.sources = sources ?? [...createHttpSources(config), ...createWebSources(config), ...createAcademicSources(config), ...createPlatformSources(config), ...createCatalogSources(config), ...createSocialSources(config), ...createActionSources(config), ...createDiscoverySources(config), ...createArchiveSources(config), ...createForumSources(config), ...createEntitySources(config), ...createFeedSources(config), createMetadataSource(config), ...createBackendSources(config, backends), ...createExtensionSources(config, backends), ...createResearchApiSources(config), ...createSpecialistApiSources(config), ...createHistoryApiSources(config), ...createDirectorySources(config), ...createDeclaredSources(config)];
+    if (!sources) {
+      for (const source of this.sources) source.capability.contentTypes ??= legacyContentTypes[source.capability.name] ?? specialistSites[source.capability.name as keyof typeof specialistSites]?.contentTypes;
+      this.sources = this.sources.map(source => source.capability.backend || ['agent-reach', 'opencli'].includes(source.capability.name) ? source : adaptStructuredSource(config, source));
+      this.sources.push(...configuredSources(config, this.sources));
+    }
     if (!sources) {
       const attach = (name: SourceName) => this.sources.find(source => source.capability.name === name)!;
       attach('bilibili').comments = request => bilibiliComments(config.bilibili, request);
@@ -109,11 +124,16 @@ export class Engine {
       attach('brave').images = request => braveImages(config.brave, request);
       attach('brave').capability.images = true;
     }
-    for (const source of this.sources) source.capability.contentTypes ??= legacyContentTypes[source.capability.name] ?? specialistSites[source.capability.name as keyof typeof specialistSites]?.contentTypes;
+    for (const source of this.sources) {
+      source.capability.contentTypes ??= legacyContentTypes[source.capability.name] ?? specialistSites[source.capability.name as keyof typeof specialistSites]?.contentTypes;
+      if (!sources) { if (source.capability.operations) source.capability.operations = allowedOperations(source.capability.operations); applyPolicy(config, source); }
+    }
     this.store = new EvidenceStore(config);
   }
 
-  capabilities(names?: SourceName[]) { return this.sources.filter(source => !names || names.includes(source.capability.name)).map(source => ({ ...source.capability, status: source.capability.requiresLogin && !source.capability.loggedIn ? notLoggedIn : source.capability.configured ? '可调用' : '不可用', availability: '调用时检查' })); }
+  capabilities(names?: SourceName[]) { return this.sources.filter(source => !names || names.includes(source.capability.name)).map(source => { const state = accessState(this.config, source); return { ...source.capability, priority: state.priority, automatic: state.automatic, status: source.capability.requiresLogin && !source.capability.loggedIn ? notLoggedIn : state.reason ?? (source.capability.configured ? '可调用' : '不可用'), availability: '调用时检查' }; }); }
+
+  connectors(names?: SourceName[]) { return this.sources.filter(source => !names || names.includes(source.capability.name)).flatMap(source => source.connector ? [source.connector] : []); }
 
   async channels(options: { sources?: SourceName[]; platform?: string; signal?: AbortSignal } = {}) {
     const names = options.sources ? [...new Set(options.sources)] : this.sources.map(source => source.capability.name);
@@ -129,7 +149,8 @@ export class Engine {
           comments: source.capability.comments, images: source.capability.images,
           operations: source.capability.operations, contentTypes: source.capability.contentTypes,
           browser: false, description: source.capability.requirement, status: source.capability.requiresLogin && !source.capability.loggedIn ? notLoggedIn : source.capability.configured ? '可调用' : '不可用' }];
-        const selected = options.platform ? channels.filter(channel => channel.platform === options.platform) : channels;
+        const state = accessState(this.config, source);
+        const selected = (options.platform ? channels.filter(channel => channel.platform === options.platform) : channels).map(channel => ({ ...channel, access: source.capability.access, priority: state.priority, automatic: channel.configured && state.automatic, operations: channel.operations ?? source.capability.operations, ...(state.reason ? { status: state.reason } : {}) }));
         return { channels: selected, run: { source: name, status: selected.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: selected.length, network: networkReport(requests, this.config) } as SourceRun };
       } catch (error) { return { channels: [], run: { ...await this.failure(name, error, started, signal), network: networkReport(requests, this.config) } }; }
     }));
@@ -141,8 +162,13 @@ export class Engine {
 
   private unavailable(name: SourceName, source?: Source): SourceRun {
     const login = source?.capability.requiresLogin && !source.capability.loggedIn || ['agent-reach', 'opencli'].includes(name);
-    const disabled = name === 'agent-reach' ? this.config.agentReach?.enabled === false : this.config[name]?.enabled === false;
+    const disabled = name === 'agent-reach' ? this.config.agentReach?.enabled === false : sourceConfig(this.config, name).enabled === false;
     return { source: name, status: 'unavailable', elapsedMs: 0, returned: 0, message: login ? notLoggedIn : disabled ? '来源已停用' : source?.capability.requirement ?? '此来源不支持该操作', ...(login ? { code: 'NOT_LOGGED_IN' } : {}) };
+  }
+
+  private accessFailure(source: Source, operation?: string): SourceRun | undefined {
+    const state = source.capability.access ? accessState(this.config, source, operation) : undefined;
+    return state?.code ? { source: source.capability.name, status: 'unavailable', code: state.code, message: state.reason, elapsedMs: 0, returned: 0 } : undefined;
   }
 
   private async failure(source: SourceName, error: unknown, started: number, signal: AbortSignal): Promise<SourceRun> {
@@ -179,6 +205,17 @@ export class Engine {
       return (input.sources || input.at || !material.length || material.some(type => capability?.contentTypes?.includes(type) || capability?.operations?.some(operation => operation.contentTypes.includes(type))))
         && (!input.operation || input.sources || capability?.operations?.some(operation => operation.name === input.operation));
     });
+    const operationFor = (source: Source) => input.sourceOptions?.[source.capability.name]?.operation ?? input.operation ?? source.capability.operations?.find(item => material.some(type => item.contentTypes.includes(type)))?.name;
+    if (!input.sources) {
+      for (let index = matching.length - 1; index >= 0; index--) {
+        const source = this.sources.find(item => item.capability.name === matching[index])!;
+        if (source.capability.access && !accessState(this.config, source, operationFor(source)).automatic) matching.splice(index, 1);
+      }
+      matching.sort((a, b) => {
+        const first = this.sources.find(item => item.capability.name === a)!, second = this.sources.find(item => item.capability.name === b)!;
+        return (first.capability.access ? accessState(this.config, first, operationFor(first)).priority : 0) - (second.capability.access ? accessState(this.config, second, operationFor(second)).priority : 0);
+      });
+    }
     const strategy = input.strategy ?? 'fallback';
     const scheduled = matching.slice(0, input.maxSources ?? (strategy === 'cross-check' && !input.sources ? 3 : matching.length));
     const known = new Set((input.excludeUrls ?? []).map(canonicalUrl)), knownItems = new Set(input.excludeItems ?? []);
@@ -187,6 +224,8 @@ export class Engine {
     const run = async (name: SourceName, query = input.query, filter = false) => {
       const source = this.sources.find(item => item.capability.name === name);
       if (!source?.search || !source.capability.configured) return { hits: [], run: this.unavailable(name, source) };
+      const restricted = this.accessFailure(source, operationFor(source));
+      if (restricted) return { hits: [], run: restricted };
       const settings = { operation: input.sourceOptions?.[name]?.operation ?? input.operation, params: input.sourceOptions?.[name]?.params ?? input.params };
       const started = Date.now(), signal = this.signal(options.signal), requests: NetworkRequest[] = [];
       const attempts: SearchAttempt[] = [];
@@ -195,7 +234,7 @@ export class Engine {
         signal.throwIfAborted();
         if (settings.operation && !source.capability.operations?.some(operation => operation.name === settings.operation)) throw Object.assign(new Error('来源不支持此操作，请查看 channels'), { code: 'UNSUPPORTED_OPERATION' });
         if (settings.params && Object.keys(settings.params).length && !source.capability.operations?.length) throw Object.assign(new Error('来源未声明结构化参数，请查看 channels'), { code: 'UNSUPPORTED_PARAMETERS' });
-        const operation = settings.operation ?? source.capability.operations?.find(item => material.some(type => item.contentTypes.includes(type)))?.name;
+        const operation = operationFor(source);
         const returned = await httpTrace.run(requests, () => source.search!({ ...input, ...settings, query, operation, signal, onAttempt: attempt => attempts.push(attempt), onCoverage: value => { coverage = value; } }));
         const valid = returned.filter(hit => { try { canonicalUrl(hit.url); return true; } catch { return false; } });
         const dated = valid.filter(hit => {
@@ -256,12 +295,18 @@ export class Engine {
   async images(options: Omit<ImageRequest, 'signal'> & { sources?: SourceName[]; signal?: AbortSignal }): Promise<SearchReport> {
     const input = imagesSchema.parse(options);
     const names = input.sources ?? (input.imageUrl ? ['serpapi', 'trace-moe', 'saucenao'] as SourceName[] : ['brave', 'serpapi', 'baidu-images', 'sogou-images'] as SourceName[]);
-    const results = await Promise.all(names.map(async name => {
+    if (!input.sources) names.sort((a, b) => { const first = this.sources.find(source => source.capability.name === a), second = this.sources.find(source => source.capability.name === b); return (first ? accessState(this.config, first).priority : 100) - (second ? accessState(this.config, second).priority : 100); });
+    const run = async (name: SourceName) => {
       const source = this.sources.find(item => item.capability.name === name), started = Date.now(), signal = this.signal(options.signal), requests: NetworkRequest[] = [];
       if (!source?.images || !source.capability.configured) return { hits: [], run: this.unavailable(name, source) };
+      const restricted = this.accessFailure(source); if (restricted) return { hits: [], run: restricted };
       try { const hits = await httpTrace.run(requests, () => source.images!({ ...input, signal })); return { hits, run: { source: name, status: hits.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: hits.length, network: networkReport(requests, this.config) } as SourceRun }; }
       catch (error) { return { hits: [], run: { ...await this.failure(name, error, started, signal), network: networkReport(requests, this.config) } }; }
-    }));
+    };
+    const results = [];
+    if (input.sources) {
+      for (let start = 0; start < names.length; start += 3) { if (options.signal?.aborted) break; results.push(...await Promise.all(names.slice(start, start + 3).map(run))); }
+    } else for (const name of names) { if (options.signal?.aborted) break; const source = this.sources.find(item => item.capability.name === name); if (source?.capability.access && !accessState(this.config, source).automatic) continue; results.push(await run(name)); if (mergeHits(results.flatMap(item => item.hits)).length >= input.limit) break; }
     const hits = mergeHits(results.flatMap(item => item.hits)), runs = results.map(item => item.run), good = runs.some(run => ['ok', 'empty'].includes(run.status));
     return { query: input.query ?? input.imageUrl!, hits, runs, status: !good ? 'error' : runs.some(run => !['ok', 'empty'].includes(run.status)) ? 'partial' : hits.length ? 'ok' : 'empty' };
   }
@@ -273,6 +318,7 @@ export class Engine {
     for (const name of input.sources ?? [fallback]) {
       const source = this.sources.find(item => item.capability.name === name), started = Date.now(), signal = this.signal(options.signal), requests: NetworkRequest[] = [];
       if (!source?.comments || !source.capability.configured) { runs.push(this.unavailable(name, source)); continue; }
+      const restricted = this.accessFailure(source); if (restricted) { runs.push(restricted); continue; }
       try {
         const page = await httpTrace.run(requests, () => source.comments!({ ...input, url, signal }));
         runs.push({ source: name, status: page.comments.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: page.comments.length, network: networkReport(requests, this.config) });
@@ -302,6 +348,7 @@ export class Engine {
     const order: SourceName[] = input.sources ?? [...new Set<SourceName>([
       ...(specific ? [specific] : []), 'web', 'exa', 'tavily', 'scrapling', 'agent-reach', 'opencli',
     ])];
+    if (!input.sources) order.sort((a, b) => { if (a === specific) return -1; if (b === specific) return 1; const first = this.sources.find(source => source.capability.name === a), second = this.sources.find(source => source.capability.name === b); return (first ? accessState(this.config, first).priority : 100) - (second ? accessState(this.config, second).priority : 100); });
     const eligible = order.filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.read));
     const view = (content: string) => input.query || input.keywords?.length ? focusText(content, input, input.length) : { ...textPage(content, 0, input.length), selection: 'leading' as const };
     if (!input.refresh) {
@@ -311,7 +358,7 @@ export class Engine {
           && (evidence.source !== 'steam' || steamDocumentMatches(url, evidence)), input.locator);
         if (cached && cached.source !== 'external') {
           const { content, ...metadata } = cached;
-          return { status: 'ok', evidence: metadata, ...view(content), cacheHit: true, cacheAgeMs: Date.now() - Date.parse(cached.retrievedAt),
+          return { status: cached.metadata?.partial ? 'partial' : 'ok', evidence: metadata, ...view(content), cacheHit: true, cacheAgeMs: Date.now() - Date.parse(cached.retrievedAt),
             runs: [{ source: cached.source, status: 'ok', elapsedMs: 0, returned: 1, cacheHit: true, network: networkReport([], this.config) }], ...(cacheWarnings.length ? { cacheWarnings } : {}) };
         }
       } catch (error) { cacheWarnings.push(`URL 缓存未读取：${errorMessage(error, this.config)}`); }
@@ -324,6 +371,7 @@ export class Engine {
         if (input.sources) runs.push(this.unavailable(name, source));
         continue;
       }
+      const restricted = this.accessFailure(source); if (restricted) { runs.push(restricted); continue; }
       const started = Date.now(), signal = this.signal(options.signal, input.timeoutMs), requests: NetworkRequest[] = [];
       try {
         signal.throwIfAborted();
@@ -349,7 +397,7 @@ export class Engine {
             partial = { status: 'partial', evidence: metadata, ...view(document.content), cacheHit: false, runs, nextSteps: ['页面框架已保存，继续使用公开结构化 API、原始正文入口或其他允许的读取来源。'], ...(cacheWarnings.length ? { cacheWarnings } : {}) };
             continue;
           }
-          return { status: 'ok', evidence: metadata, ...view(document.content), cacheHit: false, runs, ...(cacheWarnings.length ? { cacheWarnings } : {}) };
+          return { status: document.metadata?.partial ? 'partial' : 'ok', evidence: metadata, ...view(document.content), cacheHit: false, runs, ...(cacheWarnings.length ? { cacheWarnings } : {}) };
         } catch (error) {
           cacheWarnings.push(`证据保存未完成：${errorMessage(error, this.config)}`);
           const { content, ...metadata } = document;

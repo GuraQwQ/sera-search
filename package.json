@@ -30,6 +30,7 @@
     "docs/assets",
     "docs/cli.md",
     "docs/configuration.md",
+    "docs/connectors.md",
     "docs/evidence.md",
     "docs/mcp.md",
     "docs/integrations.md",

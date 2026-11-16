@@ -13,6 +13,19 @@ node dist/cli.js capabilities --sources bing,web --json
 node dist/cli.js research "TypeScript 发行记录" --sources bing --read-sources web --goal "版本与发布日期" --goal "官方更新内容" --state ./research-state.json --read-limit 3 --json
 ```
 
+## 发现连接器与访问条件
+
+`connectors` 导出结构化连接器定义，包含协议、动作、输入 Schema、字段映射、认证、费用和限速；只需相关来源时用 `--sources` 筛选。定义不包含账号凭据，实际可用状态继续查看 `capabilities` 与调用结果。
+
+```bash
+sera connectors --sources modrinth,scryfall --json
+node dist/cli.js connectors --sources modrinth,scryfall --json
+```
+
+来源 ID 支持通过配置动态增加；`sources` 保存每源设置，`connectorFiles` 加载外部定义，`connectors` 内联定义。新增来源可沿用 `--sources`、`--operation` 与 `--params` 调用，完整格式见[连接器指南](connectors.md)。
+
+自动选路优先匿名免费、认证免费，再考虑周期免费配额；认证加配额的来源进一步降权。付费必需动作和一次性试用排除；混合计费或计费未确认的入口需在确认账号免费档后设置 `sources.<来源>.freeTierConfirmed: true`。已知免费 Key 来源按其声明使用。该设置是账号档位声明，实际额度与账单仍由服务端控制。
+
 ## 安装扩展与调用后端
 
 默认 `install` 创建或复用配置，显式选择 `--components` 才安装扩展。`--python` 指定已有 Python 3.10+，`--browser` 指定已有 Chromium／Edge 可执行文件；路径请替换为本机实际位置。
@@ -137,7 +150,7 @@ CLI 读取旧 `fields` 状态时先原子备份并迁移，也可以用 `migrate
 | `exa`、`tavily` | 使用已登记的 API Key，搜索与正文提取 |
 | `bing`、`sites` | 公开网页发现；站点目录用于选择域名，普通网页正文另选读取源 |
 | `brave`、`zhipu`、`doubao` | 使用已登记的 API Key；网页搜索，Brave 另有关键词图片；正文另选读取源 |
-| `serpapi`、`dataforseo` | Google／Bing 自然搜索；SerpAPI 可调用图片与 Lens；正文另选读取源 |
+| `serpapi` | Google／Bing 自然搜索、图片与 Lens；正文另选读取源 |
 | `github` | 读取公开仓库、代码搜索结果及 issue／PR 等资料；受 GitHub 权限和速率限制约束 |
 | `ghgrab` | 搜索使用 GitHub；仓库树与文件支持上游识别的 forge，完整工具由 `backend ghgrab` 发现 |
 | `scrapling` | 已知 URL 的网页提取；HTTP、浏览器与会话工具由 `backend scrapling` 发现 |
@@ -154,7 +167,7 @@ CLI 读取旧 `fields` 状态时先原子备份并迁移，也可以用 `migrate
 | `linuxdo`、`heybox` | 原生主题／帖子与评论；访问权限、父楼层和游标按接口判断 |
 | 作品、音乐、技能与社交 API | 按资料对象与授权范围调用；详细入口见来源及平台指南 |
 
-当前注册 52 个来源，`capabilities --sources` 可缩小查看范围。Agent Reach 的渠道从统一 CLI 的 `channels` 发现；OpenCLI 从实时注册表发现接受 `query` 或 `keyword` 位置参数的只读搜索命令。来源注册与登录记录说明可调用的路径，实际账号权限、额度与结果仍由请求确认。
+当前注册 125 个内置来源 ID，配置可增加动态来源；`capabilities --sources` 可缩小查看范围。Agent Reach 的渠道从统一 CLI 的 `channels` 发现；OpenCLI 从实时注册表发现接受 `query` 或 `keyword` 位置参数的只读搜索命令。来源注册与登录记录说明可调用的路径，实际账号权限、额度与结果仍由请求确认。
 
 `sera channels` 返回各平台的 `search`、`read`、`configured` 和搜索入口的 `browser`／`strategy`。这份清单说明 SERA 可匹配的操作，实际登录与返回内容由调用结果确认。OpenCLI 的平台搜索覆盖比原文映射广；只有 `read: true` 的平台可直接通过该适配读取，其余可显式选择网页正文源。
 

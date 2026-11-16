@@ -1,3 +1,4 @@
+import { sourceNameSchema } from './source-schema.js';
 import { createHash } from 'node:crypto';
 import { readFile, readdir, rm, realpath, lstat, mkdir } from 'node:fs/promises';
 import { join, resolve, relative, isAbsolute } from 'node:path';
@@ -152,7 +153,7 @@ const referenceKey = (url: string, source: EvidenceSource, locator?: ContentLoca
 function ownedReference(value: unknown): value is UrlReference {
   if (!value || typeof value !== 'object') return false;
   const item = value as Partial<UrlReference>;
-  if (item.kind !== 'sera-url-cache' || typeof item.url !== 'string' || item.source !== 'external' && !sourceNames.includes(item.source as SourceName)
+  if (item.kind !== 'sera-url-cache' || typeof item.url !== 'string' || item.source !== 'external' && !sourceNameSchema.safeParse(item.source).success
     || typeof item.id !== 'string' || !/^[a-f0-9]{64}$/.test(item.id) || typeof item.retrievedAt !== 'string') return false;
   try { return item.key === referenceKey(item.url, item.source as EvidenceSource, item.locator); } catch { return false; }
 }
@@ -229,7 +230,7 @@ export class EvidenceStore {
     if (maxAgeMs === 0) return undefined;
     const address = new URL(url), retentionMs = this.config.retentionDays * 86400000;
     const snapshot = address.hostname === 'web.archive.org' && /^\/web\/\d{14}(?:[a-z_]+)?\//i.test(address.pathname);
-    for (const source of [...new Set<EvidenceSource>(sources ?? [...sourceNames, 'external'])]) {
+    for (const source of [...new Set<EvidenceSource>(sources ?? [...sourceNames, ...(this.config.connectors ?? []).map(item => item.id), 'external'])]) {
       const immutable = snapshot || source === 'wiki' && /^\d+$/.test(address.searchParams.get('oldid') ?? '');
       const freshness = Math.min(maxAgeMs ?? (immutable ? retentionMs : 15 * 60000), retentionMs);
       const key = referenceKey(url, source, locator);

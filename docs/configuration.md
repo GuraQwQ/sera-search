@@ -9,7 +9,7 @@
 | `exa`、`tavily` | 各服务 API Key | 网页搜索与正文提取 |
 | `bing`、`sites` | 公开查询 | Bing RSS 网页发现；按独立目录域名选站查询 |
 | `brave`、`zhipu`、`doubao` | 各服务 API Key | 网页搜索；Brave 另有图片动作，智谱可选引擎，豆包可按行业筛选 |
-| `serpapi`、`dataforseo` | SerpAPI Key／DataForSEO API 用户名与密码 | Google、Bing 自然结果；SerpAPI 另有关键词图片和 Lens 识图动作 |
+| `serpapi` | API Key | Google、Bing 自然结果、关键词图片和 Lens 识图动作 |
 | `github` | 可选 GitHub Token | 公开仓库和资料可匿名访问；代码搜索需要 Token |
 | `crossref`、`openalex`、`pubmed`、`wiki` | 公开查询；OpenAlex／PubMed Key 可选 | DOI、论文书目、摘要及公开 Wiki 页面 |
 | `skills` | 公开查询 | skills.sh 技能检索，继续到所属 GitHub 仓库核对正文与版本 |
@@ -27,6 +27,30 @@
 | `google-news` | 公开 RSS | 新闻条目、发布者与聚合 URL；按语言、国家和版别选择目录 |
 | `iptv` | 公开 M3U 目录 | 频道字段、流 URL 与 EPG 线索 |
 
+## 动态来源与连接器
+
+`sources` 按来源 ID 保存统一设置，例如 `enabled`、`baseUrl`、`userAgent` 与 `freeTierConfirmed`；它覆盖同名顶层来源的对应字段。API Key 继续通过 `login` 登记，活动凭据记录优先。
+
+```json
+{
+  "sources": {
+    "modrinth": {"enabled": true, "userAgent": "your-project/1.0 (contact@example.org)"}
+  },
+  "connectorFiles": ["./connectors/community.json"],
+  "connectors": []
+}
+```
+
+`connectorFiles` 的相对路径以当前配置文件所在目录为基准；文件内容可为单个连接器对象或对象数组。`connectors` 用于内联定义。定义按 ID 合并，后加载的同名定义优先；自定义来源 ID 可直接用于 CLI `--sources` 和 MCP 的 `sources`。通过 `sera connectors`／`node dist/cli.js connectors` 或 MCP `sera_connectors` 导出当前定义，协议、动作与字段映射示例见[连接器指南](connectors.md)。
+
+## 免费档、配额与选路
+
+来源与动作通过 `access` 声明认证、计费、配额及非商业限制，`capabilities` 返回 `priority` 与 `automatic`。自动选路优先匿名免费、认证免费，再考虑周期免费配额；认证加配额的来源低于匿名配额来源。普通每秒／每分钟限速仍按免费处理，日／月免费额度保留并降权；付费必需动作和一次性试用排除，同一服务的免费与付费动作分别处理。
+
+混合计费或计费未知的入口返回 `FREE_TIER_UNCONFIRMED`，需要先核对账号当前免费档，再设置 `sources.<来源>.freeTierConfirmed: true`。已知免费 Key 来源按其声明使用。此字段记录用户对档位的确认，不能限制上游账单；调用仍需检查实际额度、条款和非商业限制。
+
+OpenAlex 匿名入口按 `free-quota` 使用免费每日预算；带 Key 的入口因可能续用已购余额，按 `mixed` 处理，需要确认免费档并设置 `sources.openalex.freeTierConfirmed: true`。匿名额度耗尽时等待重置或换源，带 Key 时还需核对账户余额与扣费设置。
+
 ## 可选组件
 
 `install` 默认准备配置，安装扩展时显式传 `--components ghgrab,scrapling,metadata-parser`。`--python` 指定已有 Python 3.10+；`--browser` 指定已有 Chromium／Edge 可执行文件。组件安装到 `<home>/tools`，缓存集中到 `<home>/cache/integrations`，成功后把绝对命令路径写入配置。空状态、部分安装及中断后均可重复执行相同的 `install` 命令。用 `clean` 清理受管理缓存会保留依赖、配置和会话数据。详细安装步骤见[扩展来源与后端](integrations.md)。
@@ -40,8 +64,6 @@
 ```powershell
 node .\dist\cli.js login exa --from-env EXA_API_KEY
 $env:TAVILY_API_KEY | node .\dist\cli.js login tavily --stdin
-@{ username = $env:DATAFORSEO_USERNAME; password = $env:DATAFORSEO_PASSWORD } |
-  ConvertTo-Json -Compress | node .\dist\cli.js login dataforseo --stdin
 @{ apiKey = $env:TWITCH_ACCESS_TOKEN; clientId = $env:TWITCH_CLIENT_ID } |
   ConvertTo-Json -Compress | node .\dist\cli.js login twitch --stdin
 node .\dist\cli.js login youtube --from-env YOUTUBE_API_KEY
@@ -87,6 +109,6 @@ node dist/cli.js auth opencli --platform zhihu --json
 node dist/cli.js logout opencli --platform zhihu
 ```
 
-OpenCLI 可打开官方登录页面并通过明确的登录结果或 `whoami` 验证，用户完成网页验证后才记录。Agent Reach 当前同步后端已有登录，调用其 `login --sync`。平台用户名／密码需在对应后端的官方登录流程使用；SERA 的 `username/password` 输入用于 DataForSEO 等 API 账号。部分平台无后端退出命令，`logout` 会清除本地记录并提示到后端或官网退出。OpenCLI 的配置与缓存目录位于 SERA 数据目录；Agent Reach 浏览器状态仍由其后端管理。
+OpenCLI 可打开官方登录页面并通过明确的登录结果或 `whoami` 验证，用户完成网页验证后才记录。Agent Reach 当前同步后端已有登录，调用其 `login --sync`。平台用户名／密码需在对应后端的官方登录流程使用；SERA 的凭据 JSON 用于对应 API 声明的认证字段。部分平台无后端退出命令，`logout` 会清除本地记录并提示到后端或官网退出。OpenCLI 的配置与缓存目录位于 SERA 数据目录；Agent Reach 浏览器状态仍由其后端管理。
 
 各搜索 API 有独立额度与计费。按任务选择来源和读取预算；费用以 [Exa](https://exa.ai/pricing)、[Tavily](https://www.tavily.com/pricing)、[Brave](https://brave.com/search/api/) 及[来源指南](../skills/sera-search/references/sources.md)链接的官方文档为准。豆包使用独立搜索服务的专用 Key。

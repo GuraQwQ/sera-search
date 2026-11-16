@@ -28,7 +28,19 @@ MCP 是同一核心的 Agent 接入口：
 }
 ```
 
-MCP 提供 15 个工具：`sera_capabilities`、`sera_channels`、`sera_search`、`sera_comments`、`sera_images`、`sera_research`、`sera_migrate_state`、`sera_read`、`sera_read_many`、`sera_evidence`、`sera_record`、`sera_login`、`sera_logout`、`sera_auth` 和 `sera_backend`。检索参数对应 CLI 的来源、平台、每源数量、域名及日期条件；`sera_comments` 使用 `url/cursor/parentId/order`，`sera_images` 使用 `query` 或 `imageUrl`，完整字段以工具 Schema 为准。
+MCP 提供 16 个工具：`sera_connectors`、`sera_capabilities`、`sera_channels`、`sera_search`、`sera_comments`、`sera_images`、`sera_research`、`sera_migrate_state`、`sera_read`、`sera_read_many`、`sera_evidence`、`sera_record`、`sera_login`、`sera_logout`、`sera_auth` 和 `sera_backend`。检索参数对应 CLI 的来源、平台、每源数量、域名及日期条件；`sera_comments` 使用 `url/cursor/parentId/order`，`sera_images` 使用 `query` 或 `imageUrl`，完整字段以工具 Schema 为准。
+
+## 结构化连接器
+
+`sera_connectors` 按需返回协议、动作、输入 Schema、字段映射、认证方式、费用、限速和限制，不返回账号凭据。例如查看 Modrinth 与 Scryfall：
+
+```json
+{"sources":["modrinth","scryfall"]}
+```
+
+同一配置目录下的 `sources`、`connectorFiles` 和 `connectors` 也对 MCP 生效。来源 ID 可由配置动态增加；先用 `sera_connectors`／`sera_channels` 发现动作，再用 `sera_search` 的 `operation`、`params` 或 `sourceOptions` 调用。配置格式及专用协议边界见[连接器指南](connectors.md)。
+
+自动选路优先匿名免费、认证免费，再考虑周期免费配额；认证加配额的来源降权。付费必需动作和一次性试用排除；混合计费或计费未确认的入口需要在核对账号免费档后设置 `sources.<来源>.freeTierConfirmed: true`。已知免费 Key 来源按其声明使用，实际配额和服务端账单仍需分别核对。
 
 ## 完整后端工具
 
@@ -44,7 +56,7 @@ MCP 提供 15 个工具：`sera_capabilities`、`sera_channels`、`sera_search`�
 
 账号和地理扩展的工具调用结果附带 `structuredContent.seraEvidence`，可用 `sera_evidence` 重读报告。Agent 按本次 Schema 控制站点、关联动作、区域和预算；账号发现、头像匹配与地理查询示例见[账号与地理扩展](extensions.md)。
 
-用户明确提供 API Key 或 API 账号时，Agent 可调用 `sera_login`，输入 `source` 与 `credentials: {apiKey}`、Twitch 的 `{apiKey, clientId}` 或 DataForSEO 的 `{username, password}`；平台验证输入 `source` 与 `platform`。结果不回显凭据，每次 MCP 调用重新加载记录，登录后同一连接即可查询。CLI Agent 通过 Skill 与 `--help` 获得调用指引，MCP Agent 还会取得工具 Schema。MCP 的能力、渠道、搜索、研究与读取工具支持单次输入 `group:"game-wikis"` 或 `group:"galgame"`，同一连接可按需切换；自定义站点目录可在启动参数中传 `--catalog <目录文件>`。
+用户明确提供 API Key 或 API 账号时，Agent 可调用 `sera_login`，输入 `source` 与 `credentials: {apiKey}`，Twitch 使用 `{apiKey, clientId}`；平台验证输入 `source` 与 `platform`。结果不回显凭据，每次 MCP 调用重新加载记录，登录后同一连接即可查询。CLI Agent 通过 Skill 与 `--help` 获得调用指引，MCP Agent 还会取得工具 Schema。MCP 的连接器、能力、渠道、搜索、研究与读取工具支持单次输入 `group:"game-wikis"` 或 `group:"galgame"`，同一连接可按需切换；自定义站点目录可在启动参数中传 `--catalog <目录文件>`。
 
 ## 首轮调用与续查
 

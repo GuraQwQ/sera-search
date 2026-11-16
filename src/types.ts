@@ -1,7 +1,8 @@
 export const specialistSourceNames = ['aicu', 'danmakus', 'operationhong', 'matsuri', 'laplace', 'filmot', 'holodex', 'semantic-scholar', 'openreview', 'osv', 'github-advisory', 'gdelt', 'open-library', 'clinicaltrials', 'steamdb', 'vgmdb', 'open-meteo', 'mangaupdates', 'novelupdates', 'syosetu', 'kakuyomu', 'huggingface', 'biorxiv', 'europepmc', 'zenodo', 'google-patents', 'j-platpat', 'ndl', 'nga', '5ch', 'hackernews', 'lobsters'] as const;
 export type SpecialistSourceName = typeof specialistSourceNames[number];
-export const sourceNames = ['exa', 'tavily', 'brave', 'github', 'agent-reach', 'opencli', 'bilibili', 'v2ex', 'web', 'zhipu', 'doubao', 'crossref', 'openalex', 'pubmed', 'serpapi', 'dataforseo', 'wiki', 'skills', 'bangumi', 'anilist', 'jikan', 'mangadex', 'vndb', 'musicbrainz', 'lastfm', 'listenbrainz', 'discogs', 'youtube', 'netease', 'baidu-images', 'sogou-images', 'trace-moe', 'saucenao', 'twitch', 'discord', 'instagram', 'bing', 'sites', 'wayback', 'archive', 'linuxdo', 'heybox', 'steam', 'nicovideo', 'ghgrab', 'scrapling', 'metadata-parser', 'google-news', 'iptv', 'aliens-eye', 'sherlock', 'gods-eye-view', ...specialistSourceNames] as const;
-export type SourceName = typeof sourceNames[number];
+export const structuredSourceNames = ['common-crawl', 'gh-archive', 'wikimedia-analytics', 'ecosystems', 'deps-dev', 'ripestat', 'ooni', 'urlscan', 'rcsb-pdb', 'uniprot', 'chembl', 'pubchem', 'materials-project', 'nasa-exoplanets', 'hepdata', 'gbif', 'inaturalist', 'earthdata-cmr', 'fred', 'world-bank', 'un-comtrade', 'eurostat', 'courtlistener', 'federal-register', 'osm-overpass', 'met', 'artic', 'chatarchive', 'sakugabooru', 'isthereanydeal', 'modrinth', 'speedrun', 'boardgamegeek', 'scryfall', 'acoustid', 'setlistfm', 'qq-avatar', 'qq-group-avatar', 'qq-public-profile', 'qq-portrait-legacy', 'wechat-official-account', 'wechat-article-history'] as const;
+export const sourceNames = ['exa', 'tavily', 'brave', 'github', 'agent-reach', 'opencli', 'bilibili', 'v2ex', 'web', 'zhipu', 'doubao', 'crossref', 'openalex', 'pubmed', 'serpapi', 'wiki', 'skills', 'bangumi', 'anilist', 'jikan', 'mangadex', 'vndb', 'musicbrainz', 'lastfm', 'listenbrainz', 'discogs', 'youtube', 'netease', 'baidu-images', 'sogou-images', 'trace-moe', 'saucenao', 'twitch', 'discord', 'instagram', 'bing', 'sites', 'wayback', 'archive', 'linuxdo', 'heybox', 'steam', 'nicovideo', 'ghgrab', 'scrapling', 'metadata-parser', 'google-news', 'iptv', 'aliens-eye', 'sherlock', 'gods-eye-view', ...specialistSourceNames, ...structuredSourceNames] as const;
+export type SourceName = string;
 export const extensionNames = ['aliens-eye', 'sherlock', 'gods-eye-view'] as const;
 export type ExtensionName = typeof extensionNames[number];
 export const backendNames = ['ghgrab', 'scrapling', ...extensionNames] as const;
@@ -26,6 +27,7 @@ export interface ApiConfig {
   guildId?: string;
   channelId?: string;
   enabled?: boolean;
+  freeTierConfirmed?: boolean;
 }
 
 export interface SavedCredentials { apiKey?: string; username?: string; password?: string; clientId?: string }
@@ -46,6 +48,9 @@ export interface CommandConfig {
 }
 
 export interface Config extends Partial<Record<SpecialistSourceName, ApiConfig>> {
+  sources?: Record<string, ApiConfig>;
+  connectorFiles?: string[];
+  connectors?: import('./connectors.js').ConnectorDefinition[];
   home: string;
   timeoutMs: number;
   retentionDays: number;
@@ -147,6 +152,15 @@ export interface SourceOperation {
   contentTypes: string[];
   inputSchema: Record<string, unknown>;
   accessMethod: 'api' | 'site-search' | 'local';
+  access?: AccessPolicy;
+}
+
+export interface AccessPolicy {
+  authentication: 'none' | 'optional' | 'api-key' | 'session';
+  billing: 'free' | 'free-quota' | 'mixed' | 'paid' | 'trial' | 'unknown';
+  quota?: string;
+  nonCommercial?: boolean;
+  evidence?: string;
 }
 
 export interface Document {
@@ -177,10 +191,14 @@ export interface Capability {
   operations?: SourceOperation[];
   accessMethod?: SourceOperation['accessMethod'];
   limitations?: string[];
+  access?: AccessPolicy;
+  priority?: number;
+  automatic?: boolean;
 }
 
 export interface Source {
   capability: Capability;
+  connector?: import('./connectors.js').ConnectorDefinition;
   channels?: (signal: AbortSignal) => Promise<Channel[]>;
   login?: (platform: string, signal: AbortSignal) => Promise<void>;
   logout?: (platform: string, signal: AbortSignal) => Promise<void>;
@@ -204,6 +222,9 @@ export interface Channel {
   status?: string;
   operations?: SourceOperation[];
   contentTypes?: string[];
+  access?: AccessPolicy;
+  priority?: number;
+  automatic?: boolean;
 }
 
 export interface Retrieval {

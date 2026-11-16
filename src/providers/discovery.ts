@@ -4,6 +4,7 @@ import { createHttpSources } from './http.js';
 import { createWebSources } from './web-apis.js';
 import { errorMessage } from '../config.js';
 import { invalidateCredential } from '../credentials.js';
+import { accessState } from '../source-policy.js';
 import { assessRelevance } from './relevance.js';
 
 async function bing(config: Config, request: SearchRequest): Promise<SearchHit[]> {
@@ -32,7 +33,7 @@ export function createDiscoverySources(config: Config): Source[] {
     const domains = site.domains.filter(domain => permitted(request.domains, domain));
     if (!domains.length) return [];
     const available = ['exa', 'tavily', 'brave', 'zhipu', 'doubao'].flatMap(name => {
-      const provider = providers.find(source => source.capability.name === name && source.capability.configured && source.search);
+      const provider = providers.find(source => source.capability.name === name && source.capability.configured && source.search && accessState(config, source).automatic);
       return provider ? [provider] : [];
     });
     if (config.bing?.enabled !== false) available.push({ capability: { name: 'bing', search: true, read: false, configured: true }, search: input => bing(config, input) });

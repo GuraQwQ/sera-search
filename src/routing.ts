@@ -2,13 +2,18 @@ import type { Config, Intent, SourceName } from './types.js';
 import { defaultWikiSites } from './providers/academic.js';
 import { canonicalUrl } from './evidence.js';
 import { steamTarget } from './providers/entities.js';
-import { specialistSites } from './provider-catalog.js';
+import { specialistSites, declaredReadHosts } from './provider-catalog.js';
 
 export const webSearchOrder: SourceName[] = ['exa', 'tavily', 'brave', 'zhipu', 'doubao', 'bing'];
 
 export function specificSource(value: string, config: Config): SourceName | undefined {
   if (steamTarget(value)) return 'steam';
   const url = new URL(value), host = url.hostname.replace(/^www\./, '');
+  const declared = config.connectors?.find(item => item.read?.hosts.includes(url.hostname) && new RegExp(item.read.pattern).test(url.pathname));
+  if (declared) return declared.id;
+  if (host === 'weixin.sogou.com') return url.searchParams.get('type') === '1' ? 'wechat-official-account' : 'wechat-article-history';
+  if (host === 'www.ebi.ac.uk' || host === 'ebi.ac.uk') { if (url.pathname.includes('/chembl/')) return 'chembl'; if (url.pathname.includes('/europepmc/')) return 'europepmc'; }
+  if (declaredReadHosts[host]) return declaredReadHosts[host];
   if (host === 'raw.githubusercontent.com' && /^\/Free-TV\/IPTV\//i.test(url.pathname) || config.iptv?.baseUrl && value.split('?')[0] === config.iptv.baseUrl.split('?')[0]) return 'iptv';
   if (host === 'news.google.com') return 'google-news';
   if (['gitlab.com', 'codeberg.org', 'gitea.com', 'git.disroot.org'].includes(host)) return 'ghgrab';
@@ -65,6 +70,18 @@ export function materialTypes(query: string): string[] {
   if (/历史天气|天气预报|weather/i.test(query)) return ['weather-timeseries'];
   if (/历史价格|价格历史|史低|price.?history/i.test(query)) return ['price-history'];
   if (/专利|patent/i.test(query)) return ['patent'];
+  if (/依赖图|依赖树|dependency.?graph/i.test(query)) return ['dependency-graph'];
+  if (/GH.?Archive|GitHub.*历史事件/i.test(query)) return ['github-event'];
+  if (/Common.?Crawl/i.test(query)) return ['web-capture'];
+  if (/维基.*阅读量|pageviews/i.test(query)) return ['pageview-timeseries'];
+  if (/PDB|蛋白.*(?:三维|结构)|氨基酸序列/i.test(query)) return ['molecular-structure'];
+  if (/UniProt|蛋白质功能|蛋白序列/i.test(query)) return ['protein'];
+  if (/PubChem|化合物|ChEMBL/i.test(query)) return ['compound'];
+  if (/系外行星|exoplanet/i.test(query)) return ['exoplanet'];
+  if (/GBIF|物种|分类群/i.test(query)) return ['taxon'];
+  if (/遥感数据|卫星数据集|Earthdata/i.test(query)) return ['remote-sensing-dataset'];
+  if (/QQ.*头像|群头像/i.test(query)) return ['avatar-metadata'];
+  if (/公众号|微信文章/i.test(query)) return ['article'];
   return [];
 }
 

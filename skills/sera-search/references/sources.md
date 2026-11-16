@@ -1,6 +1,6 @@
 # 来源选择与查询语法
 
-本指南用于选择 SERA 已接入的来源，以及在需要补充搜索入口时查阅官方语法。提供者能力看 `sera capabilities`，登录记录看 `sera auth`，具体平台及可匹配操作看 `sera channels`。参数和认证要求以 CLI 帮助及来源当前文档为准。
+本指南用于选择 SERA 已接入的来源，以及在需要补充搜索入口时查阅官方语法。提供者能力看 `sera capabilities`，登录记录看 `sera auth`，具体平台及可匹配操作看 `sera channels`；结构化连接器看 `sera connectors`／MCP `sera_connectors`。参数和认证要求以 CLI 帮助及来源当前文档为准。
 
 字幕、直播历史、公开评审、研究产物、书目、漏洞、气象及专利等入口见[垂直来源与动作](../../../docs/specialist-sources.md)。先查动作 Schema，再提供参数；Aicu／Danmakus 通过 `sourceOptions` 分别指定 UID 与房间条件，按共同覆盖区间核对原始事件。
 
@@ -10,7 +10,7 @@
 |---|---|---|
 | 普通网页、事实和产品资料 | 已登记的通用网页来源或公开 Bing；按目标材料选实际入口 | 搜索摘要与实际正文；资料版本、发布时间与目标相关性 |
 | 候选发现与比较选型 | 少量互补的网页、社区原帖、B站介绍与 GitHub 集成记录；规则再追发布者 | 对象身份、用户必需条件与证据充分程度；广告和实际观测分别使用 |
-| Google／Bing 结果 | SerpAPI／DataForSEO，指定实际引擎 | 两个 API 入口可能共享上游索引和原始文章 |
+| Google／Bing 结果 | SerpAPI，指定实际引擎 | API 入口与原始文章分别核验，多个引擎可能共享同一材料 |
 | 代码、仓库、issue／PR | GitHub；已安装时可选 `ghgrab` | 仓库、文件、commit 和讨论间的关系；ghgrab 搜索使用 GitHub，树与文件按已知 forge 支持范围读取 |
 | 新闻发现与频道目录 | `google-news`／`iptv` | RSS 聚合记录与发布者正文、频道记录与实际播放分别核对 |
 | 已知网页的浏览器提取／声明字段 | `scrapling`／`metadata-parser` | 实际工具与返回内容；页面声明保留来源并继续核验 |
@@ -26,6 +26,8 @@
 | 歌曲／视频／授权媒体评论 | `comments URL`，选择 `bilibili`／`youtube`／`netease`／`instagram` | 逐评论 ID、原文、父子关系、排序、下一页与读取范围 |
 | 图片与来源识别 | `image-search`／`reverse-image`，按关键字／Lens／动画帧／插画类型选源 | 原图、承载页面、缩略图、匹配类型和许可线索 |
 | 历史网页、Wiki 旧版和馆藏 | `wayback`、含 `oldid` 的 `wiki` 读取、`archive` | 捕获时间、修订时间、原始发布日期及当前可访问性 |
+| 科研材料、科学记录与公共数据 | Europe PMC、Hugging Face、UniProt、PubChem、World Bank、Eurostat 等结构化动作 | 数据集、版本、单位、时间范围和分页限制；元数据与实际数据分别核验 |
+| 已知 QQ 资源与公众号文章 | QQ 头像／公开资料、公众号／文章连接器 | 仅核对当前可见字段；默认头像不能证明账号存在，公开文章发现不代表全部历史 |
 | LinuxDo、小黑盒帖子与回复 | `linuxdo`／`heybox` 原生读取与 `comments` | 主题／帖子 ID、楼层顺序、游标和实际可见范围 |
 | 已知网页或公开附件 | 原始 URL 的读取源 | 尽量保留原始材料 URL，避免把介绍页当附件 |
 
@@ -41,7 +43,7 @@ Reddit、Twitch、Discord、Instagram、评论、图片及作品资料的当前�
 
 ## 当前渠道范围
 
-- 直连网页搜索：公开 Bing RSS；Exa、Tavily、Brave、智谱、豆包 Custom；SerpAPI／DataForSEO 的 Google 与 Bing 自然结果。
+- 直连网页搜索：公开 Bing RSS；Exa、Tavily、Brave、智谱、豆包 Custom；SerpAPI 的 Google 与 Bing 自然结果，按各入口费用策略启用。
 - 直连结构化查询：GitHub 仓库与代码，Crossref DOI／书目、OpenAlex Works、PubMed 记录和 MediaWiki 页面。
 - 直连读取：以上支持读取的来源，以及 V2EX 公开资料、网页和公开文本附件。B站直连公开搜索与详情，详情是视频元数据。
 - Agent Reach：枚举当前统一 CLI 声明的搜索与读取渠道；配置好后也参与默认网页查询。
@@ -53,6 +55,11 @@ Reddit、Twitch、Discord、Instagram、评论、图片及作品资料的当前�
 - 档案与论坛：`wayback` 查最近快照／CDX 捕获索引，`archive` 查馆藏；`linuxdo` 与 `heybox` 读取原生主题、帖子和评论。
 - 扩展后端：`ghgrab`、`scrapling` 的统一来源用于仓库与网页取证，`backend`／`sera_backend` 发现完整上游工具和输入 Schema；Scrapling 内存会话在同一 MCP 连接保持，跨进程恢复用上游 save／load。
 - RSS 与目录：`google-news` 提供新闻条目和聚合记录，`iptv` 提供 Free-TV 频道与流地址线索；`metadata-parser` 提供现成 HTML 的声明分组，也可增强 `web` 原始 HTML 读取。内容边界、安装与兼容范围见[扩展来源与后端](../../../docs/integrations.md)。
+- 结构化连接器：覆盖科研、公共数据、基础设施、兴趣资料和已知社交对象；通过 `connectors --sources` 查看协议与定义，通过 `channels` 取得动作及输入 Schema。当前有 125 个内置来源 ID，配置可增加动态 ID；注册不代表全部可用。配置入口与范围见[连接器指南](../../../docs/connectors.md)。
+
+来源优先按所需材料匹配，再按访问成本排序：匿名免费、认证免费、匿名周期免费配额、认证加配额。付费必需动作与一次性试用排除；同源免费与付费动作分别处理。`mixed`／`unknown` 计费需要先核对免费档，再配置 `sources.<来源>.freeTierConfirmed: true`；已知免费 Key 来源按其声明使用。查看 `access` 的配额及非商业条件、`priority` 与 `automatic`，并以实际响应确认可用范围。免费档声明不控制服务端账单。
+
+统一配置中的 `sources` 保存每源设置，`connectorFiles` 加载外部定义，`connectors` 内联定义；动态来源沿用 `search`、`read` 与取证接口，先发现动作再调用。
 
 2026-10-31 的本机渠道发现快照匹配到 86 个 OpenCLI 搜索入口，其中 29 个不需要浏览器，57 个需要浏览器。Google 的 `keyword` 参数已被识别。快照表示签名匹配；运行状态和质量通过实际请求确认，后续以 `sera channels` 为准。
 
@@ -74,7 +81,7 @@ Exa 的查询适合描述想找到的材料；Brave 等关键词检索可使用�
 
 [GitHub 代码搜索语法](https://docs.github.com/en/search-github/github-code-search/understanding-github-code-search-syntax)包含 `repo:`、`org:`、`path:`、`language:`、`symbol:` 和正则表达式。网页代码搜索与 REST／CLI 的支持范围可能不同；`symbol:` 主要查定义，调用关系需要继续阅读代码。
 
-[OpenAlex 搜索说明](https://docs.openalex.org/api-entities/works/search-works)采用自己的短语、布尔表达式和字段过滤。论文去重优先使用 DOI 或数据库论文 ID；[Crossref REST API](https://www.crossref.org/documentation/retrieve-metadata/rest-api/)可核对书目信息与更新元数据。科学结论仍需要正文证据。本包的 Crossref、OpenAlex、PubMed 公开查询无需 Key；读取结果明确为元数据记录，需要全文时继续到开放访问链接或出版者。
+[OpenAlex 搜索说明](https://docs.openalex.org/api-entities/works/search-works)采用自己的短语、布尔表达式和字段过滤。论文去重优先使用 DOI 或数据库论文 ID；[Crossref REST API](https://www.crossref.org/documentation/retrieve-metadata/rest-api/)可核对书目信息与更新元数据。科学结论仍需要正文证据。本包的 Crossref、OpenAlex、PubMed 公开查询无需 Key；OpenAlex 匿名路径使用免费每日预算，带 Key 路径按混合账单处理，需确认免费档。读取结果明确为元数据记录，需要全文时继续到开放访问链接或出版者。
 
 ## 可扩展的获取路径
 
@@ -98,7 +105,6 @@ Exa 的查询适合描述想找到的材料；Brave 等关键词检索可使用�
 | [智谱 Web Search](https://docs.bigmodel.cn/api-reference/%E5%B7%A5%E5%85%B7-api/%E7%BD%91%E7%BB%9C%E6%90%9C%E7%B4%A2) | `zhipu`，Bearer Key；纯检索，配置 `engine` 可选 `search_std`／`search_pro`／`search_pro_sogou`／`search_pro_quark` | 查询最多 70 字符；按引擎映射 API 条件，再按已知域名／发布日期过滤；无正文读取 |
 | [豆包搜索 Custom](https://www.volcengine.com/docs/87772/2272953) | `doubao`，独立搜索专用 Bearer Key；当前为网页搜索 | 查询最多 100 字符；域名、日期和 `finance`／`game`／`health`／`gov` 行业条件；当前返回标题、链接和摘要 |
 | [SerpAPI](https://serpapi.com/search-api) | `serpapi`，API Key；网页 `--platform google`／`bing` | 自然搜索结果及独立关键词图片／Lens 动作；Google 网页映射日期条件，Bing 按已知发布日期本地过滤 |
-| [DataForSEO](https://docs.dataforseo.com/v3/serp/google/organic/live/advanced/) | `dataforseo`，API 用户名／密码 Basic 认证；Google／Bing organic live advanced | `languageCode`／`locationCode` 配置地域，默认 `en`／`2840`；Google 支持日期条件，当前 Bing 路径无日期过滤 |
 | [Crossref](https://www.crossref.org/documentation/retrieve-metadata/rest-api/)／[OpenAlex](https://docs.openalex.org/how-to-use-the-api/api-overview)／[PubMed](https://www.ncbi.nlm.nih.gov/books/NBK25501/) | 公开检索和单记录读取；OpenAlex／PubMed Key 可选 | DOI、作者、书目和可能存在的摘要／开放访问链接；元数据与全文分别获取 |
 | [MediaWiki](https://www.mediawiki.org/wiki/API:Main_page) | `wiki`，公开 Search／Revisions API；七个默认站点，可配置 `wiki.sites` | 中英日 Wikipedia；`oldid` 读取指定修订并保留版本 URL；修订时间为 `updatedAt` |
 | [skills.sh](https://skills.sh/) | `skills`，官方 CLI 使用的公开 `/api/search` | 技能标题、所属仓库与安装线索；正文和提交版本继续到 GitHub 核对 |
@@ -116,17 +122,17 @@ Exa 的查询适合描述想找到的材料；Brave 等关键词检索可使用�
 
 默认搜索的顺序由 `intent` 决定，有有效候选后停止；显式 `sources` 并行取全部指定来源。空或无关结果继续换源，`aliases` 同时帮助词面相关性判断；初始后端耗尽后最多检索首个不同别名。过程见 `runs[].attempts`，别名重试跳过已确认未登录或限流的后端。
 
-智谱和两个 SERP 来源在命中记录中保存 `searchEngine`。API 入口不同不表示索引或原始材料独立。搜索后需要正文时，显式使用 `research --read-sources web` 或其他正文源。
+智谱和 SerpAPI 在命中记录中保存 `searchEngine`。API 入口不同不表示索引或原始材料独立。搜索后需要正文时，显式使用 `research --read-sources web` 或其他正文源。
 
-智谱搜索工具按调用计费。豆包[计费](https://www.volcengine.com/docs/87772/2272951)区分按量和订阅，当前使用 Custom 网页搜索专用 Key；IAM 和方舟模型联网路径按各自接口处理。SerpAPI 的图片动作与网页自然搜索分别选路，DataForSEO 当前接自然结果；新闻、地图等垂直服务按实际适配状态确认。正式使用前核对当前额度与条款。
+智谱与豆包入口的免费档需按当前账号核对，豆包[计费](https://www.volcengine.com/docs/87772/2272951)区分按量和订阅，当前适配 Custom 网页搜索专用 Key；IAM 和方舟模型联网路径按各自接口处理。SerpAPI 的图片动作与网页自然搜索分别选路；混合计费来源确认免费档后仍需检查账号额度，新闻、地图等垂直服务按实际适配状态确认。
 
 ## 后续 API 优先级
 
 1. [Context7](https://context7.com/docs/api-guide)：需要 Bearer Key 的文档 `/api/v3/search`／`fetch`，补文档版本与相关片段定位。
-2. [Europe PMC](https://europepmc.org/RestfulWebService)、CKAN、IETF Datatracker／EPO OPS：分别补开放全文、数据集、标准与专利的结构化查询。
+2. CKAN、IETF Datatracker／EPO OPS：补数据集、标准与专利的结构化查询。Europe PMC 已接入，其开放全文读取范围见[垂直来源](../../../docs/specialist-sources.md)。
 3. Mojeek／SearXNG：分别补不同索引、可自管聚合；依据新增有效来源和维护成本选择。
 4. [Firecrawl Search](https://docs.firecrawl.dev/features/search.md)／[Parallel Search](https://docs.parallel.ai/search/search-quickstart.md)：先评估搜索到相关正文的成功率和费用，再决定接入。
 
 新增 API 应返回同一套命中和原文契约，保留提供者、原始发布者、内容类型和失败原因。中文平台的账号开放 API、发布 API 与全站搜索授权范围不同，接入前核对实际可读数据。
 
-SERA HTTP 请求支持环境代理与 `NO_PROXY`；Node.js 22.17 下的代理调用已取得英文 Wikipedia、Wayback 与馆藏查询响应。观察日期：2026-11-01，当前注册 49 个来源。公开网页、学术、作品数据库、部分游戏 Wiki、B站评论、小黑盒原生帖／评论等取得有界结果；付费 Key、社交授权和完整覆盖未逐一验证。Europe PMC／SEC 保留为扩展候选。
+SERA HTTP 请求支持环境代理与 `NO_PROXY`。2026-11-01 的有界检查中，Node.js 22.17 下已通过代理取得英文 Wikipedia、Wayback 与馆藏查询响应；公开网页、学术、作品数据库、部分游戏 Wiki、B站评论、小黑盒原生帖／评论也取得结果。该观察不代表后来新增连接器均已完成在线验证；实际 Key、社交授权和完整覆盖仍按具体调用核验，SEC 保留为扩展候选。

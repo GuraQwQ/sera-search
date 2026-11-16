@@ -9,6 +9,8 @@ import type { CatalogGroup } from './types.js';
 import { writeAtomic } from './files.js';
 import { apiSources, loadCredentials, migrateCredentials, notLoggedIn } from './credentials.js';
 import { specialistSites } from './provider-catalog.js';
+import { connectorDefinitionSchema } from './connectors.js';
+import { sourceNameSchema } from './source-schema.js';
 
 const api = z.object({
   baseUrl: z.string().url().refine(value => ['http:', 'https:'].includes(new URL(value).protocol), '接口地址需要 HTTP 或 HTTPS').optional(),
@@ -18,12 +20,16 @@ const api = z.object({
   userAgent: z.string().min(1).optional(), clientId: z.string().min(1).optional(), accountId: z.string().min(1).optional(),
   guildId: z.string().regex(/^\d+$/).optional(), channelId: z.string().regex(/^\d+$/).optional(),
   enabled: z.boolean().optional(),
+  freeTierConfirmed: z.boolean().optional(),
 }).default({});
 const command = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]), enabled: z.boolean().optional() });
 const schema = z.object({
   home: z.string().optional(),
   timeoutMs: z.number().int().min(100).max(300000).default(20000),
   retentionDays: z.number().positive().max(3650).default(7),
+  sources: z.record(sourceNameSchema, api).default({}),
+  connectorFiles: z.array(z.string().min(1)).default([]),
+  connectors: z.array(connectorDefinitionSchema).default([]),
   exa: api, tavily: api, brave: api, github: api, bilibili: api, v2ex: api, web: api,
   zhipu: api, doubao: api, crossref: api, openalex: api, pubmed: api, serpapi: api, dataforseo: api,
   skills: api, bangumi: api, anilist: api, jikan: api, mangadex: api, vndb: api,
@@ -59,6 +65,14 @@ export async function loadConfig(options: ConfigLocation = {}): Promise<Config> 
   if (original && input && typeof input === 'object' && !Array.isArray(input)) await migrateCredentials(config.home, location.file, input as Record<string, unknown>, original);
   config.credentials = await loadCredentials(config.home);
   config.configFile = location.file;
+  for (const file of config.connectorFiles ?? []) {
+    const path = resolve(dirname(location.file), file);
+    let data: unknown;
+    try { data = JSON.parse(await readFile(path, 'utf8')); } catch { throw new Error(`无法读取 Connector 配置 ${path}，请检查 UTF-8 JSON`); }
+    const definitions = z.array(connectorDefinitionSchema).parse(Array.isArray(data) ? data : [data]);
+    config.connectors!.push(...definitions);
+  }
+  config.connectors = [...new Map(config.connectors!.map(item => [item.id, item])).values()];
   config.group = z.enum(catalogGroups).parse(options.group ?? 'default');
   if (config.group === 'game-wikis') {
     const group = schema.parse(JSON.parse(await readFile(new URL('../catalogs/game-wikis.json', import.meta.url), 'utf8')));
@@ -101,6 +115,7 @@ export function errorMessage(error: unknown, config: Config): string {
   if (['NOT_LOGGED_IN', 'NEED_LOGIN', 'AUTH_REQUIRED'].includes(String((error as { code?: unknown })?.code))) return notLoggedIn;
   const message = error instanceof Error ? error.message : String(error);
   const secrets = Object.values(config.credentials ?? {}).flatMap(record => Object.values(record.credentials));
+  for (const settings of Object.values(config.sources ?? {})) secrets.push(settings.apiKey, settings.username, settings.password);
   for (const name of apiSources) secrets.push(config[name]?.apiKey, config[name]?.username, config[name]?.password);
   const patterns = [...new Set(secrets.filter((key): key is string => Boolean(key)))].sort((a, b) => b.length - a.length).map(key => {
     const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { sourceNameSchema } from './source-schema.js';
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
@@ -24,6 +25,7 @@ const help = `SERA — Search, Extract, Research for Agents
   logout <来源>        清除登录记录，可配 --platform 退出平台
   auth [来源]          查看登录记录，平台记录用 --platform 筛选
   capabilities         列出来源、操作和配置状态
+  connectors           导出结构化连接器配置，支持 --sources 筛选
   backend <来源> [工具] 发现或调用仓库、浏览器、账号与地理扩展工具
   channels             发现可匹配的平台，支持 --sources 和 --platform 筛选
   search <查询>        自动选路；指定来源时并行聚合，保留换源记录
@@ -107,7 +109,7 @@ function integer(value: string | undefined, fallback: number) {
 }
 
 function sources(value?: string): SourceName[] | undefined {
-  return value === undefined ? undefined : z.array(z.enum(sourceNames)).min(1).parse(value.split(',').map(item => item.trim()));
+  return value === undefined ? undefined : z.array(sourceNameSchema).min(1).parse(value.split(',').map(item => item.trim()));
 }
 
 async function readResearchState(path: string) {
@@ -204,7 +206,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     const read = { sources: selected, query: values.query, keywords: values.keyword, length: integer(values.length, 2000), refresh: values.refresh, maxAgeMs: values['max-age'] === undefined ? undefined : integer(values['max-age'], 0), timeoutMs: values['timeout-ms'] === undefined ? undefined : integer(values['timeout-ms'], 20000), browser: values.browser, raw: values.raw, locator: values.locator === undefined ? undefined : JSON.parse(values.locator), signal: controller.signal };
     switch (command) {
       case 'login': {
-        const source = z.enum(sourceNames).parse(text);
+        const source = sourceNameSchema.parse(text);
         let credentials;
         if (values.stdin) {
           let input = '';
@@ -217,9 +219,10 @@ async function main(args = process.argv.slice(2)): Promise<void> {
         result = await login(config, source, credentials, values.platform, controller.signal);
         break;
       }
-      case 'logout': result = await logout(config, z.enum(sourceNames).parse(text), values.platform, controller.signal); break;
-      case 'auth': result = await authStatus(config, text ? z.enum(sourceNames).parse(text) : undefined, values.platform); break;
+      case 'logout': result = await logout(config, sourceNameSchema.parse(text), values.platform, controller.signal); break;
+      case 'auth': result = await authStatus(config, text ? sourceNameSchema.parse(text) : undefined, values.platform); break;
       case 'capabilities': result = engine.capabilities(selected); break;
+      case 'connectors': result = { connectors: engine.connectors(selected) }; break;
       case 'backend': {
         const input = values.input ? JSON.parse(await readFile(values.input, 'utf8')) : undefined;
         const request = backendSchema.parse({ source: positionals[1], tool: positionals[2], arguments: input, timeoutMs: values['timeout-ms'] === undefined ? undefined : integer(values['timeout-ms'], 20000) });

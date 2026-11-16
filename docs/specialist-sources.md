@@ -1,5 +1,7 @@
 # 垂直来源与材料检索
 
+结构化来源统一配置、免费与认证排序、科学／公共数据及 QQ／微信动作见[结构化数据连接器](connectors.md)。
+
 先用 `capabilities --sources 来源` 查看访问条件，再用 `channels --sources 来源 --json` 取得 `operations[].inputSchema`。`search` 和 `research` 共用 `operation`、`params`、`contentTypes`、`since`、`until`；操作参数会在实际请求前校验。日期可以表示发言、投稿、登记或出版时间，具体含义见动作说明。
 
 ## 已接入来源
@@ -8,7 +10,7 @@
 |---|---|---|
 | `aicu` | `comments`、`video-danmaku`、`live-danmaku`、`room-danmaku` | 按发言者／主播 UID 查询已收录评论与弹幕；排队 ticket、SSE 与发送时间；Cookie 可选 |
 | `danmakus` | `channels`、`lives`、`live-events` | 主播、已录制场次和异步弹幕查询；Token 可选，排队任务可用 `taskId` 续读 |
-| `filmot` | `subtitles` | 跨视频字幕片段及起止秒数；读取取得匹配字幕，要求 API Key，按 credits 计费 |
+| `filmot` | `subtitles` | 跨视频字幕片段及起止秒数；读取取得匹配字幕，需要 API Key；免费账户档与 credits 状态确认后参与调用 |
 | `holodex` | `videos`、`channels`、`channel` | 频道、直播、切片及联动关系；要求 `X-APIKEY`，结果为元数据 |
 | `semantic-scholar` | `papers` | 论文检索、摘要、引用计数和开放全文入口；可登记 Key，匿名额度可能限流 |
 | `openreview` | `papers`、`forum` | 论文与公开评审、回复、讨论；读取保留 note、forum 和回复关系，受实际可见范围影响 |
