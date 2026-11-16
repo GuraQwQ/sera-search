@@ -2,6 +2,8 @@
 
 本指南用于选择 SERA 已接入的来源，以及在需要补充搜索入口时查阅官方语法。提供者能力看 `sera capabilities`，登录记录看 `sera auth`，具体平台及可匹配操作看 `sera channels`。参数和认证要求以 CLI 帮助及来源当前文档为准。
 
+字幕、直播历史、公开评审、研究产物、书目、漏洞、气象及专利等入口见[垂直来源与动作](../../../docs/specialist-sources.md)。先查动作 Schema，再提供参数；Aicu／Danmakus 通过 `sourceOptions` 分别指定 UID 与房间条件，按共同覆盖区间核对原始事件。
+
 ## 按对象选路
 
 | 需要的对象 | 优先路径 | 核验重点 |

@@ -1,8 +1,10 @@
 import type { ApiConfig, Config, Source, Document } from '../types.js';
 import { date, decoded, document, endpoint, epoch, hit, json, object, permitted, response, rows, string, textResponse } from './shared.js';
+import { z } from 'zod';
+import { describeOperation, reportCoverage, selectOperation } from './operations.js';
 
 export interface SteamTarget {
-  kind: 'store' | 'news-list' | 'news';
+  kind: 'store' | 'news-list' | 'news' | 'players';
   appId?: string;
   newsId?: string;
   idKind?: 'feed' | 'event' | 'announcement';
@@ -10,6 +12,7 @@ export interface SteamTarget {
 
 export function steamTarget(value: string): SteamTarget | undefined {
   const url = new URL(value), host = url.hostname.replace(/^www\./, ''), path = url.pathname;
+  if (host === 'api.steampowered.com' && /^\/ISteamUserStats\/GetNumberOfCurrentPlayers\/v0*1\/?$/i.test(path) && /^[1-9]\d*$/.test(url.searchParams.get('appid') ?? '')) return { kind: 'players', appId: url.searchParams.get('appid')! };
   if (host === 'api.steampowered.com' && /^\/ISteamNews\/GetNewsForApp\/v0*2\/?$/i.test(path) && /^[1-9]\d*$/.test(url.searchParams.get('appid') ?? '')) return { kind: 'news-list', appId: url.searchParams.get('appid')! };
   if (host === 'store.steampowered.com' && /^\/api\/appdetails\/?$/.test(path) && /^[1-9]\d*$/.test(url.searchParams.get('appids') ?? '')) return { kind: 'store', appId: url.searchParams.get('appids')! };
   if (host === 'steamstore-a.akamaihd.net') {
@@ -32,7 +35,7 @@ export function steamDocumentMatches(url: string, value: Document): boolean {
   if (!target) return true;
   const metadata = value.metadata ?? {};
   if (target.appId && String(metadata.appId ?? '') !== target.appId) return false;
-  if (target.kind !== 'news') return metadata.contentScope === (target.kind === 'store' ? 'store-specification' : 'news-list');
+  if (target.kind !== 'news') return metadata.contentScope === (target.kind === 'store' ? 'store-specification' : target.kind === 'players' ? 'current-player-count' : 'news-list');
   const field = target.idKind === 'feed' ? 'feedGid' : target.idKind === 'event' ? 'eventGid' : 'announcementGid';
   return metadata.contentScope === 'single-news-record' && String(metadata[field] ?? '') === target.newsId;
 }
@@ -43,19 +46,47 @@ function steamError(message: string, code: string, fallbackUrl: string) {
 
 function steam(config: ApiConfig = {}): Source {
   const headers = { 'User-Agent': 'SERA', Accept: 'application/json' };
+  const storeParams = z.strictObject({ region: z.string().regex(/^[A-Za-z]{2}$/).optional(), language: z.string().min(1).optional() });
+  const appParams = z.strictObject({ appId: z.string().regex(/^[1-9]\d*$/) });
+  const operations = [describeOperation('store', '搜索 Steam 商店实体', ['game'], storeParams), describeOperation('players', '查询 AppID 当前在线人数', ['player-count'], appParams), describeOperation('news', '按 AppID 查询带时间范围的公告', ['news'], appParams)];
   return {
-    capability: { name: 'steam', search: true, read: true, configured: config.enabled !== false, category: 'catalog', platforms: ['steam'], requiresLogin: false, loggedIn: true, requirement: '公开商店作品实体、AppID、商店规格、公告列表及单条公告全文；公告保留各自标识与时间' },
+    capability: { name: 'steam', search: true, read: true, configured: config.enabled !== false, category: 'catalog', platforms: ['steam'], requiresLogin: false, loggedIn: true, operations, contentTypes: ['game', 'news', 'player-count'], accessMethod: 'api', requirement: '公开商店实体、规格、公告和当前人数；公告保留各自标识与时间' },
     async search(request) {
+      const operation = selectOperation(request, operations);
+      if (operation !== 'store') {
+        const { appId } = appParams.parse(request.params ?? {}), players = operation === 'players';
+        const publicUrl = new URL(players ? 'https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/' : 'https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/');
+        if (!permitted(request.domains, publicUrl.hostname)) return [];
+        publicUrl.searchParams.set('appid', appId);
+        if (!players) { publicUrl.searchParams.set('count', String(request.limit)); publicUrl.searchParams.set('maxlength', '0'); if (request.until) publicUrl.searchParams.set('enddate', String(Date.parse(request.until + 'T23:59:59Z') / 1000)); }
+        const api = endpoint(config, publicUrl.origin, publicUrl.pathname.slice(1) + publicUrl.search);
+        const result = await json(api, { headers, signal: request.signal }, 'Steam Web API');
+        if (players) {
+          reportCoverage(request, '当前在线人数观测', { completeness: 'complete', limitations: ['当前观测不代表历史人数序列'] });
+          const data = object(result.response, 'Steam 当前人数');
+          return hit('steam', { title: `Steam ${appId} 当前人数`, url: publicUrl.href, snippet: `当前在线人数：${data.player_count}`, metadata: { appId, playerCount: data.player_count, observedAt: new Date().toISOString() } });
+        }
+        const items = rows(object(result.appnews, 'Steam 公告').newsitems, 'Steam 公告');
+        reportCoverage(request, 'Steam 公告列表', { completeness: 'partial', truncated: items.length >= request.limit, nextCursor: items.length ? String(Math.min(...items.map(item => Number(item.date))) - 1) : undefined });
+        return items.filter(item => !request.since || (epoch(item.date) ?? '') >= request.since).flatMap(item => hit('steam', { title: string(item.title), url: string(item.url), snippet: string(item.contents), publishedAt: epoch(item.date), metadata: { appId, feedGid: item.gid, contentScope: 'news-record' } }));
+      }
+      const params = storeParams.parse(request.params ?? {});
       if (!permitted(request.domains, 'store.steampowered.com')) return [];
-      if (request.since) throw new Error('Steam 商店实体搜索不支持统一发布日期过滤');
+      if (request.since || request.until) throw new Error('Steam 商店实体搜索不支持统一发布日期过滤，请选择 news 操作');
+      reportCoverage(request, 'Steam 商店实体候选', { completeness: 'partial' });
       const url = endpoint(config, 'https://store.steampowered.com/', 'api/storesearch/');
-      url.searchParams.set('term', request.query); url.searchParams.set('l', 'english'); url.searchParams.set('cc', 'us');
+      url.searchParams.set('term', request.query); url.searchParams.set('l', params.language ?? 'english'); url.searchParams.set('cc', params.region ?? 'us');
       const result = await json(url, { headers, signal: request.signal }, 'Steam 商店搜索');
       return rows(result.items, 'Steam 商店实体').filter(item => /^[1-9]\d*$/.test(String(item.id))).slice(0, request.limit).flatMap(item => hit('steam', { title: string(item.name), url: `https://store.steampowered.com/app/${item.id}/`, snippet: 'Steam 商店实体候选；名称与发行商需继续核对', metadata: { appId: item.id, imageUrl: item.tiny_image, contentScope: 'store-entity' } }));
     },
     async read(url, signal) {
       const target = steamTarget(url), address = new URL(url);
       if (!target) throw steamError('Steam 读取需要商品、公告列表或单条公告链接', 'STEAM_URL_UNSUPPORTED', url);
+      if (target.kind === 'players') {
+        const api = endpoint(config, 'https://api.steampowered.com/', 'ISteamUserStats/GetNumberOfCurrentPlayers/v1/' + address.search);
+        const result = await json(api, { headers, signal }, 'Steam 当前人数');
+        return document('steam', url, `Steam ${target.appId} 当前人数`, JSON.stringify(result, null, 2), { contentKind: 'metadata', metadata: { appId: target.appId, contentScope: 'current-player-count', observedAt: new Date().toISOString() } });
+      }
       if (target.kind === 'news') {
         const requested = endpoint(config, address.origin, address.pathname.slice(1) + address.search);
         const result = await response(requested, { headers: { ...headers, Accept: 'text/html' }, signal }, 'Steam 原始公告');

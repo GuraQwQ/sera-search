@@ -57,6 +57,13 @@ const help = `SERA — Search, Extract, Research for Agents
   --github-type <类型> repositories、code 或 issues
   --domain <域名>      可重复，按提供者支持的域名过滤检索
   --since <日期>       YYYY-MM-DD，按提供者支持的发布时间过滤
+  --until <日期>       YYYY-MM-DD，查询时间上界；具体时间含义见动作说明
+  --content-type <类型> 可重复，按目标材料选择来源，如 subtitle、live-danmaku、paper
+  --operation <动作>   从 channels 返回的动作与参数 Schema 选择
+  --params <JSON>      动作的结构化参数；也可用 search --input 读取请求文件
+  --strategy <策略>    fallback 分阶段换源；cross-check 查询互补来源
+  --max-sources <数量> 本轮最多调用的来源数
+  --locator <JSON>     read 的片段／事件定位；research 自动传递命中定位
   --at <时间>          Wayback 目标时间，YYYYMMDD 或 YYYYMMDDhhmmss
   --intent <意图>      general、official、feedback、historical、game、galgame、academic、code、images
   --alias <别名>       可重复，补充实体别名；无有效结果时尝试首个不同别名
@@ -82,7 +89,7 @@ const help = `SERA — Search, Extract, Research for Agents
   --python <路径>      install 使用已有 Python 创建工具环境
   --browser <路径>     install 或读取时复用已有 Chromium / Edge
   --node <路径>        install 地理扩展使用已有 Node.js 24+
-  --input <JSON文件>   backend、record 或 research 的结构化参数
+  --input <JSON文件>   search、backend、record 或 research 的结构化参数
   --timeout-ms <毫秒>  backend/read/read-many/research 单次调用预算，最大300000
   --raw               web 直接取得原始 HTML/JSON/文本，跳过 Jina
 
@@ -162,6 +169,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     cursor: { type: 'string' }, parent: { type: 'string' }, order: { type: 'string' },
     sources: { type: 'string' }, platform: { type: 'string' }, stdin: { type: 'boolean' }, 'from-env': { type: 'string' }, limit: { type: 'string' }, 'github-type': { type: 'string' },
     domain: { type: 'string', multiple: true }, since: { type: 'string' }, at: { type: 'string' }, 'read-limit': { type: 'string' }, 'read-sources': { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' }, 'skill-dir': { type: 'string' },
+    until: { type: 'string' }, operation: { type: 'string' }, params: { type: 'string' }, 'content-type': { type: 'string', multiple: true }, strategy: { type: 'string' }, 'max-sources': { type: 'string' }, locator: { type: 'string' },
     components: { type: 'string' }, python: { type: 'string' }, browser: { type: 'string' }, node: { type: 'string' }, input: { type: 'string' }, 'timeout-ms': { type: 'string' },
   } });
   if (values.help || (!positionals.length && !values.version)) { process.stdout.write(help); return; }
@@ -190,8 +198,10 @@ async function main(args = process.argv.slice(2)): Promise<void> {
   try {
     let result: unknown;
     const selected = sources(values.sources);
-    const search = { query: text, sources: selected, platform: values.platform, limit: integer(values.limit, 5), githubType: values['github-type'] as any, domains: values.domain, since: values.since, at: values.at, aliases: values.alias, terms: values.term, excludeUrls: values['exclude-url'], intent: values.intent === undefined ? undefined : z.enum(intents).parse(values.intent), signal: controller.signal };
-    const read = { sources: selected, query: values.query, keywords: values.keyword, length: integer(values.length, 2000), refresh: values.refresh, maxAgeMs: values['max-age'] === undefined ? undefined : integer(values['max-age'], 0), timeoutMs: values['timeout-ms'] === undefined ? undefined : integer(values['timeout-ms'], 20000), browser: values.browser, raw: values.raw, signal: controller.signal };
+    const task = command === 'search' && values.input ? JSON.parse(await readFile(values.input, 'utf8')) : {};
+    const search = { ...task, query: text || task.query, sources: selected ?? task.sources, platform: values.platform ?? task.platform, limit: integer(values.limit, task.limit ?? 5), githubType: values['github-type'] ?? task.githubType, domains: values.domain ?? task.domains, since: values.since ?? task.since, until: values.until ?? task.until, at: values.at ?? task.at, aliases: values.alias ?? task.aliases, terms: values.term ?? task.terms, excludeUrls: values['exclude-url'] ?? task.excludeUrls, intent: values.intent === undefined ? task.intent : z.enum(intents).parse(values.intent),
+      operation: values.operation ?? task.operation, params: values.params === undefined ? task.params : JSON.parse(values.params), contentTypes: values['content-type'] ?? task.contentTypes, maxSources: values['max-sources'] === undefined ? task.maxSources : integer(values['max-sources'], 1), strategy: values.strategy ?? task.strategy, signal: controller.signal };
+    const read = { sources: selected, query: values.query, keywords: values.keyword, length: integer(values.length, 2000), refresh: values.refresh, maxAgeMs: values['max-age'] === undefined ? undefined : integer(values['max-age'], 0), timeoutMs: values['timeout-ms'] === undefined ? undefined : integer(values['timeout-ms'], 20000), browser: values.browser, raw: values.raw, locator: values.locator === undefined ? undefined : JSON.parse(values.locator), signal: controller.signal };
     switch (command) {
       case 'login': {
         const source = z.enum(sourceNames).parse(text);
@@ -231,6 +241,8 @@ async function main(args = process.argv.slice(2)): Promise<void> {
         const report = await engine.research({ ...search, ...task, query: text || task.query, sources: selected ?? task.sources, signal: controller.signal,
           limit: integer(values.limit, task.limit ?? 5), aliases: values.alias ?? task.aliases, terms: values.term ?? task.terms, excludeUrls: values['exclude-url'] ?? task.excludeUrls,
           platform: values.platform ?? task.platform, githubType: values['github-type'] ?? task.githubType, domains: values.domain ?? task.domains, since: values.since ?? task.since, at: values.at ?? task.at, intent: search.intent ?? task.intent,
+          until: values.until ?? task.until, operation: values.operation ?? task.operation, params: search.params ?? task.params, contentTypes: values['content-type'] ?? task.contentTypes, maxSources: search.maxSources ?? task.maxSources, strategy: search.strategy ?? task.strategy,
+          sourceOptions: task.sourceOptions,
           discoveryQuery: values['discovery-query'] ?? task.discoveryQuery, targetCount: values['target-count'] === undefined ? task.targetCount : integer(values['target-count'], 1),
           readLimit: integer(values['read-limit'], task.readLimit ?? 5), readSources: sources(values['read-sources']) ?? task.readSources, goals: values.goal ?? task.goals, state,
           keywords: values.keyword ?? task.keywords, length: integer(values.length, task.length ?? 2000), refresh: values.refresh ?? task.refresh, timeoutMs: read.timeoutMs ?? task.timeoutMs, browser: read.browser ?? task.browser, raw: read.raw ?? task.raw });

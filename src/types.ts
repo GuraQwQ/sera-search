@@ -1,4 +1,6 @@
-export const sourceNames = ['exa', 'tavily', 'brave', 'github', 'agent-reach', 'opencli', 'bilibili', 'v2ex', 'web', 'zhipu', 'doubao', 'crossref', 'openalex', 'pubmed', 'serpapi', 'dataforseo', 'wiki', 'skills', 'bangumi', 'anilist', 'jikan', 'mangadex', 'vndb', 'musicbrainz', 'lastfm', 'listenbrainz', 'discogs', 'youtube', 'netease', 'baidu-images', 'sogou-images', 'trace-moe', 'saucenao', 'twitch', 'discord', 'instagram', 'bing', 'sites', 'wayback', 'archive', 'linuxdo', 'heybox', 'steam', 'nicovideo', 'ghgrab', 'scrapling', 'metadata-parser', 'google-news', 'iptv', 'aliens-eye', 'sherlock', 'gods-eye-view'] as const;
+export const specialistSourceNames = ['aicu', 'danmakus', 'operationhong', 'matsuri', 'laplace', 'filmot', 'holodex', 'semantic-scholar', 'openreview', 'osv', 'github-advisory', 'gdelt', 'open-library', 'clinicaltrials', 'steamdb', 'vgmdb', 'open-meteo', 'mangaupdates', 'novelupdates', 'syosetu', 'kakuyomu', 'huggingface', 'biorxiv', 'europepmc', 'zenodo', 'google-patents', 'j-platpat', 'ndl', 'nga', '5ch', 'hackernews', 'lobsters'] as const;
+export type SpecialistSourceName = typeof specialistSourceNames[number];
+export const sourceNames = ['exa', 'tavily', 'brave', 'github', 'agent-reach', 'opencli', 'bilibili', 'v2ex', 'web', 'zhipu', 'doubao', 'crossref', 'openalex', 'pubmed', 'serpapi', 'dataforseo', 'wiki', 'skills', 'bangumi', 'anilist', 'jikan', 'mangadex', 'vndb', 'musicbrainz', 'lastfm', 'listenbrainz', 'discogs', 'youtube', 'netease', 'baidu-images', 'sogou-images', 'trace-moe', 'saucenao', 'twitch', 'discord', 'instagram', 'bing', 'sites', 'wayback', 'archive', 'linuxdo', 'heybox', 'steam', 'nicovideo', 'ghgrab', 'scrapling', 'metadata-parser', 'google-news', 'iptv', 'aliens-eye', 'sherlock', 'gods-eye-view', ...specialistSourceNames] as const;
 export type SourceName = typeof sourceNames[number];
 export const extensionNames = ['aliens-eye', 'sherlock', 'gods-eye-view'] as const;
 export type ExtensionName = typeof extensionNames[number];
@@ -43,7 +45,7 @@ export interface CommandConfig {
   enabled?: boolean;
 }
 
-export interface Config {
+export interface Config extends Partial<Record<SpecialistSourceName, ApiConfig>> {
   home: string;
   timeoutMs: number;
   retentionDays: number;
@@ -97,6 +99,11 @@ export interface SearchRequest {
   domains?: string[];
   since?: string;
   at?: string;
+  until?: string;
+  operation?: string;
+  params?: Record<string, unknown>;
+  contentTypes?: string[];
+  onCoverage?: (coverage: DataCoverage) => void;
   aliases?: string[];
   terms?: string[];
   onAttempt?: (attempt: SearchAttempt) => void;
@@ -110,11 +117,37 @@ export interface SearchHit {
   url: string;
   snippet: string;
   publishedAt?: string;
+  locator?: ContentLocator;
   metadata?: Record<string, unknown> & { relevance?: { status: string; matchedTerms?: string[]; missingTerms?: string[]; score?: number } };
 }
 
 export type ContentKind = 'page' | 'post' | 'subtitle' | 'metadata';
 export type EvidenceSource = SourceName | 'external';
+
+export interface ContentLocator {
+  kind: 'segment' | 'event' | 'record';
+  id: string;
+  parentUrl?: string;
+  startSeconds?: number;
+  endSeconds?: number;
+  occurredAt?: string;
+}
+export interface DataCoverage {
+  scope: string;
+  completeness: 'unknown' | 'partial' | 'complete';
+  requested?: Record<string, unknown>;
+  observed?: { since?: string; until?: string };
+  truncated?: boolean;
+  nextCursor?: string;
+  limitations?: string[];
+}
+export interface SourceOperation {
+  name: string;
+  description: string;
+  contentTypes: string[];
+  inputSchema: Record<string, unknown>;
+  accessMethod: 'api' | 'site-search' | 'local';
+}
 
 export interface Document {
   source: EvidenceSource;
@@ -124,6 +157,7 @@ export interface Document {
   contentKind: ContentKind;
   publishedAt?: string;
   metadata?: Record<string, unknown>;
+  locator?: ContentLocator;
 }
 
 export interface Capability {
@@ -139,6 +173,10 @@ export interface Capability {
   category?: 'web' | 'code' | 'academic' | 'wiki' | 'platform' | 'catalog' | 'images';
   requiresLogin?: boolean;
   loggedIn?: boolean;
+  contentTypes?: string[];
+  operations?: SourceOperation[];
+  accessMethod?: SourceOperation['accessMethod'];
+  limitations?: string[];
 }
 
 export interface Source {
@@ -164,6 +202,8 @@ export interface Channel {
   strategy?: string;
   description?: string;
   status?: string;
+  operations?: SourceOperation[];
+  contentTypes?: string[];
 }
 
 export interface Retrieval {
@@ -182,6 +222,7 @@ export interface AggregatedHit {
   rankScore: number;
   publisher: string;
   publishedAt?: string;
+  locator?: ContentLocator;
 }
 
 export interface SourceRun {
@@ -198,6 +239,8 @@ export interface SourceRun {
   cacheHit?: boolean;
   network?: NetworkTrace;
   newUrls?: number;
+  newItems?: number;
+  coverage?: DataCoverage;
 }
 
 export interface NetworkRequest { url: string; method: string; startedAt: string; elapsedMs?: number; status?: number; error?: string }
@@ -212,9 +255,17 @@ export interface SearchOptions {
   domains?: string[];
   since?: string;
   at?: string;
+  until?: string;
+  operation?: string;
+  params?: Record<string, unknown>;
+  contentTypes?: string[];
+  maxSources?: number;
+  strategy?: 'fallback' | 'cross-check';
+  sourceOptions?: Partial<Record<SourceName, { operation?: string; params?: Record<string, unknown> }>>;
   aliases?: string[];
   terms?: string[];
   excludeUrls?: string[];
+  excludeItems?: string[];
   intent?: Intent;
   signal?: AbortSignal;
 }
@@ -225,6 +276,7 @@ export interface SearchReport {
   hits: AggregatedHit[];
   runs: SourceRun[];
   route?: { intent: Intent; reason: string; directUrl?: string };
+  plan?: { strategy: 'fallback' | 'cross-check'; contentTypes: string[]; selected: SourceName[]; stopReason: 'enough-results' | 'budget' | 'exhausted' | 'cancelled' };
 }
 
 export interface Evidence extends Document {
@@ -253,7 +305,7 @@ export interface ReadReport {
   nextSteps?: string[];
   runs: SourceRun[];
 }
-export interface ReadOptions { sources?: SourceName[]; signal?: AbortSignal; query?: string; keywords?: string[]; length?: number; refresh?: boolean; maxAgeMs?: number; timeoutMs?: number; browser?: string; raw?: boolean }
+export interface ReadOptions { sources?: SourceName[]; signal?: AbortSignal; query?: string; keywords?: string[]; length?: number; refresh?: boolean; maxAgeMs?: number; timeoutMs?: number; browser?: string; raw?: boolean; locator?: ContentLocator }
 export interface BatchReadReport { status: 'ok' | 'partial' | 'error'; documents: ReadReport[] }
 export interface ResearchSubject { id: string; name: string; aliases?: string[]; urls?: string[] }
 export interface ResearchCriterion { id: string; description: string; kind: 'required' | 'preference'; intent?: Intent; scope?: Record<string, string>; keywords?: string[] }
@@ -269,8 +321,8 @@ export interface ResearchAssessment {
   reviewedEvidenceIds: string[];
   measurement?: { value: number; unit: string; normalization?: { factor: number; unit: string; note: string } };
 }
-export interface ResearchCandidate { subjectId: string; criterionId: string; evidenceId: string; url: string }
-export interface ResearchRound { query: string; sources: SourceName[]; newUrls: number; newEvidence: number; resolved: number }
+export interface ResearchCandidate { subjectId: string; criterionId: string; evidenceId: string; url: string; itemKey?: string }
+export interface ResearchRound { query: string; sources: SourceName[]; newUrls: number; newItems?: number; newEvidence: number; resolved: number }
 export interface ResearchState {
   version: 2;
   subjects: ResearchSubject[];
@@ -280,6 +332,8 @@ export interface ResearchState {
   evidenceIds: string[];
   discoveredUrls: string[];
   examinedUrls: string[];
+  discoveredItems?: string[];
+  examinedItems?: string[];
   candidates: ResearchCandidate[];
   accessFailures: { url: string; codes: string[]; retryAt?: string }[];
   history: ResearchRound[];

@@ -4,10 +4,11 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { Config } from './types.js';
-import { platformIdPattern, catalogGroups } from './types.js';
+import { platformIdPattern, catalogGroups, specialistSourceNames } from './types.js';
 import type { CatalogGroup } from './types.js';
 import { writeAtomic } from './files.js';
 import { apiSources, loadCredentials, migrateCredentials, notLoggedIn } from './credentials.js';
+import { specialistSites } from './provider-catalog.js';
 
 const api = z.object({
   baseUrl: z.string().url().refine(value => ['http:', 'https:'].includes(new URL(value).protocol), '接口地址需要 HTTP 或 HTTPS').optional(),
@@ -30,6 +31,7 @@ const schema = z.object({
   'baidu-images': api, 'sogou-images': api, 'trace-moe': api, saucenao: api, twitch: api, discord: api, instagram: api, bing: api, sites: api,
   wayback: api, archive: api,
   linuxdo: api, heybox: api, steam: api, nicovideo: api, iptv: api,
+  ...Object.fromEntries(specialistSourceNames.map(name => [name, api])),
   'google-news': api.unwrap().extend({ country: z.string().min(2).optional(), edition: z.string().min(1).optional(), topicId: z.string().min(1).optional() }).default({}),
   catalogFile: z.string().optional(),
   wiki: api.unwrap().extend({ sites: z.record(z.string().regex(platformIdPattern), z.object({ apiUrl: z.string().url(), pageBaseUrl: z.string().url(), label: z.string().optional() })).optional() }).default({}),
@@ -64,11 +66,11 @@ export async function loadConfig(options: ConfigLocation = {}): Promise<Config> 
   }
   config.catalogFile = options.catalog ? resolve(options.catalog) : config.group === 'galgame' ? fileURLToPath(new URL('../catalogs/galgame.json', import.meta.url)) : parsed.data.catalogFile ? resolve(dirname(location.file), parsed.data.catalogFile) : fileURLToPath(new URL('../catalogs/sites.json', import.meta.url));
   const catalogSchema = z.object({ sites: z.record(z.string().regex(platformIdPattern), z.object({ domains: z.array(z.string().min(1)).min(1), label: z.string().min(1), description: z.string().optional() })) });
-  try { config.catalog = catalogSchema.parse(JSON.parse(await readFile(config.catalogFile, 'utf8'))); }
+  try { config.catalog = catalogSchema.parse(JSON.parse(await readFile(config.catalogFile, 'utf8'))); if (config.group === 'default') config.catalog.sites = { ...specialistSites, ...config.catalog.sites }; }
   catch { throw new Error('站点目录需要有效 UTF-8 JSON 与 sites/domains/label 字段'); }
   for (const name of apiSources) {
     const record = config.credentials[name];
-    if (record?.status === 'active') Object.assign(config[name]!, record.credentials);
+    if (record?.status === 'active') Object.assign(config[name] ??= {}, record.credentials);
   }
   return config;
 }

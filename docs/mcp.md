@@ -10,6 +10,8 @@ Skill 指导 Agent 选择来源、使用 `research` 和读取证据。它属于�
 
 MCP 是同一核心的 Agent 接入口：
 
+`sera_channels` 返回每个动作的参数 Schema；`sera_search`／`sera_research` 使用 `operation`、`params`、`contentTypes` 和按源区分的 `sourceOptions`。片段定位用 `locator`，实际数据范围见 `runs[].coverage`，调用计划见 `plan`。接口例子与各来源边界见[垂直来源](specialist-sources.md)。
+
 ```json
 {
   "mcpServers": {

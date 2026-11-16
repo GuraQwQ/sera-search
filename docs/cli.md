@@ -4,6 +4,8 @@
 
 安装为可执行包后，下面的 `node dist/cli.js` 可以替换为 `sera`。使用 `--help` 查看实际参数。
 
+垂直资料使用 `--operation`、`--params JSON` 与 `--content-type`，参数由 `channels` 的动作 Schema 给出。`search --input 文件` 可传每源独立的 `sourceOptions`；`--since/--until` 指定范围，`--strategy cross-check --max-sources 数量` 控制交叉核验。来源、分页和片段示例见[垂直来源](specialist-sources.md)。
+
 任务开始时先查看相关来源，再直接执行首轮取证；例如网页问题只看 `bing,web`，作品发行考据再加入 `steam,wayback`。多字段任务使用 `research --goal`，已有链接直接 `read`／`read-many`。起步和续查示例见[取证与续查](../skills/sera-search/references/workflows.md)。
 
 ```bash

@@ -5,7 +5,7 @@ description: 使用 SERA CLI 或 MCP 跨来源发现资料、读取原文，并�
 
 # SERA
 
-沿用同一 `SERA_HOME`／`--home`。先看任务相关来源的 `capabilities`，平台不明时用 `channels`；实际网络、权限与额度由调用结果确认。
+沿用同一 `SERA_HOME`／`--home`。先看任务相关来源的 `capabilities`，平台或动作不明时用 `channels`；实际网络、权限与额度由调用结果确认。按 `contentTypes` 选材料，按动作 Schema 提供 `operation`／`params`；多来源参数不同用 `sourceOptions`。字幕、弹幕、公开评审、模型与数据集等入口见[垂直来源](../../docs/specialist-sources.md)。
 
 ## 选择入口
 
@@ -19,7 +19,7 @@ description: 使用 SERA CLI 或 MCP 跨来源发现资料、读取原文，并�
 
 `research` 会先复用证据，按缺口搜索并检查完成条件。Agent 审阅原文后填写 `state.assessments` 的结论、条件满足情况、适用范围及引用坐标；`coverage` 返回合格对象、排除项和缺口。判据的 `kind` 区分必需条件与偏好，数量要求用 `targetCount`。接口与通用示例见[取证与续查](references/workflows.md)。
 
-请求成功、取得材料和结论得到支持分别判断。搜索相关性及证据 ID 用于组织核验；发布时间、生效条件和原始引用关系需要结合正文理解。片段不足时续读，比较前对齐条件与口径。
+请求成功、取得材料和结论得到支持分别判断。搜索相关性及证据 ID 用于组织核验；发布时间、生效条件和原始引用关系需要结合正文理解。片段不足时续读，比较前对齐条件与口径。字幕／事件命中的 `locator` 需要随读取保留；`runs[].coverage` 是本次数据范围，研究 `coverage.complete` 是对象与判据检查。交叉核验用 `strategy:cross-check` 和 `maxSources`，核对共同覆盖区间及原始事件，不能将重复采集当成独立佐证。
 
 `research` 的 `sources` 同时限制搜索和新读取，正文需要另一组入口时传 `readSources`。网页可用 `raw` 获取原始 HTML，渲染读取可传已有浏览器路径 `browser` 与单次预算 `timeoutMs`。SERA 路径不足时，按用户允许的来源与费用使用宿主工具接力，再导入实际材料。
 

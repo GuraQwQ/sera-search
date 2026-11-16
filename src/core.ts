@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { sourceNames, platformIdPattern, intents } from './types.js';
 import type { Channel, Config, Source, SourceName, SearchOptions, SearchReport, SearchHit, AggregatedHit, SourceRun, ReadReport, ResearchReport, Evidence, CommentReport, ImageRequest, ReadOptions, BatchReadReport, ResearchOptions, ResearchState, SearchAttempt } from './types.js';
-import { canonicalUrl, publisher, textPage, focusText, EvidenceStore } from './evidence.js';
+import { canonicalUrl, retrievalKey, publisher, textPage, focusText, EvidenceStore } from './evidence.js';
 import { errorMessage } from './config.js';
 import { createHttpSources } from './providers/http.js';
 import { createPlatformSources } from './providers/platform.js';
@@ -15,7 +15,8 @@ import { createDiscoverySources } from './providers/discovery.js';
 import { createArchiveSources } from './providers/archives.js';
 import { createForumSources } from './providers/forums.js';
 import { createEntitySources, steamDocumentMatches } from './providers/entities.js';
-import { directTarget, specificSource, taskRoute, preferredSources } from './routing.js';
+import { directTarget, specificSource, taskRoute, preferredSources, materialTypes } from './routing.js';
+import { legacyContentTypes, specialistSites } from './provider-catalog.js';
 import { assessRelevance, discoveryTerms } from './providers/relevance.js';
 import { researchStateSchema, subjectSchema, criterionSchema, prepareResearch, inspectResearch, assessmentKey } from './research.js';
 export { researchStateSchema } from './research.js';
@@ -25,6 +26,11 @@ import { createFeedSources } from './providers/feeds.js';
 import { createMetadataSource } from './providers/metadata-parser.js';
 import { BackendPool, createBackendSources } from './backends.js';
 import { createExtensionSources } from './extensions.js';
+import { locatorSchema } from './providers/operations.js';
+import { createResearchApiSources } from './providers/research-apis.js';
+import { createSpecialistApiSources } from './providers/specialist-apis.js';
+import { createHistoryApiSources } from './providers/history-apis.js';
+import { createDirectorySources } from './providers/directory.js';
 
 export const searchSchema = z.object({
   query: z.string().trim().min(1).max(4096),
@@ -38,16 +44,24 @@ export const searchSchema = z.object({
     return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
   }, '日期需要有效的 YYYY-MM-DD').optional(),
   at: z.string().regex(/^(?:\d{8}|\d{14})$/).optional(),
+  until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value, '日期需要有效的 YYYY-MM-DD').optional(),
+  operation: z.string().regex(platformIdPattern).optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
+  contentTypes: z.array(z.string().trim().min(1).max(64)).min(1).max(20).optional(),
+  maxSources: z.number().int().min(1).max(sourceNames.length).optional(),
+  strategy: z.enum(['fallback', 'cross-check']).optional(),
+  sourceOptions: z.partialRecord(z.enum(sourceNames), z.object({ operation: z.string().regex(platformIdPattern).optional(), params: z.record(z.string(), z.unknown()).optional() })).optional(),
   aliases: z.array(z.string().trim().min(1).max(256)).max(10).optional(),
   terms: z.array(z.string().trim().min(1).max(256)).max(32).optional(),
   excludeUrls: z.array(z.string().url()).optional(),
+  excludeItems: z.array(z.string()).optional(),
   intent: z.enum(intents).optional(),
 });
 
 export const focusSchema = z.object({ query: z.string().trim().min(1).max(4096).optional(), keywords: z.array(z.string().trim().min(1).max(256)).max(32).optional(), length: z.number().int().min(1).max(20000).default(2000) });
-export const recordSchema = z.object({ url: z.string().url(), title: z.string().min(1), content: z.string().refine(value => Boolean(value.trim()), '外部材料需要实际取得的内容'), method: z.string().min(1), observedAt: z.string().datetime({ offset: true }), publishedAt: z.string().datetime({ offset: true }).optional(), contentKind: z.enum(['page', 'post', 'subtitle', 'metadata']).default('page'), metadata: z.record(z.string(), z.unknown()).optional() });
+export const recordSchema = z.object({ url: z.string().url(), title: z.string().min(1), content: z.string().refine(value => Boolean(value.trim()), '外部材料需要实际取得的内容'), method: z.string().min(1), observedAt: z.string().datetime({ offset: true }), publishedAt: z.string().datetime({ offset: true }).optional(), contentKind: z.enum(['page', 'post', 'subtitle', 'metadata']).default('page'), metadata: z.record(z.string(), z.unknown()).optional(), originSource: z.enum(sourceNames).optional(), locator: locatorSchema.optional() });
 const readSettings = { timeoutMs: z.number().int().min(100).max(300000).optional(), browser: z.string().min(1).optional(), raw: z.boolean().default(false) };
-export const readSchema = focusSchema.extend({ sources: z.array(z.enum(sourceNames)).min(1).optional(), refresh: z.boolean().default(false), maxAgeMs: z.number().finite().nonnegative().optional(), ...readSettings });
+export const readSchema = focusSchema.extend({ sources: z.array(z.enum(sourceNames)).min(1).optional(), refresh: z.boolean().default(false), maxAgeMs: z.number().finite().nonnegative().optional(), locator: locatorSchema.optional(), ...readSettings });
 export const researchSchema = searchSchema.extend({
   readLimit: z.number().int().min(0).max(20).default(5), readSources: z.array(z.enum(sourceNames)).min(1).optional(),
   goals: z.array(z.string().trim().min(1).max(256)).max(100).optional(), state: researchStateSchema.optional(),
@@ -67,7 +81,8 @@ export function mergeHits(hits: SearchHit[]): AggregatedHit[] {
     try { url = canonicalUrl(hit.url); } catch { continue; }
     const rank = (ranks.get(hit.source) ?? 0) + 1;
     ranks.set(hit.source, rank);
-    const item = merged.get(url) ?? { title: hit.title, url, snippet: hit.snippet, sources: [], retrievals: [], rankScore: 0, publisher: publisher(url), publishedAt: hit.publishedAt };
+    const key = retrievalKey(hit);
+    const item = merged.get(key) ?? { title: hit.title, url, snippet: hit.snippet, sources: [], retrievals: [], rankScore: 0, publisher: publisher(url), publishedAt: hit.publishedAt, ...(hit.locator ? { locator: hit.locator } : {}) };
     if (item.sources.includes(hit.source)) continue;
     item.sources.push(hit.source);
     item.retrievals.push({ source: hit.source, rank, snippet: hit.snippet, ...(hit.metadata ? { metadata: hit.metadata } : {}) });
@@ -75,7 +90,7 @@ export function mergeHits(hits: SearchHit[]): AggregatedHit[] {
     item.rankScore += 1 / (60 + rank);
     if (hit.snippet.length > item.snippet.length) item.snippet = hit.snippet;
     if (!item.publishedAt && hit.publishedAt) item.publishedAt = hit.publishedAt;
-    merged.set(url, item);
+    merged.set(key, item);
   }
   return [...merged.values()].sort((a, b) => b.rankScore - a.rankScore || a.url.localeCompare(b.url));
 }
@@ -84,7 +99,7 @@ export class Engine {
   readonly store: EvidenceStore;
   readonly sources: Source[];
   constructor(readonly config: Config, sources?: Source[], readonly backends = new BackendPool()) {
-    this.sources = sources ?? [...createHttpSources(config), ...createWebSources(config), ...createAcademicSources(config), ...createPlatformSources(config), ...createCatalogSources(config), ...createSocialSources(config), ...createActionSources(config), ...createDiscoverySources(config), ...createArchiveSources(config), ...createForumSources(config), ...createEntitySources(config), ...createFeedSources(config), createMetadataSource(config), ...createBackendSources(config, backends), ...createExtensionSources(config, backends)];
+    this.sources = sources ?? [...createHttpSources(config), ...createWebSources(config), ...createAcademicSources(config), ...createPlatformSources(config), ...createCatalogSources(config), ...createSocialSources(config), ...createActionSources(config), ...createDiscoverySources(config), ...createArchiveSources(config), ...createForumSources(config), ...createEntitySources(config), ...createFeedSources(config), createMetadataSource(config), ...createBackendSources(config, backends), ...createExtensionSources(config, backends), ...createResearchApiSources(config), ...createSpecialistApiSources(config), ...createHistoryApiSources(config), ...createDirectorySources(config)];
     if (!sources) {
       const attach = (name: SourceName) => this.sources.find(source => source.capability.name === name)!;
       attach('bilibili').comments = request => bilibiliComments(config.bilibili, request);
@@ -94,6 +109,7 @@ export class Engine {
       attach('brave').images = request => braveImages(config.brave, request);
       attach('brave').capability.images = true;
     }
+    for (const source of this.sources) source.capability.contentTypes ??= legacyContentTypes[source.capability.name] ?? specialistSites[source.capability.name as keyof typeof specialistSites]?.contentTypes;
     this.store = new EvidenceStore(config);
   }
 
@@ -111,6 +127,7 @@ export class Engine {
           platform: source.capability.platforms?.[0] ?? (['exa', 'tavily', 'brave', 'web'].includes(name) ? 'web' : name),
           search: source.capability.search, read: source.capability.read, configured: source.capability.configured,
           comments: source.capability.comments, images: source.capability.images,
+          operations: source.capability.operations, contentTypes: source.capability.contentTypes,
           browser: false, description: source.capability.requirement, status: source.capability.requiresLogin && !source.capability.loggedIn ? notLoggedIn : source.capability.configured ? '可调用' : '不可用' }];
         const selected = options.platform ? channels.filter(channel => channel.platform === options.platform) : channels;
         return { channels: selected, run: { source: name, status: selected.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: selected.length, network: networkReport(requests, this.config) } as SourceRun };
@@ -151,57 +168,89 @@ export class Engine {
 
   async search(options: SearchOptions, sourceOrder?: SourceName[]): Promise<SearchReport> {
     const input = searchSchema.parse(options);
-    const route = taskRoute(input.query, input.intent);
+    if (input.since && input.until && input.since > input.until) throw new Error('since 不能晚于 until');
+    const material = input.contentTypes ?? materialTypes(input.query);
+    const inferred = taskRoute(input.query, input.intent), route = material.length ? { ...inferred, reason: `按材料 ${material.join('、')} 匹配来源和动作；时间条件由动作解释` } : inferred;
     const selected = input.sources ? [...new Set(input.sources)] : input.at ? ['wayback' as SourceName] : input.platform
       ? this.sources.filter(source => source.capability.configured && source.search && (source.capability.platforms?.includes(input.platform!) || ['agent-reach', 'opencli'].includes(source.capability.name) || input.platform === 'academic' && source.capability.category === 'academic')).map(source => source.capability.name)
-      : [...new Set<SourceName>([...(sourceOrder ?? preferredSources(route.intent, input.query)), 'agent-reach'])].filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search && (name !== 'sites' || Boolean(input.platform))));
-    const known = new Set((input.excludeUrls ?? []).map(canonicalUrl));
+       : [...new Set<SourceName>([...(sourceOrder ?? preferredSources(route.intent, input.query, material)), ...(material.length || input.operation ? this.sources.filter(source => source.search && source.capability.configured).map(source => source.capability.name) : ['agent-reach' as const])])].filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search && (name !== 'sites' || Boolean(input.platform))));
+    const matching = selected.filter(name => {
+      const capability = this.sources.find(source => source.capability.name === name)?.capability;
+      return (input.sources || input.at || !material.length || material.some(type => capability?.contentTypes?.includes(type) || capability?.operations?.some(operation => operation.contentTypes.includes(type))))
+        && (!input.operation || input.sources || capability?.operations?.some(operation => operation.name === input.operation));
+    });
+    const strategy = input.strategy ?? 'fallback';
+    const scheduled = matching.slice(0, input.maxSources ?? (strategy === 'cross-check' && !input.sources ? 3 : matching.length));
+    const known = new Set((input.excludeUrls ?? []).map(canonicalUrl)), knownItems = new Set(input.excludeItems ?? []);
+    const knownPages = new Set([...known, ...[...knownItems].map(key => key.split('\n')[0]!)]);
+    const fresh = (hit: SearchHit) => !known.has(canonicalUrl(hit.url)) && !knownItems.has(retrievalKey(hit));
     const run = async (name: SourceName, query = input.query, filter = false) => {
       const source = this.sources.find(item => item.capability.name === name);
       if (!source?.search || !source.capability.configured) return { hits: [], run: this.unavailable(name, source) };
+      const settings = { operation: input.sourceOptions?.[name]?.operation ?? input.operation, params: input.sourceOptions?.[name]?.params ?? input.params };
       const started = Date.now(), signal = this.signal(options.signal), requests: NetworkRequest[] = [];
       const attempts: SearchAttempt[] = [];
+      let coverage: SourceRun['coverage'] = { scope: '本次检索返回范围', completeness: 'unknown', requested: { since: input.since, until: input.until }, limitations: ['检索命中数量不表示数据收录完整'] };
       try {
         signal.throwIfAborted();
-        const returned = await httpTrace.run(requests, () => source.search!({ ...input, query, signal, onAttempt: attempt => attempts.push(attempt) }));
+        if (settings.operation && !source.capability.operations?.some(operation => operation.name === settings.operation)) throw Object.assign(new Error('来源不支持此操作，请查看 channels'), { code: 'UNSUPPORTED_OPERATION' });
+        if (settings.params && Object.keys(settings.params).length && !source.capability.operations?.length) throw Object.assign(new Error('来源未声明结构化参数，请查看 channels'), { code: 'UNSUPPORTED_PARAMETERS' });
+        const operation = settings.operation ?? source.capability.operations?.find(item => material.some(type => item.contentTypes.includes(type)))?.name;
+        const returned = await httpTrace.run(requests, () => source.search!({ ...input, ...settings, query, operation, signal, onAttempt: attempt => attempts.push(attempt), onCoverage: value => { coverage = value; } }));
         const valid = returned.filter(hit => { try { canonicalUrl(hit.url); return true; } catch { return false; } });
-        const invalidUrls = returned.length - valid.length, raw = valid.slice(0, input.limit);
+        const dated = valid.filter(hit => {
+          const timestamp = hit.locator?.occurredAt ?? hit.publishedAt;
+          return !timestamp || (!input.since || timestamp.slice(0, 10) >= input.since) && (!input.until || timestamp.slice(0, 10) <= input.until);
+        });
+        const invalidUrls = returned.length - valid.length, raw = dated.slice(0, input.limit);
+        if ((input.since || input.until) && raw.some(hit => !(hit.locator?.occurredAt ?? hit.publishedAt))) coverage = { ...coverage!, limitations: [...(coverage?.limitations ?? []), '部分记录缺少精确时间，时间条件需继续核验'] };
         const assessed = assessRelevance(query, raw, input.aliases, input.terms);
+        if (source.capability.accessMethod === 'api' && (settings.operation || settings.params && Object.keys(settings.params).length)) {
+          for (const hit of assessed.annotatedHits) if (hit.metadata?.relevance?.status === 'irrelevant') hit.metadata.relevance.status = 'uncertain';
+          assessed.hits = assessed.annotatedHits;
+        }
         const relevant = { hits: filter ? assessed.hits : assessed.annotatedHits, reason: assessed.reason };
         if (!attempts.length) attempts.push({ backend: name, query, status: assessed.hits.length ? 'ok' : raw.length ? 'irrelevant' : 'empty', elapsedMs: Date.now() - started, returned: relevant.hits.length, reason: relevant.reason });
         const partial = attempts.find(attempt => attempt.code === 'PARTIAL_RESULT');
-        return { hits: relevant.hits, run: { source: name, status: relevant.hits.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: relevant.hits.length, newUrls: new Set(assessed.hits.map(hit => canonicalUrl(hit.url)).filter(url => !known.has(url))).size, attempts, network: networkReport(requests, this.config),
+        return { hits: relevant.hits, run: { source: name, status: relevant.hits.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: relevant.hits.length,
+          newUrls: new Set(assessed.hits.map(hit => canonicalUrl(hit.url)).filter(url => !knownPages.has(url))).size, newItems: new Set(assessed.hits.filter(fresh).map(retrievalKey)).size, attempts, coverage, network: networkReport(requests, this.config),
            ...(partial ? { code: partial.code, message: partial.reason } : invalidUrls ? { code: 'PARTIAL_RESULT', message: `忽略 ${invalidUrls} 条无效 URL，保留有效候选` } : {}) } as SourceRun };
       } catch (error) {
         const failure = await this.failure(name, error, started, signal);
         if (!attempts.length) attempts.push({ backend: name, query, status: failure.status === 'cancelled' ? 'cancelled' : 'error', elapsedMs: failure.elapsedMs, returned: 0, reason: failure.message, code: failure.code, retryAfterSeconds: failure.retryAfterSeconds });
-        return { hits: [], run: { ...failure, attempts, network: networkReport(requests, this.config) } };
+        return { hits: [], run: { ...failure, attempts, coverage, network: networkReport(requests, this.config) } };
       }
     };
     const results: { hits: SearchHit[]; run: SourceRun }[] = [];
-    const enough = () => new Set(results.flatMap(result => result.hits).filter(hit => !known.has(canonicalUrl(hit.url)) && hit.metadata?.relevance?.status !== 'irrelevant').map(hit => canonicalUrl(hit.url))).size >= input.limit;
-    if (input.sources || input.platform || input.at) results.push(...await Promise.all(selected.map(name => run(name))));
+    const enough = () => new Set(results.flatMap(result => result.hits).filter(hit => fresh(hit) && hit.metadata?.relevance?.status !== 'irrelevant').map(retrievalKey)).size >= input.limit;
+    if (input.sources || input.platform || input.at) {
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(3, scheduled.length) }, async () => {
+        while (next < scheduled.length && !options.signal?.aborted) { const index = next++; results[index] = await run(scheduled[index]!); }
+      }));
+    }
     else {
-      for (const name of selected) {
+      for (const name of scheduled) {
         const result = await run(name, input.query, true);
         results.push(result);
-        if (enough() || options.signal?.aborted) break;
+        if (strategy === 'fallback' && enough() || options.signal?.aborted) break;
       }
       const alias = input.aliases?.find(value => value !== input.query);
-      if (alias && !results.some(result => result.run.newUrls) && !options.signal?.aborted) {
-        for (const name of selected) {
+      if (alias && !results.some(result => result.run.newItems ?? result.run.newUrls) && !options.signal?.aborted) {
+        for (const name of scheduled) {
           if (results.some(result => result.run.source === name && (result.run.code === 'NOT_LOGGED_IN' || result.run.code === 'RATE_LIMITED' || result.run.code === 'HTTP_429'))) continue;
           const result = await run(name, alias, true);
           results.push(result);
-          if (enough() || options.signal?.aborted) break;
+          if (strategy === 'fallback' && enough() || options.signal?.aborted) break;
         }
       }
     }
-    const runs = results.map(result => result.run);
-    const hits = mergeHits(results.flatMap(result => result.hits));
+    const runs = results.filter(Boolean).map(result => result.run);
+    const hits = mergeHits(results.filter(Boolean).flatMap(result => result.hits));
     const good = runs.some(run => ['ok', 'empty'].includes(run.status));
     const failed = runs.some(run => !['ok', 'empty'].includes(run.status) || run.code === 'PARTIAL_RESULT');
-    return { query: input.query, hits, runs, route, status: !good ? 'error' : failed ? 'partial' : hits.length ? 'ok' : 'empty' };
+    return { query: input.query, hits, runs, route, plan: { strategy, contentTypes: material, selected: scheduled,
+      stopReason: options.signal?.aborted ? 'cancelled' : strategy === 'fallback' && enough() ? 'enough-results' : scheduled.length < matching.length ? 'budget' : 'exhausted' }, status: !good ? 'error' : failed ? 'partial' : hits.length ? 'ok' : 'empty' };
   }
 
   async images(options: Omit<ImageRequest, 'signal'> & { sources?: SourceName[]; signal?: AbortSignal }): Promise<SearchReport> {
@@ -259,7 +308,7 @@ export class Engine {
       try {
         const cached = await this.store.find(url, eligible, input.maxAgeMs, evidence => evidence.metadata?.bodyAvailable !== false
           && (evidence.source !== 'web' || Boolean(evidence.metadata?.raw) === input.raw)
-          && (evidence.source !== 'steam' || steamDocumentMatches(url, evidence)));
+          && (evidence.source !== 'steam' || steamDocumentMatches(url, evidence)), input.locator);
         if (cached && cached.source !== 'external') {
           const { content, ...metadata } = cached;
           return { status: 'ok', evidence: metadata, ...view(content), cacheHit: true, cacheAgeMs: Date.now() - Date.parse(cached.retrievedAt),
@@ -279,6 +328,7 @@ export class Engine {
       try {
         signal.throwIfAborted();
         const document = await httpTrace.run(requests, () => source.read!(url, signal, input));
+        if (input.locator && (document.locator?.kind !== input.locator.kind || document.locator?.id !== input.locator.id)) throw Object.assign(new Error('读取结果未定位到请求的片段或事件'), { code: 'CONTENT_MISMATCH' });
         if (typeof document.content !== 'string' || !document.content.trim()) throw new Error('读取结果没有正文或有效元数据');
         if (name === 'steam' && !steamDocumentMatches(url, document)) throw Object.assign(new Error('读取对象与目标 URL 不匹配，需要对应公告或原文'), { code: 'CONTENT_MISMATCH' });
         const bodyAvailable = document.metadata?.bodyAvailable !== false;
@@ -286,6 +336,10 @@ export class Engine {
           ...(!bodyAvailable ? { code: 'CONTENT_INCOMPLETE', message: '已取得页面框架或标题，目标正文尚未取得' } : {}) });
         try {
           const evidence = await this.store.save(document);
+          if (!input.locator && document.locator) {
+            try { await this.store.remember(url, evidence, null); }
+            catch (error) { cacheWarnings.push(`URL 缓存未保存：${errorMessage(error, this.config)}`); }
+          }
           if (canonicalUrl(document.url) !== url) {
             try { await this.store.remember(url, evidence); }
             catch (error) { cacheWarnings.push(`URL 缓存未保存：${errorMessage(error, this.config)}`); }
@@ -337,8 +391,8 @@ export class Engine {
     const cacheWarnings: string[] = [];
     try { await this.store.cleanIfDue(); }
     catch (error) { cacheWarnings.push(errorMessage(error, this.config)); }
-    const document = { source: 'external' as const, url: canonicalUrl(input.url), title: input.title, content: input.content, contentKind: input.contentKind, publishedAt: input.publishedAt,
-      metadata: { ...input.metadata, acquisition: { method: input.method, observedAt: input.observedAt, origin: 'external' } } };
+    const document = { source: 'external' as const, url: canonicalUrl(input.url), title: input.title, content: input.content, contentKind: input.contentKind, publishedAt: input.publishedAt, ...(input.locator ? { locator: input.locator } : {}),
+      metadata: { ...input.metadata, ...(input.originSource ? { originSource: input.originSource } : {}), acquisition: { method: input.method, observedAt: input.observedAt, origin: 'external' } } };
     try {
       const { content, ...evidence } = await this.store.save(document);
       return { status: 'ok', evidence, ...textPage(content, 0, 2000), runs: [], ...(cacheWarnings.length ? { cacheWarnings } : {}) };
@@ -363,30 +417,32 @@ export class Engine {
     const shortSeed = seed.length > 64 ? discoveryTerms(seed).join(' ') || seed : seed;
     const focusedQuery = [shortSeed, criterion?.keywords?.join(' ') || criterion?.description].filter(Boolean).join(' ').slice(0, 4096);
     const previous = state.history.at(-1);
-    const stagnant = previous && previous.sources.length > 0 && previous.newUrls + previous.newEvidence + previous.resolved === 0;
+    const stagnant = previous && previous.sources.length > 0 && (previous.newItems ?? previous.newUrls) + previous.newEvidence + previous.resolved === 0;
     let query = input.discoveryQuery ?? (input.state && state.nextAction === 'change-query' && state.nextQuery && initial.verified.size === state.resolvedCount
       ? state.nextQuery : input.state && focus ? focusedQuery : input.query);
     if (stagnant && state.nextAction === 'change-query' && previous.query === query && input.discoveryQuery === undefined) query = subject?.aliases?.[0] ?? input.aliases?.[0] ?? shortSeed;
     const route = taskRoute(query, criterion?.intent ?? input.intent);
-    const preferred = preferredSources(route.intent, query).filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search));
-    const used = new Set(state.history.filter(round => round.query === query && round.newUrls + round.newEvidence === 0).flatMap(round => round.sources));
+    const preferred = preferredSources(route.intent, query, input.contentTypes ?? materialTypes(query)).filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search));
+    const used = new Set(state.history.filter(round => round.query === query && (round.newItems ?? round.newUrls) + round.newEvidence === 0).flatMap(round => round.sources));
     const suggested = state.nextAction === 'change-source' ? state.nextSources?.filter(name => preferred.includes(name)) ?? [] : [];
     const sourceOrder = [...new Set([...suggested, ...preferred.filter(name => !used.has(name)), ...preferred.filter(name => used.has(name))])];
-    const direct = !input.at && !input.since && !input.sources?.includes('wayback') && (route.intent !== 'historical' || route.directUrl?.startsWith('https://web.archive.org/web/')) ? route.directUrl : undefined;
+    const direct = !input.at && !input.since && !input.until && !input.operation && !input.sources?.includes('wayback') && (route.intent !== 'historical' || route.directUrl?.startsWith('https://web.archive.org/web/')) ? route.directUrl : undefined;
     const documents: ReadReport[] = [];
     const knownEvidence = new Set(state.evidenceIds), examined = new Set(state.examinedUrls.map(canonicalUrl));
-    for (const candidate of state.candidates) if (!initial.evidence.has(candidate.evidenceId)) examined.delete(canonicalUrl(candidate.url));
+    const examinedItems = new Set(state.examinedItems ?? state.examinedUrls.map(canonicalUrl));
+    for (const candidate of state.candidates) if (!initial.evidence.has(candidate.evidenceId)) { examined.delete(canonicalUrl(candidate.url)); examinedItems.delete(candidate.itemKey ?? canonicalUrl(candidate.url)); }
     for (const assessment of state.assessments) if (assessment.citations.some(item => !initial.evidence.has(item.evidenceId))) {
-      for (const url of state.subjects.find(item => item.id === assessment.subjectId)?.urls ?? []) examined.delete(canonicalUrl(url));
+      for (const url of state.subjects.find(item => item.id === assessment.subjectId)?.urls ?? []) { examined.delete(canonicalUrl(url)); for (const key of examinedItems) if (key === canonicalUrl(url) || key.startsWith(canonicalUrl(url) + '\n')) examinedItems.delete(key); }
     }
     const discovered = new Set(state.discoveredUrls.map(canonicalUrl));
+    const discoveredItems = new Set(state.discoveredItems ?? state.discoveredUrls.map(canonicalUrl));
     const failures = new Map(state.accessFailures.map(item => [canonicalUrl(item.url), item]));
     const waiting = new Set(state.accessFailures.filter(item => item.retryAt && Date.parse(item.retryAt) > Date.now()).map(item => canonicalUrl(item.url)));
     const candidates = state.candidates.filter(item => initial.evidence.has(item.evidenceId));
     const reviewed = new Set(focus?.reviewedEvidenceIds ?? []);
     const addCandidate = (evidence: Omit<Evidence, 'content'>) => {
       if (focus && !reviewed.has(evidence.id) && !candidates.some(item => item.subjectId === focus.subjectId && item.criterionId === focus.criterionId && item.evidenceId === evidence.id)) {
-        candidates.push({ subjectId: focus.subjectId, criterionId: focus.criterionId, evidenceId: evidence.id, url: evidence.url });
+        candidates.push({ subjectId: focus.subjectId, criterionId: focus.criterionId, evidenceId: evidence.id, url: evidence.url, itemKey: retrievalKey(evidence) });
       }
     };
     if (focus && !input.refresh && !initial.coverage.complete) {
@@ -395,7 +451,9 @@ export class Engine {
         const belongs = subject?.id === 'task' || subject?.urls?.some(url => canonicalUrl(url) === evidence.url)
           || state.candidates.some(item => item.subjectId === subject?.id && item.evidenceId === evidence.id)
           || [subject?.name, ...(subject?.aliases ?? [])].some(name => name && `${evidence.title}\n${evidence.content}`.toLowerCase().includes(name.toLowerCase()));
-        if (!belongs || reviewed.has(evidence.id) || evidence.metadata?.bodyAvailable === false) continue;
+        const at = evidence.locator?.occurredAt ?? evidence.publishedAt;
+        const outside = at && (input.since && at.slice(0, 10) < input.since || input.until && at.slice(0, 10) > input.until);
+        if (!belongs || outside || reviewed.has(evidence.id) || evidence.metadata?.bodyAvailable === false) continue;
         const { content, ...metadata } = evidence;
         documents.push({ status: 'ok', evidence: metadata, ...focusText(content, { query: criterion?.description, keywords: input.keywords ?? criterion?.keywords }, input.length), cacheHit: true, runs: [] });
         addCandidate(metadata);
@@ -404,8 +462,8 @@ export class Engine {
     let search: SearchReport = { query, status: 'ok', hits: [], runs: [], route };
     if ((!initial.coverage.complete || input.refresh) && !documents.length && !options.signal?.aborted) {
       search = direct ? { ...search, hits: mergeHits([{ source: specificSource(direct, this.config) ?? input.readSources?.[0] ?? 'web', title: direct, url: direct, snippet: '', metadata: { directTarget: true } }]) }
-        : await this.search({ ...input, query, intent: route.intent, excludeUrls: [...discovered], signal: options.signal }, sourceOrder);
-      const available = search.hits.filter(hit => !waiting.has(hit.url) && (input.refresh || !examined.has(hit.url))
+        : await this.search({ ...input, query, intent: route.intent, excludeItems: [...discoveredItems], signal: options.signal }, sourceOrder);
+      const available = search.hits.filter(hit => !waiting.has(hit.url) && (input.refresh || !examinedItems.has(retrievalKey(hit)))
         && hit.retrievals.some(item => item.metadata?.relevance?.status !== 'irrelevant'));
       const score = (hit: AggregatedHit) => Math.max(...hit.retrievals.map(item => item.metadata?.relevance?.score ?? 0));
       available.sort((a, b) => score(b) - score(a) || b.rankScore - a.rankScore);
@@ -417,7 +475,8 @@ export class Engine {
       await Promise.all(Array.from({ length: Math.min(3, selected.length) }, async () => {
         while (next < selected.length && !options.signal?.aborted) {
           const index = next++, hit = selected[index]!;
-          read[index] = await this.read(hit.url, { sources: input.readSources ?? input.sources, signal: options.signal,
+          const native = hit.sources.filter(name => this.sources.some(source => source.capability.name === name && source.read));
+          read[index] = await this.read(hit.url, { sources: input.readSources ?? input.sources ?? [...new Set<SourceName>([...native, specificSource(hit.url, this.config) ?? 'web', 'web', 'scrapling'])], signal: options.signal, locator: hit.locator,
             query: criterion?.description ?? input.query, keywords: input.keywords ?? criterion?.keywords, length: input.length,
             refresh: input.refresh, timeoutMs: input.timeoutMs, browser: input.browser, raw: input.raw });
         }
@@ -425,9 +484,9 @@ export class Engine {
       for (const [index, document] of read.entries()) {
         if (!document) continue;
         documents.push(document);
-        const url = selected[index]!.url;
+        const url = selected[index]!.url, key = retrievalKey(selected[index]!);
         if (document.content !== undefined && (document.evidence ?? document.document)?.metadata?.bodyAvailable !== false) {
-          examined.add(url); failures.delete(url);
+          examined.add(url); examinedItems.add(key); failures.delete(url);
           if (document.evidence) { examined.add(document.evidence.url); state.evidenceIds.push(document.evidence.id); addCandidate(document.evidence); }
         } else {
           const retryAt = document.runs.map(run => run.retryAt).filter((value): value is string => Boolean(value)).sort().at(-1);
@@ -435,18 +494,21 @@ export class Engine {
         }
       }
     }
-    const newUrls = search.hits.filter(hit => !discovered.has(hit.url) && hit.retrievals.some(item => item.metadata?.relevance?.status !== 'irrelevant')).map(hit => hit.url);
+    const newHits = search.hits.filter(hit => !discoveredItems.has(retrievalKey(hit)) && hit.retrievals.some(item => item.metadata?.relevance?.status !== 'irrelevant'));
+    const newUrls = newHits.map(hit => hit.url);
+    for (const hit of newHits) discoveredItems.add(retrievalKey(hit));
     state.discoveredUrls = [...new Set([...discovered, ...newUrls])]; state.examinedUrls = [...examined];
+    state.discoveredItems = [...discoveredItems]; state.examinedItems = [...examinedItems];
     state.evidenceIds = [...new Set([...state.evidenceIds, ...initial.evidence.keys()])];
     state.candidates = candidates; state.accessFailures = [...failures.values()];
     const inspected = await inspectResearch(state, this.store);
-    const progress = { query, sources: [...new Set(search.runs.map(run => run.source))], newUrls: new Set(newUrls).size,
+    const progress = { query, sources: [...new Set(search.runs.map(run => run.source))], newUrls: new Set(newUrls.filter(url => !discovered.has(url))).size, newItems: new Set(newHits.map(retrievalKey)).size,
       newEvidence: state.evidenceIds.filter(id => !knownEvidence.has(id) && inspected.evidence.has(id)).length,
       resolved: Math.max(0, inspected.coverage.verified.length - state.resolvedCount) };
     state.resolvedCount = inspected.coverage.verified.length;
     const pendingCandidates = candidates.filter(item => !inspected.coverage.excluded.includes(item.subjectId) && !inspected.verified.has(assessmentKey(item))
       && !state.assessments.find(assessment => assessmentKey(assessment) === assessmentKey(item))?.reviewedEvidenceIds.includes(item.evidenceId));
-    const noProgress = progress.newUrls + progress.newEvidence + progress.resolved === 0;
+    const noProgress = progress.newItems + progress.newEvidence + progress.resolved === 0;
     const allWaiting = search.hits.length > 0 && search.hits.every(hit => waiting.has(hit.url));
     state.nextAction = inspected.coverage.complete ? 'complete' : pendingCandidates.length || (!state.subjects.length && inspected.evidence.size) ? 'review-evidence'
       : allWaiting ? 'waiting' : noProgress && search.runs.length ? sourceOrder.some(name => !progress.sources.includes(name)) ? 'change-source' : 'change-query' : 'continue';
@@ -465,6 +527,7 @@ export class Engine {
     const messages = { complete: '任务要求的覆盖与原文引用检查已通过。', 'review-evidence': '审阅已有片段，填写结论、outcome 与 citations；无助于当前判据的材料记入 reviewedEvidenceIds。',
       continue: '按对象和剩余判据继续取证。', 'change-source': '本轮没有增加材料，下一轮优先其他可用来源。', 'change-query': '现有查询没有推进缺口，可用 discoveryQuery 提供新的发现查询。', waiting: '命中的入口仍在 Retry-After 等待期，先处理其他对象或允许的来源。' };
     const nextSteps = [messages[state.nextAction]];
+    if (search.runs.some(run => run.coverage?.completeness !== 'complete')) nextSteps.push('任务判据完成情况与数据收录范围分别核验；无命中或已读完当前页不能证明目标时期没有相关事件。');
     if (documents.some(item => item.status !== 'ok')) nextSteps.push('部分材料尚未完整取得，已取得内容与失败记录继续保留。');
     const warnings = [...new Set(inspected.warnings)];
     return { ...search, status: search.status !== 'error' && documents.some(item => item.status !== 'ok') ? 'partial' : search.status,

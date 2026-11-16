@@ -3,7 +3,7 @@ import { readFile, readdir, rm, realpath, lstat, mkdir } from 'node:fs/promises'
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { writeAtomic } from './files.js';
 import { sourceNames, extensionNames } from './types.js';
-import type { Config, Document, Evidence, SourceName, EvidenceSource } from './types.js';
+import type { Config, Document, Evidence, SourceName, EvidenceSource, ContentLocator } from './types.js';
 
 export function canonicalUrl(value: string): string {
   const url = new URL(value);
@@ -28,6 +28,11 @@ export function publisher(value: string): string {
   if (host === 'github.com' || host === 'raw.githubusercontent.com') return `github:${url.pathname.split('/')[1]?.toLowerCase() ?? host}`;
   if (host.endsWith('.github.io')) return `github:${host.slice(0, -10)}`;
   return host;
+}
+
+export function retrievalKey(item: { url: string; locator?: ContentLocator }): string {
+  const url = canonicalUrl(item.url);
+  return item.locator ? `${url}\n${item.locator.kind}:${item.locator.id}` : url;
 }
 
 export function contentHash(content: string): string {
@@ -142,14 +147,14 @@ function owned(value: unknown): value is Evidence {
     && typeof item.content === 'string' && typeof item.retrievedAt === 'string' && Array.isArray(item.retrievedBy);
 }
 
-interface UrlReference { kind: 'sera-url-cache'; key: string; url: string; source: EvidenceSource; id: string; retrievedAt: string }
-const referenceKey = (url: string, source: EvidenceSource) => contentHash(canonicalUrl(url) + '\n' + source);
+interface UrlReference { kind: 'sera-url-cache'; key: string; url: string; source: EvidenceSource; id: string; retrievedAt: string; locator?: ContentLocator }
+const referenceKey = (url: string, source: EvidenceSource, locator?: ContentLocator) => contentHash(retrievalKey({ url, locator }) + '\n' + source);
 function ownedReference(value: unknown): value is UrlReference {
   if (!value || typeof value !== 'object') return false;
   const item = value as Partial<UrlReference>;
   if (item.kind !== 'sera-url-cache' || typeof item.url !== 'string' || item.source !== 'external' && !sourceNames.includes(item.source as SourceName)
     || typeof item.id !== 'string' || !/^[a-f0-9]{64}$/.test(item.id) || typeof item.retrievedAt !== 'string') return false;
-  try { return item.key === referenceKey(item.url, item.source as EvidenceSource); } catch { return false; }
+  try { return item.key === referenceKey(item.url, item.source as EvidenceSource, item.locator); } catch { return false; }
 }
 const cleanupTasks = new Map<string, Promise<{ removed: number; preserved: number; failures: { file: string; code: string }[] }>>();
 
@@ -179,7 +184,7 @@ export class EvidenceStore {
     await this.prepare();
     const url = canonicalUrl(document.url);
     const hash = contentHash(document.content);
-    const id = createHash('sha256').update(url + '\n' + hash + '\n' + document.source).digest('hex');
+    const id = createHash('sha256').update(retrievalKey(document) + '\n' + hash + '\n' + document.source).digest('hex');
     const path = join(this.directory, `${id}.json`);
     let previous: Evidence | undefined;
     try {
@@ -197,20 +202,20 @@ export class EvidenceStore {
     return evidence;
   }
 
-  async remember(value: string, evidence: Evidence) {
+  async remember(value: string, evidence: Evidence, locator: ContentLocator | null | undefined = evidence.locator) {
     await this.prepare();
-    const url = canonicalUrl(value), key = referenceKey(url, evidence.source), path = join(this.directory, `url-${key}.json`);
+    const url = canonicalUrl(value), key = referenceKey(url, evidence.source, locator ?? undefined), path = join(this.directory, `url-${key}.json`);
     try {
       const previous: unknown = JSON.parse(await readFile(path, 'utf8'));
       if (!ownedReference(previous)) throw new Error('URL 缓存位置已被其他文件占用');
       if (Date.parse(previous.retrievedAt) > Date.parse(evidence.retrievedAt)) return;
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    const reference: UrlReference = { kind: 'sera-url-cache', key, url, source: evidence.source, id: evidence.id, retrievedAt: evidence.retrievedAt };
+    const reference: UrlReference = { kind: 'sera-url-cache', key, url, source: evidence.source, id: evidence.id, retrievedAt: evidence.retrievedAt, ...(locator ? { locator } : {}) };
     await writeAtomic(path, JSON.stringify(reference) + '\n');
   }
 
-  async forget(value: string, source: EvidenceSource, id: string) {
-    const key = referenceKey(value, source), path = join(this.directory, `url-${key}.json`);
+  async forget(value: string, source: EvidenceSource, id: string, locator?: ContentLocator) {
+    const key = referenceKey(value, source, locator), path = join(this.directory, `url-${key}.json`);
     let reference: unknown;
     try { reference = JSON.parse(await readFile(path, 'utf8')); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
@@ -218,7 +223,7 @@ export class EvidenceStore {
     if (reference.id === id) await rm(path, { force: true });
   }
 
-  async find(value: string, sources?: EvidenceSource[], maxAgeMs?: number, accept?: (evidence: Evidence) => boolean): Promise<Evidence | undefined> {
+  async find(value: string, sources?: EvidenceSource[], maxAgeMs?: number, accept?: (evidence: Evidence) => boolean, locator?: ContentLocator): Promise<Evidence | undefined> {
     const url = canonicalUrl(value);
     if (maxAgeMs !== undefined && (!Number.isFinite(maxAgeMs) || maxAgeMs < 0)) throw new Error('缓存时长需要非负毫秒数');
     if (maxAgeMs === 0) return undefined;
@@ -227,7 +232,7 @@ export class EvidenceStore {
     for (const source of [...new Set<EvidenceSource>(sources ?? [...sourceNames, 'external'])]) {
       const immutable = snapshot || source === 'wiki' && /^\d+$/.test(address.searchParams.get('oldid') ?? '');
       const freshness = Math.min(maxAgeMs ?? (immutable ? retentionMs : 15 * 60000), retentionMs);
-      const key = referenceKey(url, source);
+      const key = referenceKey(url, source, locator);
       let reference: unknown, evidence: unknown;
       try {
         reference = JSON.parse(await readFile(join(this.directory, `url-${key}.json`), 'utf8'));
@@ -238,7 +243,7 @@ export class EvidenceStore {
         throw error;
       }
       if (!owned(evidence) || evidence.id !== reference.id || evidence.source !== source) continue;
-      if (accept && !accept(evidence)) { await this.forget(url, source, evidence.id); continue; }
+      if (accept && !accept(evidence)) { await this.forget(url, source, evidence.id, locator); continue; }
       const now = Date.now(), age = now - Date.parse(evidence.retrievedAt), referenceAge = now - Date.parse(reference.retrievedAt);
       if (Number.isFinite(age) && Number.isFinite(referenceAge) && age >= 0 && referenceAge >= 0 && Math.max(age, referenceAge) < freshness) return evidence;
     }

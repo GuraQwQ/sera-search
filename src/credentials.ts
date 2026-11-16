@@ -3,11 +3,11 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { writeAtomic } from './files.js';
-import { sourceNames, platformIdPattern } from './types.js';
+import { sourceNames, platformIdPattern, specialistSourceNames } from './types.js';
 import type { AuthRecord, Config, SavedCredentials, SourceName } from './types.js';
 
 export const notLoggedIn = '未登录，不可用';
-export const apiSources = ['exa', 'tavily', 'brave', 'github', 'zhipu', 'doubao', 'openalex', 'pubmed', 'serpapi', 'dataforseo', 'bangumi', 'anilist', 'mangadex', 'vndb', 'lastfm', 'listenbrainz', 'discogs', 'youtube', 'netease', 'saucenao', 'twitch', 'discord', 'instagram', 'linuxdo', 'heybox'] as const;
+export const apiSources = ['exa', 'tavily', 'brave', 'github', 'zhipu', 'doubao', 'openalex', 'pubmed', 'serpapi', 'dataforseo', 'bangumi', 'anilist', 'mangadex', 'vndb', 'lastfm', 'listenbrainz', 'discogs', 'youtube', 'netease', 'saucenao', 'twitch', 'discord', 'instagram', 'linuxdo', 'heybox', 'steam', ...specialistSourceNames] as const;
 export const credentialsSchema = z.object({ apiKey: z.string().min(1).optional(), username: z.string().min(1).optional(), password: z.string().min(1).optional(), clientId: z.string().min(1).optional() });
 const recordSchema = z.object({
   kind: z.literal('sera-credential'), source: z.enum(sourceNames), platform: z.string().regex(platformIdPattern).optional(),

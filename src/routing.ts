@@ -2,6 +2,7 @@ import type { Config, Intent, SourceName } from './types.js';
 import { defaultWikiSites } from './providers/academic.js';
 import { canonicalUrl } from './evidence.js';
 import { steamTarget } from './providers/entities.js';
+import { specialistSites } from './provider-catalog.js';
 
 export const webSearchOrder: SourceName[] = ['exa', 'tavily', 'brave', 'zhipu', 'doubao', 'bing'];
 
@@ -11,12 +12,14 @@ export function specificSource(value: string, config: Config): SourceName | unde
   if (host === 'raw.githubusercontent.com' && /^\/Free-TV\/IPTV\//i.test(url.pathname) || config.iptv?.baseUrl && value.split('?')[0] === config.iptv.baseUrl.split('?')[0]) return 'iptv';
   if (host === 'news.google.com') return 'google-news';
   if (['gitlab.com', 'codeberg.org', 'gitea.com', 'git.disroot.org'].includes(host)) return 'ghgrab';
+  if (host === 'github.com' && url.pathname.startsWith('/advisories/')) return 'github-advisory';
   if (host === 'github.com' || host === 'raw.githubusercontent.com') return 'github';
   if (/(^|\.)bilibili\.com$/.test(host) || host === 'b23.tv') return 'bilibili';
   if (/(^|\.)v2ex\.com$/.test(host)) return 'v2ex';
   if (['doi.org', 'dx.doi.org', 'api.crossref.org'].includes(host)) return 'crossref';
   if (['openalex.org', 'api.openalex.org'].includes(host)) return 'openalex';
   if (host === 'pubmed.ncbi.nlm.nih.gov') return 'pubmed';
+  for (const [name, site] of Object.entries(specialistSites)) if (site.domains.some(domain => host === domain || host.endsWith(`.${domain}`))) return name as SourceName;
   if (Object.values({ ...defaultWikiSites, ...config.wiki?.sites }).some(site => new URL(site.pageBaseUrl).hostname === host)) return 'wiki';
   return ({ 'web.archive.org': 'wayback', 'archive.org': 'archive', 'linux.do': 'linuxdo', 'xiaoheihe.cn': 'heybox', 'nicovideo.jp': 'nicovideo', 'skills.sh': 'skills', 'bgm.tv': 'bangumi', 'bangumi.tv': 'bangumi', 'anilist.co': 'anilist', 'myanimelist.net': 'jikan', 'mangadex.org': 'mangadex', 'vndb.org': 'vndb', 'musicbrainz.org': 'musicbrainz', 'youtube.com': 'youtube', 'youtu.be': 'youtube', 'music.163.com': 'netease', 'twitch.tv': 'twitch', 'discord.com': 'discord', 'instagram.com': 'instagram' } as Record<string, SourceName>)[host];
 }
@@ -48,7 +51,34 @@ export function taskRoute(query = '', intent?: Intent) {
   return { intent: inferred, reason: reasons[inferred], ...(directUrl ? { directUrl } : {}) };
 }
 
-export function preferredSources(intent: Intent, query = ''): SourceName[] {
+export function materialTypes(query: string): string[] {
+  if (/^https?:\/\/\S+$/i.test(query.trim())) return [];
+  if (/直播弹幕|直播.*(?:发言|互动记录)|live.?chat/i.test(query)) return ['live-danmaku'];
+  if (/视频弹幕|video.?danmaku/i.test(query)) return ['video-danmaku'];
+  if (/(?:UID|用户).*评论|历史评论/i.test(query)) return ['comment'];
+  if (/字幕|台词|transcript|subtitle/i.test(query)) return ['subtitle'];
+  if (/公开评审|同行评审|openreview|peer.?review/i.test(query)) return ['review'];
+  if (/模型权重|模型卡|hugging.?face|开源模型/i.test(query)) return ['model'];
+  if (/数据集|dataset/i.test(query)) return ['dataset'];
+  if (/临床试验|clinical.?trial/i.test(query)) return ['clinical-trial'];
+  if (/CVE-\d|GHSA-|软件包漏洞/i.test(query)) return ['vulnerability'];
+  if (/历史天气|天气预报|weather/i.test(query)) return ['weather-timeseries'];
+  if (/历史价格|价格历史|史低|price.?history/i.test(query)) return ['price-history'];
+  if (/专利|patent/i.test(query)) return ['patent'];
+  return [];
+}
+
+export function preferredSources(intent: Intent, query = '', types = materialTypes(query)): SourceName[] {
+  if (types.includes('live-danmaku')) return ['aicu', 'danmakus', 'laplace'];
+  if (types.includes('video-danmaku') || types.includes('comment')) return ['aicu', 'bilibili'];
+  if (types.includes('subtitle')) return ['filmot'];
+  if (types.includes('review')) return ['openreview'];
+  if (types.includes('model') || types.includes('dataset')) return ['huggingface', 'zenodo'];
+  if (types.includes('clinical-trial')) return ['clinicaltrials'];
+  if (types.includes('vulnerability')) return ['osv', 'github-advisory'];
+  if (types.includes('weather-timeseries')) return ['open-meteo'];
+  if (types.includes('price-history')) return ['steamdb'];
+  if (types.includes('patent')) return ['google-patents', 'j-platpat'];
   if (['general', 'official', 'feedback', 'code'].includes(intent) && /中转|服务商|替代方案|性价比|选型|套餐对比|service providers?|alternatives?|compare/i.test(query)) {
     const community: SourceName[] = /\p{Script=Han}/u.test(query) ? ['bilibili', 'linuxdo'] : [];
     return /软件|模型|中转|插件|客户端|\bapi\b/i.test(query) ? ['github', ...community, ...webSearchOrder, 'agent-reach', 'opencli']
@@ -57,7 +87,7 @@ export function preferredSources(intent: Intent, query = ''): SourceName[] {
   if (intent === 'historical') return ['wayback', 'archive', ...webSearchOrder];
   if (intent === 'game') return ['wiki', 'steam', ...webSearchOrder];
   if (intent === 'galgame') return ['vndb', 'bangumi', 'steam', 'sites', ...webSearchOrder];
-  if (intent === 'academic') return ['crossref', 'openalex', 'pubmed'];
+  if (intent === 'academic') return ['crossref', 'openalex', 'europepmc', 'semantic-scholar', 'openreview', 'pubmed'];
   if (intent === 'code') return ['github', 'ghgrab', ...webSearchOrder];
   if (intent === 'feedback') return ['linuxdo', 'heybox', 'agent-reach', 'opencli', ...webSearchOrder];
   if (intent === 'images') return ['brave', 'serpapi', 'baidu-images', 'sogou-images', 'trace-moe', 'saucenao'];
