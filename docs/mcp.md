@@ -1,16 +1,46 @@
 # Agent Skill 与 MCP
 
-项目 Skill 位于 [skills/sera-search/SKILL.md](../skills/sera-search/SKILL.md)。需要让 Agent 发现它时，可以将 Skill 安装到该 Agent 使用的标准技能入口：
+推荐 Agent 通过 CLI 与项目 Skill 使用 SERA；MCP 是可选入口，共用同一配置、凭据与证据目录。项目 Skill 位于 [skills/sera-search/SKILL.md](../skills/sera-search/SKILL.md)，可链接到所用 Agent 的标准技能入口：
 
 ```powershell
-node .\dist\cli.js install --home 'F:\tools\sera-data' --skill-dir 'F:\.agents\skills'
+node .\dist\cli.js install --home 'F:\tools\sera-data' --skill-dir 'F:\.agents\skills' --json
 ```
 
 Skill 指导 Agent 选择来源、使用 `research` 和读取证据。它属于项目提供的技能，源文件随包发布。`install --skill-dir` 链接到包内技能目录，需保留包的位置；目标已指向同一目录时重复执行保持不变，其他已有内容保留。
 
-MCP 是同一核心的 Agent 接入口：
+## 注册可选 MCP 服务
 
-`sera_channels` 返回每个动作的参数 Schema；`sera_search`／`sera_research` 使用 `operation`、`params`、`contentTypes` 和按源区分的 `sourceOptions`。片段定位用 `locator`，实际数据范围见 `runs[].coverage`，调用计划见 `plan`。接口例子与各来源边界见[垂直来源](specialist-sources.md)。
+通过 `install --mcp-client` 选择已有客户端，注册名为 `sera`。例如只注册到 Codex：
+
+```bash
+node dist/cli.js install --home ./.sera --mcp-client codex --json
+```
+
+客户端 ID 可为 `codex`、`pi`、`omp`、`claude-code`、`hermes`、`openclaw`、`antigravity`；逗号分隔可选择多个，每项独立处理。`mcp.registrations` 返回逐项结果，待处理项不妨碍后续客户端，`mcp.status` 汇总为 `ready`、`partial` 或 `cancelled`。客户端和命令需已安装，注册流程不自动安装它们。
+
+单客户端调用可用 `--mcp-command` 指定已有 CLI 路径；JSON 客户端还可用 `--mcp-config` 指定实际目标文件。注册固定绝对 Node、包入口、`home` 和 SERA 配置文件路径，Key 保留在 SERA 数据目录。注册后开启新会话或刷新对应客户端工具清单。
+
+### 客户端适配
+
+| 客户端 ID | 注册入口与配置格式 | 官方依据 |
+|---|---|---|
+| `codex` | 原生 `codex mcp` CLI，沿用 `CODEX_HOME` 等客户端配置定位 | [Codex MCP](https://developers.openai.com/codex/mcp) |
+| `pi` | 个人 `~/.pi/agent/mcp.json`，根 `mcpServers`；需要支持原生 MCP 的 Pi 版本 | [Pi MCP](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/mcp.md) |
+| `omp` | 当前原生 MCP；默认配置为 `~/.omp/agent/mcp.json`，根 `mcpServers`，配置目录与命名 profile 可改变位置 | [OMP MCP](https://omp.sh/docs/mcp) |
+| `claude-code` | 用户 `~/.claude.json`，或 `CLAUDE_CONFIG_DIR` 目录内 `.claude.json`，根 `mcpServers` | [MCP 作用域](https://code.claude.com/docs/en/mcp)／[目录定位](https://code.claude.com/docs/en/claude-directory) |
+| `hermes` | 原生 `hermes config get/set`，保存 `mcp_servers.sera`；沿用客户端配置定位 | [MCP 格式](https://hermes-agent.nousresearch.com/docs/reference/mcp-config-reference)／[配置 CLI](https://hermes-agent.nousresearch.com/docs/user-guide/configuration) |
+| `openclaw` | 原生 `openclaw mcp show/set` registry，保存其管理的 MCP 条目 | [MCP registry](https://docs.openclaw.ai/cli/mcp/registry) |
+| `antigravity` | 当前全局 `~/.gemini/config/mcp_config.json`，根 `mcpServers`，App／IDE／CLI 共用 | [Antigravity MCP](https://antigravity.google/docs/mcp/) |
+
+`--mcp-config` 用于 Pi、OMP、Claude Code、Antigravity；Codex、Hermes、OpenClaw 通过各自原生 CLI 的环境或参数定位配置。已有目录链接解析到实际位置；默认位置若落在尚未使用的 C 盘目录，先明确选择数据盘文件。例如只配置 Antigravity：
+
+```bash
+node dist/cli.js install --home ./.sera --mcp-client antigravity --mcp-config F:/Antigravity/.gemini/config/mcp_config.json --json
+```
+
+该路径应与客户端实际读取的位置一致。表中列出适配的注册方式，客户端工具清单和个人会话是否就绪仍由对应客户端确认。
+
+其他支持本地 stdio 的客户端可使用以下配置，路径替换为实际安装与数据目录：
 
 ```json
 {
@@ -28,7 +58,37 @@ MCP 是同一核心的 Agent 接入口：
 }
 ```
 
-MCP 提供 16 个工具：`sera_connectors`、`sera_capabilities`、`sera_channels`、`sera_search`、`sera_comments`、`sera_images`、`sera_research`、`sera_migrate_state`、`sera_read`、`sera_read_many`、`sera_evidence`、`sera_record`、`sera_login`、`sera_logout`、`sera_auth` 和 `sera_backend`。检索参数对应 CLI 的来源、平台、每源数量、域名及日期条件；`sera_comments` 使用 `url/cursor/parentId/order`，`sera_images` 使用 `query` 或 `imageUrl`，完整字段以工具 Schema 为准。
+MCP 提供 18 个工具：`sera_setup`、`sera_config`、`sera_connectors`、`sera_capabilities`、`sera_channels`、`sera_search`、`sera_comments`、`sera_images`、`sera_research`、`sera_migrate_state`、`sera_read`、`sera_read_many`、`sera_evidence`、`sera_record`、`sera_login`、`sera_logout`、`sera_auth` 和 `sera_backend`。检索参数对应 CLI 的来源、平台、每源数量、域名及日期条件；`sera_comments` 使用 `url/cursor/parentId/order`，`sera_images` 使用 `query` 或 `imageUrl`，完整字段以工具 Schema 为准。
+
+## 配置与会话
+
+先按任务查看 `sera_capabilities`，需要入口或账号设置时查看 `sera_config`。`sera_setup` 在服务器固定的 `home/config` 中执行非交互配置：探测已有本地入口、从服务器环境补齐 Key、验证已有平台会话，缺项返回待办。例如：
+
+```json
+{"sources":["github","opencli"],"platforms":["opencli:zhihu"]}
+```
+
+`components` 显式选择才下载安装；`python`、`browser`、`node` 指定已有运行时。`confirmFreeTier` 仅在用户已核对免费档时填写，不由自动配置代为确认，也不能限制服务端扣费。`sera_setup` 不打开登录页。
+
+`sera_config` 无更新字段时读取运行配置投影；`sources` 仅筛选返回来源，`updates` 更新来源设置，`backends` 更新命令入口，`connectorFiles` 替换声明文件列表，`connectors` 按 ID 合并完整定义。例如：
+
+```json
+{"sources":["github","opencli"],"updates":{"github":{"enabled":true}},"backends":{"opencli":{"enabled":true}}}
+```
+
+该接口校验字段并返回脱敏投影，凭据通过 `sera_login` 登记；可更新字段与 CLI `config --input` 共用契约，见[配置指南](configuration.md#查看与更新运行配置)。`home` 由服务器启动时固定。
+
+`sera_login` 的 `credentials`、`fromEnv`、`platform` 三条路径必须且只能选一条。已有 Key 可只传服务器进程中的环境变量名：
+
+```json
+{"source":"exa","fromEnv":"EXA_API_KEY"}
+```
+
+这读取 MCP 服务器启动时继承的环境，不会读取客户端或当前终端后来增加的变量；变更环境后需重新启动服务。若变量不存在，返回补齐提示。用户直接提供凭据时可传 `credentials:{"apiKey":"…"}`，Twitch 使用 `apiKey/clientId`；结果不回显凭据，API 实际调用时才验证。
+
+平台会话验证可传 `{"source":"opencli","platform":"zhihu","sessionOnly":true}`。`sessionOnly` 仅适用于平台；默认 `false`，可按后端流程打开官方登录页，需用户完成扫码或验证后才算登录。每次工具调用重新加载配置与登录记录，同一连接后续查询即可采用已保存设置；配置读取不等同于平台会话已通过验证。
+
+`sera_channels` 返回每个动作的参数 Schema；`sera_search`／`sera_research` 使用 `operation`、`params`、`contentTypes` 和按源区分的 `sourceOptions`。片段定位用 `locator`，实际范围见 `runs[].coverage`，调用计划见 `plan`。接口例子与来源边界见[垂直来源](specialist-sources.md)。
 
 ## 结构化连接器
 
@@ -56,7 +116,7 @@ MCP 提供 16 个工具：`sera_connectors`、`sera_capabilities`、`sera_channe
 
 账号和地理扩展的工具调用结果附带 `structuredContent.seraEvidence`，可用 `sera_evidence` 重读报告。Agent 按本次 Schema 控制站点、关联动作、区域和预算；账号发现、头像匹配与地理查询示例见[账号与地理扩展](extensions.md)。
 
-用户明确提供 API Key 或 API 账号时，Agent 可调用 `sera_login`，输入 `source` 与 `credentials: {apiKey}`，Twitch 使用 `{apiKey, clientId}`；平台验证输入 `source` 与 `platform`。结果不回显凭据，每次 MCP 调用重新加载记录，登录后同一连接即可查询。CLI Agent 通过 Skill 与 `--help` 获得调用指引，MCP Agent 还会取得工具 Schema。MCP 的连接器、能力、渠道、搜索、研究与读取工具支持单次输入 `group:"game-wikis"` 或 `group:"galgame"`，同一连接可按需切换；自定义站点目录可在启动参数中传 `--catalog <目录文件>`。
+CLI Agent 通过 Skill 与 `--help` 获得调用指引，MCP Agent 还会取得工具 Schema。MCP 的连接器、能力、渠道、搜索、研究与读取工具支持单次输入 `group:"game-wikis"` 或 `group:"galgame"`，同一连接可按需切换；自定义站点目录可在启动参数中传 `--catalog <目录文件>`。
 
 ## 首轮调用与续查
 

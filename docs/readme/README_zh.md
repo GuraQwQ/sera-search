@@ -6,7 +6,7 @@
 
 # SERA：搜索一切
 
-### 一个 CLI 与 MCP 入口，搜索网页、社区、数据库与互联网档案。
+### 一个 CLI 搜索网页、社区、数据库与互联网档案，按需接入 MCP。
 
 **让 Agent 找到原始材料，带着证据回答。**
 
@@ -20,7 +20,7 @@
 
 想核实产品规格、追踪一条消息的出处，或找回已经消失的网页？把问题交给接入 SERA 的 Agent：找到对应来源，读取原始材料，追查还没解决的线索，再用证据说明答案。
 
-SERA 把网页、代码、社区、学术、作品数据库和互联网归档接到同一套检索与取证接口。Agent 通过 MCP 调用，你也可以直接在终端使用。搜索结果继续通向原文、帖子、评论、结构化记录或历史快照，保留链接、版本、时间与可回读的证据 ID。
+SERA 把网页、代码、社区、学术、作品数据库和互联网归档接到同一套检索与取证接口。主要通过 CLI 与项目 Skill 供 Agent 调用，需要工具协议时可选 MCP。搜索结果继续通向原文、帖子、评论、结构化记录或历史快照，保留链接、版本、时间与可回读的证据 ID。
 
 ## 快速开始
 
@@ -65,33 +65,21 @@ node dist/cli.js read-many "steam:105600" "sm8628149" --home ./.sera --keyword "
 
 ## 接入你的 Agent
 
-支持本地 stdio MCP 的 Agent 可以注册以下服务。将路径换成实际包目录，数据目录与 CLI 保持一致：
-
-```json
-{
-  "mcpServers": {
-    "sera": {
-      "command": "node",
-      "args": [
-        "/absolute/path/to/sera-search/dist/cli.js",
-        "mcp",
-        "--home",
-        "/absolute/path/to/sera-data"
-      ]
-    }
-  }
-}
-```
-
-Windows 可使用 `F:/tools/sera-search/dist/cli.js` 这样的绝对路径。
-
-把项目 Skill 链接到 Agent 的标准技能入口，提供选路和证据核验指引：
+先使用 CLI 与项目 Skill。把 Skill 链接到 Agent 的标准技能入口，目标目录换成所用客户端的实际位置：
 
 ```bash
-node dist/cli.js install --home /absolute/path/to/sera-data --skill-dir /absolute/path/to/agent-skills
+node dist/cli.js install --home ./.sera --skill-dir F:/path/to/agent-skills --json
 ```
 
-Skill 源文件随包提供，入口链接到包内目录，需要保留包的位置。先查看任务相关来源，再取得首批证据；平台与凭据细节按需加载。MCP 配置和 Skill 入口按所用客户端加载，详见 [Agent Skill 与 MCP](../../docs/mcp.md)。
+Skill 链接到包内目录，需要保留包的位置。Agent 按任务查看相关 `capabilities` 与 `config`，发现动作和参数；需要 Key 时用 `login --from-env` 登记已有环境变量，需要平台时验证所选会话，再搜索、读取原文并按缺口续查，全程沿用同一 `--home`。
+
+MCP 按需启用。支持 Codex、Pi、OMP、Claude Code、Hermes、OpenClaw 与 Antigravity，选择自己使用的客户端；例如注册到已有 Codex：
+
+```bash
+node dist/cli.js install --home ./.sera --mcp-client codex --json
+```
+
+`--mcp-client` 可传逗号分隔的客户端 ID，逐项返回结果，客户端需事先安装。单客户端可用 `--mcp-command` 指定已有 CLI，JSON 客户端可用 `--mcp-config` 选择 F 盘等数据盘的配置文件。注册固定绝对 Node、包入口、数据目录与配置路径，Key 保留在 SERA 凭据目录。注册后开启新会话或刷新对应客户端工具清单。MCP 也提供 `sera_setup`、`sera_config` 与 `sera_login` 完成配置和会话流程，详见[适配与配置](../../docs/mcp.md)。
 
 接入后可以这样提问：
 
@@ -121,7 +109,7 @@ flowchart LR
 
 ## 可以查什么
 
-当前注册 **125 个内置来源 ID**，MCP 提供 **16 个工具**；配置还可增加动态来源 ID。注册数量不代表全部可用，具体动作由配置、权限、收录范围与上游响应确认。
+当前注册 **125 个内置来源 ID**，MCP 提供 **18 个工具**；配置还可增加动态来源 ID。注册数量不代表全部可用，具体动作由配置、权限、收录范围与上游响应确认。
 
 账号与地理扩展通过 `install --components aliens-eye,sherlock,gods-eye-view` 按需安装。Agent 用 `backend 来源` 发现真实工具，自行选择站点、关联信号、区域及后续动作；账号候选、关联依据和地理查询结果可保存为证据。使用方法见[账号与地理扩展](../../docs/extensions.md)。
 

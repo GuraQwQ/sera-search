@@ -32,4 +32,7 @@ export type { ComponentName, ComponentResult } from './components.js';
 export { login, logout, authStatus } from './auth.js';
 export { configureSetup } from './setup.js';
 export type { SetupOptions } from './setup.js';
+export { configureSources, configurationInputSchema } from './configuration.js';
+export { registerMcp, mcpClientNames } from './mcp-registration.js';
+export type { McpClientName, McpRegistrationOptions, McpRegistration } from './mcp-registration.js';
 export * from './types.js';

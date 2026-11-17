@@ -6,7 +6,7 @@
 
 # SERA: Search Everything
 
-### One CLI and MCP toolkit to search the web, communities, databases, and archives.
+### One CLI to search the web, communities, databases, and archives. Optional MCP for agents.
 
 **Find the original sources. Read the material. Answer with evidence.**
 
@@ -20,7 +20,7 @@
 
 Need to verify a product specification, trace a claim to its source, or recover a page that disappeared? Ask your agent to investigate with SERA. It finds relevant sources, reads the original material, follows unresolved leads, and returns evidence you can revisit.
 
-SERA connects your agent to tools for searching websites, code, communities, academic records, media databases, and internet archives. Your agent uses MCP; you can use the same workflows from a terminal. Search results lead to original pages, posts, comments, structured records, or historical snapshots, with URLs, versions, timestamps, and saved evidence IDs.
+SERA connects your agent to tools for searching websites, code, communities, academic records, media databases, and internet archives. Use the CLI with the bundled Skill for agent workflows; MCP exposes the same core when your client needs it. Search results lead to original pages, posts, comments, structured records, or historical snapshots, with URLs, versions, timestamps, and saved evidence IDs.
 
 ## Quick start
 
@@ -67,33 +67,21 @@ See the [CLI guide](docs/cli.md) for commands and the [configuration guide](docs
 
 ## Connect your agent
 
-Register a local stdio MCP server in your agent's configuration. Replace the paths with your installation and use the same data directory as the CLI:
-
-```json
-{
-  "mcpServers": {
-    "sera": {
-      "command": "node",
-      "args": [
-        "/absolute/path/to/sera-search/dist/cli.js",
-        "mcp",
-        "--home",
-        "/absolute/path/to/sera-data"
-      ]
-    }
-  }
-}
-```
-
-On Windows, an absolute path such as `F:/tools/sera-search/dist/cli.js` also works.
-
-Link the bundled Skill to your agent's standard skill directory for source selection and evidence workflows:
+Start with the CLI and bundled Skill. Link the Skill to your agent's standard skill directory, replacing the destination with that client's actual directory:
 
 ```bash
-node dist/cli.js install --home /absolute/path/to/sera-data --skill-dir /absolute/path/to/agent-skills
+node dist/cli.js install --home ./.sera --skill-dir /absolute/path/to/agent-skills --json
 ```
 
-The Skill links to the package directory, so keep that directory available. Start with the sources relevant to the task, then take the first batch of evidence; platform and credential details load when needed. Load the MCP configuration and Skill according to your client. See [Agent Skill and MCP](docs/mcp.md).
+Keep the package directory available: the Skill links to it. For each task, the agent inspects the relevant `capabilities` and `config`, chooses an operation, registers an available environment Key with `login --from-env` when needed, and verifies the selected platform session. It then searches, reads original material, and follows missing evidence using the same `--home`.
+
+MCP is optional. Registration supports Codex, Pi, OMP, Claude Code, Hermes, OpenClaw, and Antigravity. Select the clients you use; for example, register an existing local Codex installation:
+
+```bash
+node dist/cli.js install --home ./.sera --mcp-client codex --json
+```
+
+`--mcp-client` accepts comma-separated IDs and reports each registration separately. Clients must already be installed. For one client, `--mcp-command` selects its existing CLI; JSON clients can use `--mcp-config` to select an existing data drive. Registration stores absolute Node, package entry, data, and configuration paths; Keys stay in SERA's credential store. Start a new session or refresh the client's tool list after registration. MCP offers `sera_setup`, `sera_config`, and `sera_login` for the same setup and session workflow; see [client adapters and configuration](docs/mcp.md).
 
 Then ask your agent:
 
@@ -124,7 +112,7 @@ Full material remains available under its evidence ID. Passages retain Unicode o
 
 ## What you can search
 
-SERA currently registers **125 built-in source IDs** and exposes **16 MCP tools**. Configuration can add source IDs through structured connectors. Registration does not mean every source is available: operations depend on configuration, permissions, coverage, and the provider's actual response.
+SERA currently registers **125 built-in source IDs** and exposes **18 MCP tools**. Configuration can add source IDs through structured connectors. Registration does not mean every source is available: operations depend on configuration, permissions, coverage, and the provider's actual response.
 
 | Material | Example sources | What you get |
 |---|---|---|

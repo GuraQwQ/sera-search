@@ -23,6 +23,8 @@ const api = z.object({
   freeTierConfirmed: z.boolean().optional(),
 }).default({});
 const command = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]), enabled: z.boolean().optional() });
+export const sourceSettingsSchema = api.unwrap().strict();
+export const commandSettingsSchema = command.strict();
 const schema = z.object({
   home: z.string().optional(),
   timeoutMs: z.number().int().min(100).max(300000).default(20000),
@@ -44,6 +46,8 @@ const schema = z.object({
   agentReach: command.optional(), opencli: command.optional(), ghgrab: command.optional(), scrapling: command.optional(), 'metadata-parser': command.optional(),
   'aliens-eye': command.optional(), sherlock: command.optional(), 'gods-eye-view': command.optional(),
 });
+
+export function parseConfig(input: unknown) { return schema.parse(input); }
 
 export interface ConfigLocation { home?: string; file?: string; catalog?: string; group?: CatalogGroup }
 

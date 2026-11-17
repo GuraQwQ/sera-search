@@ -5,9 +5,11 @@ description: 使用 SERA CLI 或 MCP 跨来源发现资料、读取原文，并�
 
 # SERA
 
-沿用同一 `SERA_HOME`／`--home`。先看任务相关来源的 `capabilities`，平台或动作不明时用 `channels`；需要协议和结构化定义时用 `connectors`／`sera_connectors`，来源 ID 可由配置动态增加。实际网络、权限与额度由调用结果确认。按 `contentTypes` 选材料，按动作 Schema 提供 `operation`／`params`；多来源参数不同用 `sourceOptions`。字幕、弹幕、公开评审、模型与数据集等入口见[垂直来源](../../docs/specialist-sources.md)。
+优先通过 CLI 与本 Skill 使用 SERA，MCP 按需启用，共用同一 `SERA_HOME`／`--home`。先看任务相关来源的 `capabilities`；设置不明时用 `config --sources`，平台或动作不明时用 `channels`；结构化定义用 `connectors`，来源 ID 可由配置动态增加。实际网络、权限与额度由调用结果确认。按 `contentTypes` 选材料，按动作 Schema 提供 `operation`／`params`；多来源参数不同用 `sourceOptions`。字幕、弹幕、公开评审、模型与数据集等入口见[垂直来源](../../docs/specialist-sources.md)。
 
 首次配置先选 `--home`；源码可用 `./.sera`。真实终端 `install` 默认向导；Agent 非交互可用 `install --yes --sources 来源列表 --json` 补齐已有入口和环境凭据，按需保留待办。下载组件用 `--components`，已有平台记录自动复核，新平台用显式 `--platform 后端:平台` 或交互选择，免费档用独立 `--confirm-free-tier`；`--yes` 不代替费用确认或发起网页登录。详情见[登录与配置](references/auth.md)。
+
+CLI 用 `config --input` 校验更新设置、`login --from-env` 引用已有 Key，`login --platform 平台 --session-only` 仅验证已有会话。MCP 对应 `sera_setup`、`sera_config` 与 `sera_login`；`fromEnv` 读取服务器进程环境，平台传 `sessionOnly:true` 仅验证已有会话。需要网页验证时由用户完成官方流程。可选 MCP 通过 `install --mcp-client 客户端ID` 注册已有客户端，目录和工具契约见[Agent 接入](../../docs/mcp.md)。
 
 优先匿名免费、认证免费，再选周期免费配额；认证加配额的来源进一步降权。付费必需动作和一次性试用排除。混合计费或计费未确认时，先核对账号免费档，再配置 `sources.<来源>.freeTierConfirmed: true`；该声明不控制服务端账单，保留实际配额和非商业限制。
 

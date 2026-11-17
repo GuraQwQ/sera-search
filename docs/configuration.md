@@ -27,6 +27,8 @@ node dist/cli.js install --home ./.sera --yes --sources github,youtube,opencli -
 
 API 凭据仅登记，实际调用时验证；探测工具不下载软件，下载由 `--components` 明确选择。已保存的 OpenCLI／Agent Reach 平台记录自动复核，新平台通过 `--platform 后端:平台` 或交互选择加入。非交互仅验证已有会话，真实终端需要时进入官方登录页。`--yes` 不发起网页登录，也不确认费用；免费档可在交互中逐项选择，或明确传 `--confirm-free-tier 来源列表`。
 
+Agent 主要通过 CLI 与 Skill 使用同一数据目录；MCP 注册按 `--mcp-client` 选择已有客户端，客户端配置目录与 SERA 的 `--home` 分别管理。Pi、OMP、Claude Code、Antigravity 可在单客户端调用中用 `--mcp-config` 明确配置文件；默认位置落在未使用的 C 盘目录时，先指定 F 盘等实际数据盘路径。Hermes、OpenClaw 和 Codex 沿用其官方 CLI 的环境与配置定位。客户端路径、格式与出处见[MCP 适配表](mcp.md#客户端适配)。
+
 | 来源 | 凭据 | 获取能力 |
 |---|---|---|
 | `exa`、`tavily` | 各服务 API Key | 网页搜索与正文提取 |
@@ -49,6 +51,35 @@ API 凭据仅登记，实际调用时验证；探测工具不下载软件，下�
 | `metadata-parser` | 安装 metadata-parser 的 Python 与桥接路径 | HTML 页面声明元数据，并可增强 `web` 原始 HTML 读取 |
 | `google-news` | 公开 RSS | 新闻条目、发布者与聚合 URL；按语言、国家和版别选择目录 |
 | `iptv` | 公开 M3U 目录 | 频道字段、流 URL 与 EPG 线索 |
+
+## 查看与更新运行配置
+
+Agent 可以通过 CLI `config` 查看当前运行设置；MCP 使用同一契约的 `sera_config`。返回来源设置、后端入口、连接器摘要与文件位置，凭据不在投影中返回。
+
+```bash
+node dist/cli.js config --home ./.sera --sources github,opencli --json
+node dist/cli.js config --home ./.sera --input ./source-settings.json --json
+```
+
+例如将以下内容保存为 `source-settings.json`；`updates` 按来源合并设置，后端入口放在 `backends`：
+
+```json
+{
+  "sources": ["github", "opencli"],
+  "updates": {"github": {"enabled": true, "userAgent": "your-project/1.0"}},
+  "backends": {"opencli": {"enabled": true}}
+}
+```
+
+| 输入字段 | 用途 |
+|---|---|
+| `sources` | 来源 ID 数组，仅筛选返回的配置；CLI `--sources` 优先 |
+| `updates` | 按来源 ID 合并 `enabled`、`baseUrl`、`userAgent`、`engine`、`languageCode`、`locationCode`、`clientId`、`accountId`、`guildId`、`channelId`、`freeTierConfirmed` |
+| `backends` | 更新 `opencli`、`agent-reach`、`ghgrab`、`scrapling`、`metadata-parser`、`aliens-eye`、`sherlock`、`gods-eye-view` 的 `command`、`args`、`enabled`；启用前需已有完整入口 |
+| `connectorFiles` | 替换外部定义文件列表，路径相对当前配置文件目录 |
+| `connectors` | 完整连接器定义数组，按 ID 合并；来源设置可在同一次请求中更新 |
+
+输入经校验后保存；Key、密码通过 `login`／`sera_login` 管理，数据目录由 CLI 启动参数或 MCP 服务启动时确定。用户已核对免费档后，才将 `freeTierConfirmed` 设为 `true`。动态连接器格式见[连接器指南](connectors.md)。
 
 ## 动态来源与连接器
 

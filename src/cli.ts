@@ -14,6 +14,7 @@ import { backendSchema } from './backends.js';
 import { componentNames, cleanIntegrationCache } from './components.js';
 import { migrateResearchState } from './research.js';
 import { contentHash } from './evidence.js';
+import { configureSources } from './configuration.js';
 
 const help = `SERA — Search, Extract, Research for Agents
 
@@ -21,6 +22,7 @@ const help = `SERA — Search, Extract, Research for Agents
 
 命令：
   install              创建配置；可链接项目 Skill，重复执行保留已有配置
+  config               查看运行配置；用 --input JSON文件 校验并更新
   login <来源>         记录 API Key／API 账号，或验证已配置平台的登录
   logout <来源>        清除登录记录，可配 --platform 退出平台
   auth [来源]          查看登录记录，平台记录用 --platform 筛选
@@ -51,9 +53,13 @@ const help = `SERA — Search, Extract, Research for Agents
   --version            显示版本
   --stdin              login 从标准输入读取凭据 JSON 或 API Key
   --from-env <变量名>  login 从指定环境变量读取 API Key
+  --session-only       login --platform 仅验证已有会话
   --setup              install 引导配置本机组件、环境凭据与平台会话
   --yes                install 无人值守补齐配置，保留待确认项
   --confirm-free-tier <来源列表> install 明确确认指定账号使用免费档
+  --mcp-client <列表>  install 注册 codex、pi、omp、claude-code、hermes、openclaw、antigravity
+  --mcp-command <路径> 单客户端注册使用指定的已有 CLI 入口
+  --mcp-config <文件>  单客户端注册使用指定的 MCP JSON 配置文件
 
 检索与读取：
   --sources <列表>     逗号分隔的来源；read 按所列顺序尝试
@@ -94,7 +100,7 @@ const help = `SERA — Search, Extract, Research for Agents
   --python <路径>      install 使用已有 Python 创建工具环境
   --browser <路径>     install 或读取时复用已有 Chromium / Edge
   --node <路径>        install 地理扩展使用已有 Node.js 24+
-  --input <JSON文件>   search、backend、record 或 research 的结构化参数
+  --input <JSON文件>   config、search、backend、record 或 research 的结构化参数
   --timeout-ms <毫秒>  backend/read/read-many/research 单次调用预算，最大300000
   --raw               web 直接取得原始 HTML/JSON/文本，跳过 Jina
 
@@ -177,6 +183,8 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     until: { type: 'string' }, operation: { type: 'string' }, params: { type: 'string' }, 'content-type': { type: 'string', multiple: true }, strategy: { type: 'string' }, 'max-sources': { type: 'string' }, locator: { type: 'string' },
     components: { type: 'string' }, python: { type: 'string' }, browser: { type: 'string' }, node: { type: 'string' }, input: { type: 'string' }, 'timeout-ms': { type: 'string' },
     setup: { type: 'boolean' }, yes: { type: 'boolean' }, 'confirm-free-tier': { type: 'string' },
+    'mcp-client': { type: 'string' }, 'mcp-command': { type: 'string' }, 'mcp-config': { type: 'string' },
+    'session-only': { type: 'boolean' },
   } });
   if (values.help || (!positionals.length && !values.version)) { process.stdout.write(help); return; }
   if (values.version) { process.stdout.write(JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version + '\n'); return; }
@@ -208,7 +216,21 @@ async function main(args = process.argv.slice(2)): Promise<void> {
           ...(!values.json ? { progress: (message: string) => process.stderr.write(message + '\n') } : {}),
         });
       }
-      process.stdout.write(JSON.stringify({ ...result, ...(setup ? { setup } : {}) }, null, 2) + '\n');
+      let mcp;
+      if (values['mcp-client'] && !controller.signal.aborted) {
+        const { registerMcp, mcpClientNames } = await import('./mcp-registration.js');
+        const clients = [...new Set(z.array(z.enum(mcpClientNames)).min(1).parse(values['mcp-client'].split(',').map(value => value.trim())))];
+        if (clients.length > 1 && (values['mcp-command'] || values['mcp-config'])) throw new Error('--mcp-command 与 --mcp-config 仅适用于单客户端注册');
+        const registrations = [];
+        const config = await loadConfig({ ...location, home: result.home, file: result.config });
+        for (const client of clients) {
+          if (controller.signal.aborted) break;
+          try { registrations.push(await registerMcp(config, { client, command: values['mcp-command'], configFile: values['mcp-config'], signal: controller.signal })); }
+          catch (error) { registrations.push({ client, status: controller.signal.aborted ? 'cancelled' : 'pending', verified: false, message: errorMessage(error, config) }); }
+        }
+        mcp = { registrations, status: controller.signal.aborted ? 'cancelled' : registrations.some(item => item.status === 'pending') ? 'partial' : 'ready' };
+      }
+      process.stdout.write(JSON.stringify({ ...result, ...(setup ? { setup } : {}), ...(mcp ? { mcp } : {}) }, null, 2) + '\n');
       if (controller.signal.aborted) process.exitCode = 130;
       else if (result.status === 'error') process.exitCode = 1;
     } finally { prompt?.removeListener('close', cancel); prompt?.close(); process.removeListener('SIGINT', cancel); }
@@ -228,6 +250,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       operation: values.operation ?? task.operation, params: values.params === undefined ? task.params : JSON.parse(values.params), contentTypes: values['content-type'] ?? task.contentTypes, maxSources: values['max-sources'] === undefined ? task.maxSources : integer(values['max-sources'], 1), strategy: values.strategy ?? task.strategy, signal: controller.signal };
     const read = { sources: selected, query: values.query, keywords: values.keyword, length: integer(values.length, 2000), refresh: values.refresh, maxAgeMs: values['max-age'] === undefined ? undefined : integer(values['max-age'], 0), timeoutMs: values['timeout-ms'] === undefined ? undefined : integer(values['timeout-ms'], 20000), browser: values.browser, raw: values.raw, locator: values.locator === undefined ? undefined : JSON.parse(values.locator), signal: controller.signal };
     switch (command) {
+      case 'config': result = await configureSources(config, { ...(values.input ? JSON.parse(await readFile(values.input, 'utf8')) : {}), ...(selected ? { sources: selected } : {}) }); break;
       case 'login': {
         const source = sourceNameSchema.parse(text);
         let credentials;
@@ -239,7 +262,8 @@ async function main(args = process.argv.slice(2)): Promise<void> {
           if (input.startsWith('{')) { try { credentials = credentialsSchema.parse(JSON.parse(input)); } catch { throw new Error('凭据需要有效 JSON：apiKey 或 username/password'); } }
           else credentials = credentialsSchema.parse({ apiKey: input });
         } else if (values['from-env']) credentials = credentialsSchema.parse({ apiKey: process.env[values['from-env']] });
-        result = await login(config, source, credentials, values.platform, controller.signal);
+        if (values['session-only'] && !values.platform) throw new Error('--session-only 需要指定 --platform');
+        result = await login(config, source, credentials, values.platform, controller.signal, { sessionOnly: values['session-only'] });
         break;
       }
       case 'logout': result = await logout(config, sourceNameSchema.parse(text), values.platform, controller.signal); break;

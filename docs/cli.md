@@ -38,6 +38,9 @@ node dist/cli.js connectors --sources modrinth,scryfall --json
 | `--platform opencli:zhihu,agent-reach:xiaohongshu` | 加入要复核的平台；非交互仅验证已有会话，交互中需要时打开登录页 |
 | `--confirm-free-tier exa,tavily` | 明确确认所列来源使用免费档；`--yes` 不代替该确认 |
 | `--components ghgrab,scrapling` | 选择需要下载、安装或修复的组件 |
+| `--mcp-client 客户端列表` | 逗号分隔的 `codex`、`pi`、`omp`、`claude-code`、`hermes`、`openclaw`、`antigravity`；逐项注册并返回结果 |
+| `--mcp-command 现有CLI路径` | 单客户端注册时选择已有 CLI；缺失不会自动安装 |
+| `--mcp-config 目标文件` | 单个 JSON 客户端选择配置文件；适用于 Pi、OMP、Claude Code、Antigravity |
 
 仅本轮新建配置模板中的组件可在探测成功后自动启用；既有 `enabled:false` 保留，包括旧默认模板的停用项。交互向导会单独列出已停用组件，由用户填写本次要启用的组件。
 
@@ -72,6 +75,22 @@ node dist/cli.js backend scrapling TOOL_NAME --input ./backend-input.json --home
 `--python` 指定已有 Python 3.10+，`--browser` 指定已有 Chromium／Edge 可执行文件；路径请替换为本机实际位置。
 
 `backend` 接受 `ghgrab`、`scrapling`、`aliens-eye`、`sherlock` 或 `gods-eye-view`，按上游 Schema 传参。组件位于 `<home>/tools`，安装与运行缓存位于 `<home>/cache/integrations`；重复 `install --components` 会核对、补全或修复所选组件。Scrapling 的内存会话在同一 MCP 连接内保持；每次 CLI `backend` 是独立进程，需要跨进程会话时使用上游发现的 save／load 工具。完整能力与兼容范围见[扩展来源与后端](integrations.md)。
+
+## 运行配置与 Agent 接入
+
+主要通过 CLI 与项目 Skill 使用 SERA。Agent 按任务查看相关来源的能力与运行配置，补齐已有环境 Key 或验证平台，再取得首批材料。`config` 返回投影后的运行设置；更新文件使用 `updates`、`backends`、`connectorFiles`、`connectors`，字段见[配置指南](configuration.md#查看与更新运行配置)。
+
+```bash
+node dist/cli.js config --home ./.sera --sources github,opencli --json
+node dist/cli.js config --home ./.sera --input ./source-settings.json --json
+
+# 可选：注册到已有 Codex，新会话或刷新工具清单后使用
+node dist/cli.js install --home ./.sera --mcp-client codex --json
+```
+
+注册不复制 Key，数据与凭据仍由同一 SERA 目录管理。其他客户端、MCP 配置工具与会话调用见[Agent Skill 与 MCP](mcp.md)。
+
+注册报告位于 `mcp.registrations`，每个客户端独立返回结果；单项待处理仍继续其他客户端，汇总 `mcp.status` 为 `ready`、`partial` 或 `cancelled`。`--mcp-command` 与 `--mcp-config` 用于单客户端调用；Codex、Hermes、OpenClaw 通过自己的 CLI、环境和配置定位方式注册。JSON 客户端默认路径若落在尚未使用的 C 盘目录，应显式传数据盘上的 `--mcp-config`，已有目录链接按实际目标解析。
 
 ## 检索与取证
 

@@ -4,37 +4,57 @@ import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { Engine, searchSchema, commentsSchema, imagesSchema, researchSchema, readSchema, focusSchema, recordSchema } from './core.js';
-import { errorMessage, loadConfig } from './config.js';
+import { errorMessage, install, loadConfig } from './config.js';
 import { login, logout, authStatus } from './auth.js';
 import { credentialsSchema, notLoggedIn } from './credentials.js';
-import { sourceNames, platformIdPattern, catalogGroups } from './types.js';
-import type { Config, CatalogGroup } from './types.js';
+import { platformIdPattern, catalogGroups } from './types.js';
+import type { Config, CatalogGroup, SavedCredentials } from './types.js';
 import { BackendPool, backendSchema } from './backends.js';
 import { migrateResearchState } from './research.js';
+import { configureSetup } from './setup.js';
+import { componentNames } from './components.js';
+import { configurationInputSchema, configureSources } from './configuration.js';
+import { sourceConfig } from './source-config.js';
 
 export async function startMcp(config: Config) {
   const version = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
   const server = new McpServer({ name: 'sera-search', version });
   const backends = new BackendPool();
   server.server.onclose = () => { void backends.close(); };
-  const fresh = async (group?: CatalogGroup) => new Engine(await loadConfig({ home: config.home, file: config.configFile, group: group ?? config.group, catalog: group && group !== config.group ? undefined : config.catalogFile }), undefined, backends);
+  const current = (group?: CatalogGroup) => loadConfig({ home: config.home, file: config.configFile, group: group ?? config.group, catalog: group && group !== config.group ? undefined : config.catalogFile });
+  const fresh = async (group?: CatalogGroup) => new Engine(await current(group), undefined, backends);
   const group = z.enum(catalogGroups).optional();
   const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
-  const result = async (run: () => Promise<unknown> | unknown) => {
+  const failure = async (error: unknown, sensitive?: SavedCredentials) => {
+    const latest = await current().catch(() => config);
+    const redaction = sensitive ? { ...latest, credentials: { ...latest.credentials, 'mcp-input': { kind: 'sera-credential' as const, source: 'mcp-input', credentials: sensitive, status: 'active' as const, updatedAt: new Date().toISOString() } } } : latest;
+    return { content: [{ type: 'text' as const, text: errorMessage(error, redaction) }], isError: true };
+  };
+  const result = async (run: () => Promise<unknown> | unknown, sensitive?: SavedCredentials) => {
     try {
       const value = await run();
       const structuredContent = Array.isArray(value) ? { sources: value } : value as Record<string, unknown>;
       const runs = (value as { runs?: { code?: string }[] }).runs;
       const unavailable = runs?.length && runs.every(run => run.code === 'NOT_LOGGED_IN');
       return { content: [{ type: 'text' as const, text: unavailable ? notLoggedIn : JSON.stringify(value) }], structuredContent, isError: (value as { status?: string }).status === 'error' };
-    } catch (error) { return { content: [{ type: 'text' as const, text: errorMessage(error, config) }], isError: true }; }
+    } catch (error) { return failure(error, sensitive); }
   };
+  const setupSchema = z.strictObject({ sources: z.array(sourceNameSchema).min(1).optional(), platforms: z.array(z.string().regex(/^(?:opencli|agent-reach):[a-z0-9][a-z0-9_-]*$/i)).min(1).optional(),
+    confirmFreeTier: z.array(sourceNameSchema).min(1).optional(), components: z.array(z.enum(componentNames)).min(1).optional(), python: z.string().min(1).optional(), browser: z.string().min(1).optional(), node: z.string().min(1).optional() });
+  server.registerTool('sera_setup', { description: '在当前服务器的固定 home/config 中补齐配置：检测已有本地入口、从服务器环境登记 Key，并返回缺项。Key 只登记，实际调用时验证；非交互流程只验证已有平台会话，不打开登录页。仅 components 显式选择的组件会下载安装；confirmFreeTier 仅在用户明确确认免费账户后填写，不限制服务端扣费。', inputSchema: setupSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }, (input, context) => result(async () => {
+    const installation = await install({ home: config.home, file: config.configFile, components: input.components, python: input.python, browser: input.browser, node: input.node, signal: context.mcpReq.signal });
+    const setup = await configureSetup(await current(), { sources: input.sources, platforms: input.platforms, confirmFreeTier: input.confirmFreeTier, configCreated: installation.configCreated, signal: context.mcpReq.signal });
+    return { ...setup, status: installation.status === 'error' && setup.status === 'ready' ? 'partial' : setup.status, installation };
+  }));
+  server.registerTool('sera_config', { description: '查看或更新当前服务器的来源配置，固定使用当前 home/config；返回脱敏设置与保存结果。凭据通过 sera_login 登记。', inputSchema: configurationInputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, input => result(async () => configureSources(await current(), input)));
   server.registerTool('sera_connectors', { description: '按 sources 导出结构化连接器配置：协议、动作输入、字段映射、认证、费用与限速。特殊来源保留专用适配；账户凭据不在配置中返回。', inputSchema: z.object({ sources: z.array(sourceNameSchema).min(1).optional(), group }), annotations: { ...annotations, openWorldHint: false } }, input => result(async () => ({ connectors: (await fresh(input.group)).connectors(input.sources) })));
   server.registerTool('sera_capabilities', { description: '首次查询按 sources 只查看当前任务相关来源、动作与登录状态。未登录渠道不可用，实际网络与配额调用时检查；group 按需选领域目录。', inputSchema: z.object({ sources: z.array(sourceNameSchema).min(1).optional(), group }), annotations }, input => result(async () => (await fresh(input.group)).capabilities(input.sources)));
   server.registerTool('sera_channels', { description: '按来源、平台和 group 发现可匹配渠道及状态；发现成功不代表已读取帖子或评论。', inputSchema: z.object({ sources: z.array(sourceNameSchema).min(1).optional(), platform: z.string().optional(), group }), annotations }, (input, context) => result(async () => (await fresh(input.group)).channels({ ...input, signal: context.mcpReq.signal })));
   server.registerTool('sera_backend', { description: '先只传 source 发现后端工具与 schema，再传 tool/arguments；账号扩展按指定平台扫描、关联及头像匹配，gods-eye-view按领域/区域查询地理数据，工具决定输入范围。扩展结果保存metadata证据，图片保持原内容；timeoutMs设置本次外层预算。仓库和浏览器会话在当前MCP连接复用。', inputSchema: backendSchema }, async (input, context) => {
     try { return await backends.run((await fresh()).config, input, context.mcpReq.signal); }
-    catch (error) { return { content: [{ type: 'text' as const, text: errorMessage(error, config) }], isError: true }; }
+    catch (error) { return failure(error); }
   });
   server.registerTool('sera_search', { description: '按目标contentTypes选择材料；先看channels动作Schema，再传operation/params。since/until含义由动作声明。默认分阶段换源，strategy:cross-check查询互补来源，maxSources限制调用预算。保留片段/事件locator与runs.coverage；收录范围和无命中不能证明事件未发生。terms/aliases辅助发现，excludeItems标记已知片段。显式sources最多三路并发。', inputSchema: searchSchema.extend({ group }), annotations }, (input, context) => result(async () => (await fresh(input.group)).search({ ...input, signal: context.mcpReq.signal })));
   server.registerTool('sera_comments', { description: '读取歌曲、视频或授权媒体评论。返回评论ID、父子关系、下一页游标及范围，不将首批结果解释成完整评论区。', inputSchema: commentsSchema, annotations }, (input, context) => result(async () => (await fresh()).comments({ ...input, signal: context.mcpReq.signal })));
@@ -44,9 +64,21 @@ export async function startMcp(config: Config) {
   server.registerTool('sera_read', { description: '按URL/ID读取原文或公开数据，query/keywords定位片段，全文保留ID。raw让web保留HTML；browser选择已有浏览器，timeoutMs设置单次预算。page-shell表示内容尚不足，按nextSteps换路。refresh取得新观察。', inputSchema: readSchema.extend({ url: z.string().min(1), group }), annotations }, (input, context) => result(async () => (await fresh(input.group)).read(input.url, { ...input, signal: context.mcpReq.signal })));
   server.registerTool('sera_read_many', { description: '一次读取最多20个 URL/已知 ID，三路并行并合并重复请求；逐项返回证据、相关片段和失败，使用同一组读取参数。', inputSchema: readSchema.extend({ urls: z.array(z.string().min(1)).min(1).max(20), group }), annotations }, (input, context) => result(async () => (await fresh(input.group)).readMany(input.urls, { ...input, signal: context.mcpReq.signal })));
   server.registerTool('sera_evidence', { description: '从已保存全文按 query/keywords 定位证据，或用 offset/length 按 Unicode 字符续读，保留时间与版本元数据。', inputSchema: focusSchema.extend({ id: z.string().regex(/^[a-f0-9]{64}$/), offset: z.number().int().min(0).default(0), length: z.number().int().min(1).max(20000).default(4000) }), annotations: { ...annotations, openWorldHint: false } }, input => result(async () => (await fresh()).store.get(input.id, input.offset, input.length, input)));
-  const authSchema = z.object({ source: sourceNameSchema, platform: z.string().regex(platformIdPattern).optional() });
+  const authSchema = z.strictObject({ source: sourceNameSchema, platform: z.string().regex(platformIdPattern).optional() });
+  const loginSchema = authSchema.extend({ credentials: credentialsSchema.strict().refine(value => Object.keys(value).length > 0, '凭据需要至少一个字段').optional(), fromEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(), sessionOnly: z.boolean().optional() }).superRefine((input, context) => {
+    if ([input.credentials, input.fromEnv, input.platform].filter(value => value !== undefined).length !== 1) context.addIssue({ code: 'custom', message: 'credentials、fromEnv、platform 需要且只能选择一项' });
+    if (input.sessionOnly !== undefined && !input.platform) context.addIssue({ code: 'custom', path: ['sessionOnly'], message: 'sessionOnly 仅用于平台会话验证' });
+  });
   server.registerTool('sera_record', { description: '保存宿主搜索、浏览器或其他工具实际取得的材料；必填原始URL、内容、方法与观察时间，source为external，保留采集和导入时间。证据ID不表示主张已核验。', inputSchema: recordSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, input => result(async () => (await fresh()).record(input)));
-  server.registerTool('sera_login', { description: '记录用户明确提供的 API Key／API 账号，或通过已配置后端验证平台登录。凭据只写工具数据目录，结果不回显。', inputSchema: authSchema.extend({ credentials: credentialsSchema.optional() }), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }, (input, context) => result(async () => login((await fresh()).config, input.source, input.credentials, input.platform, context.mcpReq.signal)));
+  server.registerTool('sera_login', { description: '登记明确提供的 credentials，或用 fromEnv 读取服务器环境中的 Key；两者与 platform 互斥。Key 仅保存，实际调用时验证，结果不回显。platform 通过已配置后端登录；sessionOnly:true 仅验证已有会话，不打开登录页。', inputSchema: loginSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }, (input, context) => {
+    const credentials = input.fromEnv ? { apiKey: process.env[input.fromEnv]?.trim() } : input.credentials;
+    return result(async () => {
+      if (input.fromEnv && !credentials?.apiKey) throw new Error('服务器环境中未找到非空 Key，请先设置对应环境变量');
+      const latest = await current();
+      if (input.fromEnv) Object.assign(credentials!, credentialsSchema.parse({ ...sourceConfig(latest, input.source), ...latest.credentials?.[input.source]?.credentials, ...credentials }));
+      return login(latest, input.source, credentials, input.platform, context.mcpReq.signal, { sessionOnly: input.sessionOnly });
+    }, credentials);
+  });
   server.registerTool('sera_logout', { description: '清除指定来源的登录记录，平台会话同时尝试交由对应后端退出。', inputSchema: authSchema, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true } }, (input, context) => result(async () => logout((await fresh()).config, input.source, input.platform, context.mcpReq.signal)));
   server.registerTool('sera_auth', { description: '查看登录记录状态，不返回任何密钥或密码。', inputSchema: authSchema.partial(), annotations: { ...annotations, openWorldHint: false } }, input => result(async () => authStatus((await fresh()).config, input.source, input.platform)));
   await server.connect(new StdioServerTransport());
