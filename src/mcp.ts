@@ -4,7 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { Engine, searchSchema, commentsSchema, imagesSchema, researchSchema, readSchema, focusSchema, recordSchema } from './core.js';
-import { errorMessage, install, loadConfig } from './config.js';
+import { errorMessage, install, loadConfig, loadConfigBootstrap } from './config.js';
 import { login, logout, authStatus } from './auth.js';
 import { credentialsSchema, notLoggedIn } from './credentials.js';
 import { platformIdPattern, catalogGroups } from './types.js';
@@ -14,7 +14,6 @@ import { migrateResearchState } from './research.js';
 import { configureSetup } from './setup.js';
 import { componentNames } from './components.js';
 import { configurationInputSchema, configureSources } from './configuration.js';
-import { sourceConfig } from './source-config.js';
 
 export async function startMcp(config: Config) {
   const version = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -22,6 +21,7 @@ export async function startMcp(config: Config) {
   const backends = new BackendPool();
   server.server.onclose = () => { void backends.close(); };
   const current = (group?: CatalogGroup) => loadConfig({ home: config.home, file: config.configFile, group: group ?? config.group, catalog: group && group !== config.group ? undefined : config.catalogFile });
+  const configuration = () => loadConfigBootstrap({ home: config.home, file: config.configFile, group: config.group, catalog: config.catalogFile });
   const fresh = async (group?: CatalogGroup) => new Engine(await current(group), undefined, backends);
   const group = z.enum(catalogGroups).optional();
   const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
@@ -48,7 +48,7 @@ export async function startMcp(config: Config) {
     return { ...setup, status: installation.status === 'error' && setup.status === 'ready' ? 'partial' : setup.status, installation };
   }));
   server.registerTool('sera_config', { description: '查看或更新当前服务器的来源配置，固定使用当前 home/config；返回脱敏设置与保存结果。凭据通过 sera_login 登记。', inputSchema: configurationInputSchema,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, input => result(async () => configureSources(await current(), input)));
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, input => result(async () => configureSources(await configuration(), input)));
   server.registerTool('sera_connectors', { description: '按 sources 导出结构化 search 连接器：协议、动作输入、字段映射、认证、费用与限速。专用评论和图片动作通过 sera_channels 发现；账户凭据不在配置中返回。', inputSchema: z.object({ sources: z.array(sourceNameSchema).min(1).optional(), group }), annotations: { ...annotations, openWorldHint: false } }, input => result(async () => ({ connectors: (await fresh(input.group)).connectors(input.sources) })));
   server.registerTool('sera_capabilities', { description: '首次查询按 sources 只查看当前任务相关来源、动作与登录状态。未登录渠道不可用，实际网络与配额调用时检查；group 按需选领域目录。', inputSchema: z.object({ sources: z.array(sourceNameSchema).min(1).optional(), group }), annotations }, input => result(async () => (await fresh(input.group)).capabilities(input.sources)));
   server.registerTool('sera_channels', { description: '按目标 platform 发现原生及关联提供者，sources 限制提供者，group 选择目录。返回动作参数 Schema；entrypoint 区分 search、read、comments、images，分别使用对应工具。渠道关联不证明主体相同或数据独立。', inputSchema: z.object({ sources: z.array(sourceNameSchema).min(1).optional(), platform: z.string().optional(), group }), annotations }, (input, context) => result(async () => (await fresh(input.group)).channels({ ...input, signal: context.mcpReq.signal })));
@@ -75,8 +75,7 @@ export async function startMcp(config: Config) {
     return result(async () => {
       if (input.fromEnv && !credentials?.apiKey) throw new Error('服务器环境中未找到非空 Key，请先设置对应环境变量');
       const latest = await current();
-      if (input.fromEnv) Object.assign(credentials!, credentialsSchema.parse({ ...sourceConfig(latest, input.source), ...latest.credentials?.[input.source]?.credentials, ...credentials }));
-      return login(latest, input.source, credentials, input.platform, context.mcpReq.signal, { sessionOnly: input.sessionOnly });
+      return login(latest, input.source, credentials, input.platform, context.mcpReq.signal, { sessionOnly: input.sessionOnly, preserveCredentials: Boolean(input.fromEnv) });
     }, credentials);
   });
   server.registerTool('sera_logout', { description: '清除指定来源的登录记录，平台会话同时尝试交由对应后端退出。', inputSchema: authSchema, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true } }, (input, context) => result(async () => logout((await fresh()).config, input.source, input.platform, context.mcpReq.signal)));

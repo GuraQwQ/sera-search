@@ -3,7 +3,7 @@ import { Engine } from './core.js';
 import { login } from './auth.js';
 import { errorMessage, loadConfig } from './config.js';
 import { apiSources, authKey, invalidateCredential, loadCredentials, saveCredential } from './credentials.js';
-import { writeAtomic } from './files.js';
+import { mutateJsonFile } from './files.js';
 import { sourceConfig } from './source-config.js';
 import { sourceNameSchema } from './source-schema.js';
 import { platformIdPattern } from './types.js';
@@ -39,9 +39,7 @@ function environmentValue(env: NodeJS.ProcessEnv, names: string[]) { return name
 
 async function patchConfig(config: Config, patch: (input: Record<string, any>) => void) {
   if (!config.configFile) throw new Error('配置文件位置尚未确定');
-  const input = JSON.parse(await readFile(config.configFile, 'utf8')), before = JSON.stringify(input);
-  patch(input);
-  if (JSON.stringify(input) !== before) await writeAtomic(config.configFile, JSON.stringify(input, null, 2) + '\n');
+  await mutateJsonFile(config.configFile, patch);
 }
 function sourcePatch(input: Record<string, any>, name: string, settings: Record<string, unknown>) {
   input.sources ??= {}; input.sources[name] = { ...input.sources[name], ...settings };

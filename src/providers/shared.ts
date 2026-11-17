@@ -1,11 +1,39 @@
 import type { ApiConfig, Document, SearchHit, SourceName } from '../types.js';
 import { EnvHttpProxyAgent } from 'undici';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 export type Row = Record<string, unknown>;
 
 let proxy: EnvHttpProxyAgent | undefined;
 const retryDeadlines = new Map<string, number>();
+const anonymousRequests = new AsyncLocalStorage<{ fields: Set<string>; secret?: string }>();
+export function withoutAuthentication<T>(apiKey: string | undefined, auth: { header?: string; query?: string; body?: string } | undefined, run: () => Promise<T>): Promise<T> {
+  const fields = new Set(['authorization', 'cookie', 'proxy-authorization', 'x-api-key', 'api-key', 'api-username', 'x-subscription-token', 'api_key', 'key', 'access_token', 'token', 'subscription-key', auth?.header, auth?.query, auth?.body].filter((value): value is string => Boolean(value)).map(value => value.toLowerCase()));
+  return anonymousRequests.run({ fields, secret: apiKey }, async () => {
+    try { return await run(); }
+    catch (error) { if (error && typeof error === 'object') Object.assign(error, { credentialUsed: false }); throw error; }
+  });
+}
 export function fetchResponse(url: URL | string, init: RequestInit): Promise<Response> {
+  const anonymous = anonymousRequests.getStore();
+  if (anonymous) {
+    const address = new URL(url), headers = new Headers(init.headers);
+    const credential = (key: string, value: unknown) => anonymous.fields.has(key.toLowerCase()) || Boolean(anonymous.secret && typeof value === 'string' && value.includes(anonymous.secret));
+    for (const [key, value] of [...headers]) if (credential(key, value)) headers.delete(key);
+    for (const [key, value] of [...address.searchParams]) if (credential(key, value)) address.searchParams.delete(key);
+    let body = init.body;
+    if (typeof body === 'string') {
+      if (headers.get('content-type')?.includes('application/json')) {
+        const value = JSON.parse(body);
+        if (value && typeof value === 'object' && !Array.isArray(value)) body = JSON.stringify(Object.fromEntries(Object.entries(value).filter(([key, item]) => !credential(key, item))));
+      } else if (headers.get('content-type')?.includes('application/x-www-form-urlencoded')) {
+        const values = new URLSearchParams(body);
+        for (const [key, value] of [...values]) if (credential(key, value)) values.delete(key);
+        body = values.toString();
+      }
+    }
+    url = address; init = { ...init, headers, body };
+  }
   const host = new URL(url).hostname;
   const configured = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
   const useProxy = configured && !['localhost', '127.0.0.1', '[::1]'].includes(host);

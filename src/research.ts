@@ -83,7 +83,7 @@ export function migrateResearchState(value: unknown): { state: ResearchState; ch
   return { state: researchStateSchema.parse(state), changed: true, warnings };
 }
 
-export async function inspectResearch(state: ResearchState, store: EvidenceStore) {
+export async function inspectResearch(state: ResearchState, store: EvidenceStore, accept?: (evidence: Evidence) => Evidence | undefined) {
   const evidence = new Map<string, Evidence>(), warnings: string[] = [];
   const ids = new Set([...state.evidenceIds, ...state.candidates.map(item => item.evidenceId), ...state.assessments.flatMap(item => item.citations.map(cite => cite.evidenceId))]);
   for (const id of ids) {
@@ -108,7 +108,8 @@ export async function inspectResearch(state: ResearchState, store: EvidenceStore
     if (Object.entries(criterion.scope ?? {}).some(([key, value]) => assessment.scope?.[key] !== value)) { gap('结论适用条件尚未与判据对齐'); continue; }
     let valid = true;
     for (const citation of assessment.citations) {
-      const document = evidence.get(citation.evidenceId);
+      const stored = evidence.get(citation.evidenceId), document = stored && (accept ? accept(stored) : stored);
+      if (stored && !document) { gap('引用材料尚未满足本轮读取条件或时间范围'); valid = false; continue; }
       if (!document || document.metadata?.bodyAvailable === false) { gap('引用的目标材料不存在或尚未取得'); valid = false; continue; }
       const text = characters.get(citation.evidenceId)!;
       if (citation.offset === undefined || citation.endOffset === undefined || citation.offset >= citation.endOffset || citation.endOffset > text.length

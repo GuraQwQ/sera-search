@@ -6,7 +6,7 @@
 
 搜索、读取、评论、图片和渠道请求的 `runs[].network` 记录当前 SERA 进程可观察的 HTTP：`requestCount`、`redirectResponseCount`、逐次 URL／方法／状态和到响应头或错误的耗时；并发来源分别归属，缓存命中为零请求。已登记凭据从记录中隐藏。`scope:sera-http` 不包含外部进程、浏览器子资源或上游服务内部请求，`upstreamRequestCount:null` 表示这部分不可观察；不要用它代替整个调查的请求总数。
 
-`record`／`sera_record` 把外部取得的内容保存为 `source:external`，与正常证据一样按内容和 URL 得到稳定 ID。`metadata.acquisition` 是实际取得方法和观察时间，`retrievedAt` 是导入时间；导入记录仍需核验原文支持关系。
+`record`／`sera_record` 把外部取得的内容保存为 `source:external`，与正常证据一样按内容和 URL 得到稳定 ID。`metadata.acquisition` 是实际取得方法和观察时间，`retrievedAt` 是导入时间。同一正文再次取得时追加 `observations`，保留首次采集信息；`observationId` 标识本次观测。`evidence ID` 返回首次观测及历史，`read` 缓存返回符合本次动作、参数和材料要求的具体观测。旧格式在读取时规范化，下次保存原子追加，原证据 ID 和引用保持有效。导入记录仍需核验原文支持关系。
 
 `research` 先检查已有证据，材料仍有缺口时再搜索和读取，返回 `documents`、`coverage` 和 `comparison`。证据保留 URL、读取来源、原始内容类型、获取时间及来源提供的发布时间。缺少发布时间时保持缺失；获取时间表示这次观察的时间。
 
@@ -23,7 +23,7 @@ node dist/cli.js evidence EVIDENCE_ID --keyword "発売日" --length 1000 --json
 node dist/cli.js research "某作品" --goal "发行日期" --goal "中文支持" --sources bing --read-sources web --state ./research-state.json --json
 ```
 
-`research` 使用 `version:2` 状态，分别保存 `subjects`、`criteria` 与 `assessments`；`goals` 是建立必需判据的简便入口。CLI 从首轮传 `--state ./research-state.json`，创建或原子更新状态；Agent 核验后填写单元的 `status`、`outcome`、`conclusion`、`scope` 和 `citations` 原文坐标，MCP 下一轮传回同一 `state`。已有证据可为另一个判据重新定位，不因页面已经取证而跳过核验。
+`research` 使用 `version:2` 状态，分别保存 `subjects`、`criteria` 与 `assessments`；`goals` 是建立必需判据的简便入口。CLI 从首轮传 `--state ./research-state.json`，创建或原子更新状态；Agent 核验后填写单元的 `status`、`outcome`、`conclusion`、`scope` 和 `citations` 原文坐标，MCP 下一轮传回同一 `state`。已有证据可为另一个判据重新定位，不因页面已经取证而跳过核验。完成判断会复核本轮读取来源、材料、动作参数及时间范围；条件改变后，不适用的旧结论和引用保留并回到待核验，继续取得对应材料。
 
 后续先复用材料，再围绕当前对象与判据补证；新增 URL、证据与通过检查的核验单元见 `comparison.progress`。零进展时调整默认来源顺序或建议查询，`discoveryQuery` 可显式指定本轮查询；已知 URL 不计入新增命中预算。`accessFailures[].retryAt` 在跨轮保持限流等待，`refresh` 仍遵守。`candidates` 是待审阅关联，`reviewedEvidenceIds` 记录已审阅而不足以支持当前判据的材料。
 

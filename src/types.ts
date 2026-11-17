@@ -302,12 +302,19 @@ export interface SearchReport {
   plan?: { strategy: 'fallback' | 'cross-check'; contentTypes: string[]; selected: SourceName[]; stopReason: 'enough-results' | 'budget' | 'exhausted' | 'cancelled'; pendingActions?: { source: SourceName; operation: string; entrypoint: NonNullable<SourceOperation['entrypoint']>; required: string[] }[] };
 }
 
+export interface EvidenceObservation extends Omit<Document, 'content'> {
+  id: string;
+  retrievedAt: string;
+}
+
 export interface Evidence extends Document {
   kind: 'sera-evidence';
   id: string;
   contentHash: string;
   retrievedAt: string;
   retrievedBy: EvidenceSource[];
+  observationId?: string;
+  observations?: EvidenceObservation[];
 }
 
 export interface ReadReport {

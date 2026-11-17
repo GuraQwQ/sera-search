@@ -19,7 +19,7 @@ sera search zod --sources deps-dev --operation dependencies --params '{"system":
 
 这种关联表示提供者处理同平台材料，不证明主体相同或来源独立。自动选路需要明确材料或动作才考虑第三方关联源。缺少必填参数的动作列入 `search.plan.pendingActions`，其中 `source`、`operation`、`entrypoint`、`required` 说明下一步；该动作不发送请求。
 
-渠道的 `entrypoint:"read"` 使用 CLI `read URL --operation 动作 --params JSON` 或 MCP `sera_read`，URL 作为独立字段，动作 Schema 描述 `params`；`entrypoint:"comments"` 使用 `comments URL` 或 `sera_comments`，`entrypoint:"images"` 使用 `image-search`／`reverse-image` 或 `sera_images`，`search` 使用 `search`／`research`。动作名不能替代入口判断，同名动作以各来源的 Schema 为准。`live-chat`／`live-danmaku`、`price-history`／`game-price-history` 可匹配相同材料类别，实际协议与参数仍由提供者定义。
+渠道的 `entrypoint:"read"` 使用 CLI `read URL --operation 动作 --params JSON` 或 MCP `sera_read`，URL 作为独立字段，动作 Schema 描述 `params`。声明式读取的 `{{params.字段}}` 先使用 URL 查询参数作为默认值，再由本次显式 `params` 覆盖。`entrypoint:"comments"` 使用 `comments URL` 或 `sera_comments`，`entrypoint:"images"` 使用 `image-search`／`reverse-image` 或 `sera_images`，`search` 使用 `search`／`research`。动作名不能替代入口判断，同名动作以各来源的 Schema 为准。`live-chat`／`live-danmaku`、`price-history`／`game-price-history` 可匹配相同材料类别，实际协议与参数仍由提供者定义。
 
 ## 配置与认证
 

@@ -1,11 +1,11 @@
 import { sourceNameSchema } from './source-schema.js';
-import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { Engine } from './core.js';
 import { sourceNames, structuredSourceNames, platformIdPattern } from './types.js';
 import type { Config, SavedCredentials, SourceName } from './types.js';
-import { apiSources, authKey, loadCredentials, notLoggedIn, removeCredential, saveCredential } from './credentials.js';
-import { writeAtomic } from './files.js';
+import { apiSources, authKey, credentialsSchema, loadCredentials, notLoggedIn, removeCredential, saveCredential } from './credentials.js';
+import { mutateJsonFile } from './files.js';
+import { sourceConfig } from './source-config.js';
 
 function validate(source: SourceName, platform?: string) {
   sourceNameSchema.parse(source);
@@ -14,20 +14,18 @@ function validate(source: SourceName, platform?: string) {
 
 async function enable(config: Config, source: SourceName) {
   if (!config.configFile) return;
-  let input: Record<string, unknown> = {};
-  try { input = JSON.parse(await readFile(config.configFile, 'utf8')); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  const key = source === 'agent-reach' ? 'agentReach' : source;
-  const custom = !sourceNames.includes(source as typeof sourceNames[number]) || structuredSourceNames.includes(source as typeof structuredSourceNames[number])
-    || config.connectors?.some(item => item.id === source) || Boolean(input.sources && typeof input.sources === 'object' && Object.hasOwn(input.sources, source));
-  if (custom) {
-    const all = input.sources && typeof input.sources === 'object' && !Array.isArray(input.sources) ? input.sources as Record<string, unknown> : {};
-    const settings = all[source]; all[source] = { ...(settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}), enabled: true }; input.sources = all;
-  } else { const settings = input[key]; input[key] = { ...(settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}), enabled: true }; }
-  await writeAtomic(config.configFile, JSON.stringify(input, null, 2) + '\n');
+  await mutateJsonFile(config.configFile, input => {
+    const key = source === 'agent-reach' ? 'agentReach' : source;
+    const custom = !sourceNames.includes(source as typeof sourceNames[number]) || structuredSourceNames.includes(source as typeof structuredSourceNames[number])
+      || config.connectors?.some(item => item.id === source) || Boolean(input.sources && typeof input.sources === 'object' && Object.hasOwn(input.sources, source));
+    if (custom) {
+      const all = input.sources && typeof input.sources === 'object' && !Array.isArray(input.sources) ? input.sources as Record<string, unknown> : {};
+      const settings = all[source]; all[source] = { ...(settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}), enabled: true }; input.sources = all;
+    } else { const settings = input[key]; input[key] = { ...(settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}), enabled: true }; }
+  });
 }
 
-export async function login(config: Config, source: SourceName, credentials?: SavedCredentials, platform?: string, signal = AbortSignal.timeout(platform ? 300000 : config.timeoutMs), options: { sessionOnly?: boolean } = {}) {
+export async function login(config: Config, source: SourceName, credentials?: SavedCredentials, platform?: string, signal = AbortSignal.timeout(platform ? 300000 : config.timeoutMs), options: { sessionOnly?: boolean; preserveCredentials?: boolean } = {}) {
   validate(source, platform);
   if (platform) {
     if (credentials && Object.keys(credentials).length) throw new Error('该平台通过已配置后端的官方登录页面验证；API 账号请使用对应 API 来源');
@@ -43,6 +41,10 @@ export async function login(config: Config, source: SourceName, credentials?: Sa
     if (!declared || declared === 'none' || declared === 'session') return { source, status: '公开渠道可直接使用' };
   }
   if (!credentials) throw new Error('需要 apiKey 或 API 账号 username/password');
+  if (options.preserveCredentials) {
+    const previous = (await loadCredentials(config.home))[source];
+    credentials = credentialsSchema.parse({ ...sourceConfig(config, source), ...(previous?.status === 'active' ? previous.credentials : {}), ...credentials });
+  }
   const result = await saveCredential(config.home, source, credentials);
   await enable(config, source);
   return result;

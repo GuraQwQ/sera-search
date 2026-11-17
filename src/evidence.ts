@@ -2,9 +2,9 @@ import { sourceNameSchema } from './source-schema.js';
 import { createHash } from 'node:crypto';
 import { readFile, readdir, rm, realpath, lstat, mkdir } from 'node:fs/promises';
 import { join, resolve, relative, isAbsolute } from 'node:path';
-import { writeAtomic } from './files.js';
+import { serializeFile, writeAtomic } from './files.js';
 import { sourceNames, extensionNames } from './types.js';
-import type { Config, Document, Evidence, SourceName, EvidenceSource, ContentLocator } from './types.js';
+import type { Config, Document, Evidence, EvidenceObservation, SourceName, EvidenceSource, ContentLocator } from './types.js';
 
 export function canonicalUrl(value: string): string {
   const url = new URL(value);
@@ -148,13 +148,47 @@ function owned(value: unknown): value is Evidence {
     && typeof item.content === 'string' && typeof item.retrievedAt === 'string' && Array.isArray(item.retrievedBy);
 }
 
-interface UrlReference { kind: 'sera-url-cache'; key: string; url: string; source: EvidenceSource; id: string; retrievedAt: string; locator?: ContentLocator }
+function observation(document: Omit<Document, 'content'>, retrievedAt: string): EvidenceObservation {
+  const value = { url: canonicalUrl(document.url), source: document.source, title: document.title, contentKind: document.contentKind,
+    ...(document.publishedAt !== undefined ? { publishedAt: document.publishedAt } : {}), ...(document.locator ? { locator: document.locator } : {}),
+    ...(document.metadata ? { metadata: document.metadata } : {}), retrievedAt };
+  return { ...value, id: contentHash(JSON.stringify(value)) };
+}
+
+function normalizeEvidence(evidence: Evidence): Evidence {
+  if (evidence.contentHash !== contentHash(evidence.content)) throw new Error('证据文件格式或正文校验不正确');
+  const observations = evidence.observations ?? [observation(evidence, evidence.retrievedAt)];
+  if (!observations.length || observations.some(item => !item || typeof item.id !== 'string' || !/^[a-f0-9]{64}$/.test(item.id)
+    || typeof item.title !== 'string' || !Number.isFinite(Date.parse(item.retrievedAt)) || item.source !== evidence.source
+    || retrievalKey(item) !== retrievalKey(evidence) || !['page', 'post', 'subtitle', 'metadata'].includes(item.contentKind)
+    || observation(item, item.retrievedAt).id !== item.id)) throw new Error('证据观测记录格式不正确');
+  return { ...evidence, observationId: evidence.observationId ?? observations[0]!.id, observations };
+}
+
+function projectObservation(evidence: Evidence, item: EvidenceObservation): Evidence {
+  const { id: observationId, ...document } = item;
+  return { ...document, content: evidence.content, kind: evidence.kind, id: evidence.id, contentHash: evidence.contentHash,
+    retrievedBy: evidence.retrievedBy, observationId, observations: evidence.observations };
+}
+
+export function documentObservations(document: Evidence): Evidence[];
+export function documentObservations(document: Document): Document[];
+export function documentObservations(document: Document): Document[] {
+  return owned(document) && document.observations?.length ? document.observations.map(item => projectObservation(document, item)) : [document];
+}
+
+const lastObservedAt = (evidence: Evidence) => Math.max(Date.parse(evidence.retrievedAt), ...(evidence.observations ?? []).map(item => Date.parse(item.retrievedAt)));
+interface UrlEntry { id: string; retrievedAt: string; observationId?: string }
+interface UrlReference extends UrlEntry { kind: 'sera-url-cache'; key: string; url: string; source: EvidenceSource; locator?: ContentLocator; entries?: UrlEntry[] }
 const referenceKey = (url: string, source: EvidenceSource, locator?: ContentLocator) => contentHash(retrievalKey({ url, locator }) + '\n' + source);
+const validEntry = (item: UrlEntry) => item && typeof item.id === 'string' && /^[a-f0-9]{64}$/.test(item.id) && Number.isFinite(Date.parse(item.retrievedAt))
+  && (item.observationId === undefined || typeof item.observationId === 'string' && /^[a-f0-9]{64}$/.test(item.observationId));
+const referenceEntries = (reference: UrlReference): UrlEntry[] => reference.entries ?? [{ id: reference.id, retrievedAt: reference.retrievedAt, ...(reference.observationId ? { observationId: reference.observationId } : {}) }];
 function ownedReference(value: unknown): value is UrlReference {
   if (!value || typeof value !== 'object') return false;
   const item = value as Partial<UrlReference>;
   if (item.kind !== 'sera-url-cache' || typeof item.url !== 'string' || item.source !== 'external' && !sourceNameSchema.safeParse(item.source).success
-    || typeof item.id !== 'string' || !/^[a-f0-9]{64}$/.test(item.id) || typeof item.retrievedAt !== 'string') return false;
+    || !validEntry(item as UrlEntry) || item.entries !== undefined && (!Array.isArray(item.entries) || !item.entries.length || !item.entries.every(validEntry))) return false;
   try { return item.key === referenceKey(item.url, item.source as EvidenceSource, item.locator); } catch { return false; }
 }
 const cleanupTasks = new Map<string, Promise<{ removed: number; preserved: number; failures: { file: string; code: string }[] }>>();
@@ -187,18 +221,21 @@ export class EvidenceStore {
     const hash = contentHash(document.content);
     const id = createHash('sha256').update(retrievalKey(document) + '\n' + hash + '\n' + document.source).digest('hex');
     const path = join(this.directory, `${id}.json`);
-    let previous: Evidence | undefined;
-    try {
-      const value: unknown = JSON.parse(await readFile(path, 'utf8'));
-      if (!owned(value)) throw new Error('证据位置已被其他文件占用');
-      previous = value;
-    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    const evidence: Evidence = {
-      ...document, url, kind: 'sera-evidence', id, contentHash: hash,
-      retrievedAt: new Date().toISOString(),
-      retrievedBy: [...new Set([...(previous?.retrievedBy ?? []), document.source])],
-    };
-    await writeAtomic(path, JSON.stringify(evidence, null, 2) + '\n');
+    const observed = observation(document, new Date().toISOString());
+    const evidence = await serializeFile(path, async () => {
+      let previous: Evidence | undefined;
+      try {
+        const value: unknown = JSON.parse(await readFile(path, 'utf8'));
+        if (!owned(value) || value.id !== id) throw new Error('证据位置已被其他文件占用');
+        previous = normalizeEvidence(value);
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      const first: Evidence = previous ?? { ...document, url, kind: 'sera-evidence', id, contentHash: hash, retrievedAt: observed.retrievedAt, retrievedBy: [document.source] };
+      const observations = [...(previous?.observations ?? [])];
+      if (!observations.some(item => item.id === observed.id)) observations.push(observed);
+      const saved = { ...first, observationId: first.observationId ?? observed.id, observations };
+      await writeAtomic(path, JSON.stringify(saved, null, 2) + '\n');
+      return projectObservation(saved, observed);
+    });
     await this.remember(url, evidence);
     return evidence;
   }
@@ -206,22 +243,31 @@ export class EvidenceStore {
   async remember(value: string, evidence: Evidence, locator: ContentLocator | null | undefined = evidence.locator) {
     await this.prepare();
     const url = canonicalUrl(value), key = referenceKey(url, evidence.source, locator ?? undefined), path = join(this.directory, `url-${key}.json`);
-    try {
-      const previous: unknown = JSON.parse(await readFile(path, 'utf8'));
-      if (!ownedReference(previous)) throw new Error('URL 缓存位置已被其他文件占用');
-      if (Date.parse(previous.retrievedAt) > Date.parse(evidence.retrievedAt)) return;
-    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    const reference: UrlReference = { kind: 'sera-url-cache', key, url, source: evidence.source, id: evidence.id, retrievedAt: evidence.retrievedAt, ...(locator ? { locator } : {}) };
-    await writeAtomic(path, JSON.stringify(reference) + '\n');
+    await serializeFile(path, async () => {
+      let entries: UrlEntry[] = [];
+      try {
+        const previous: unknown = JSON.parse(await readFile(path, 'utf8'));
+        if (!ownedReference(previous)) throw new Error('URL 缓存位置已被其他文件占用');
+        entries = referenceEntries(previous);
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      const entry: UrlEntry = { id: evidence.id, retrievedAt: evidence.retrievedAt, ...(evidence.observationId ? { observationId: evidence.observationId } : {}) };
+      entries = [entry, ...entries.filter(item => item.id !== entry.id || item.observationId !== entry.observationId || item.retrievedAt !== entry.retrievedAt)].sort((a, b) => Date.parse(b.retrievedAt) - Date.parse(a.retrievedAt));
+      const reference: UrlReference = { kind: 'sera-url-cache', key, url, source: evidence.source, ...entries[0]!, ...(locator ? { locator } : {}), entries };
+      await writeAtomic(path, JSON.stringify(reference) + '\n');
+    });
   }
 
   async forget(value: string, source: EvidenceSource, id: string, locator?: ContentLocator) {
     const key = referenceKey(value, source, locator), path = join(this.directory, `url-${key}.json`);
-    let reference: unknown;
-    try { reference = JSON.parse(await readFile(path, 'utf8')); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-    if (!ownedReference(reference) || reference.key !== key) throw new Error('URL 缓存位置已被其他文件占用');
-    if (reference.id === id) await rm(path, { force: true });
+    await serializeFile(path, async () => {
+      let reference: unknown;
+      try { reference = JSON.parse(await readFile(path, 'utf8')); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+      if (!ownedReference(reference) || reference.key !== key) throw new Error('URL 缓存位置已被其他文件占用');
+      const entries = referenceEntries(reference).filter(item => item.id !== id);
+      if (!entries.length) await rm(path, { force: true });
+      else await writeAtomic(path, JSON.stringify({ ...reference, ...entries[0]!, entries }) + '\n');
+    });
   }
 
   async find(value: string, sources?: EvidenceSource[], maxAgeMs?: number, accept?: (evidence: Evidence) => boolean, locator?: ContentLocator): Promise<Evidence | undefined> {
@@ -234,19 +280,29 @@ export class EvidenceStore {
       const immutable = snapshot || source === 'wiki' && /^\d+$/.test(address.searchParams.get('oldid') ?? '');
       const freshness = Math.min(maxAgeMs ?? (immutable ? retentionMs : 15 * 60000), retentionMs);
       const key = referenceKey(url, source, locator);
-      let reference: unknown, evidence: unknown;
+      let reference: unknown;
       try {
         reference = JSON.parse(await readFile(join(this.directory, `url-${key}.json`), 'utf8'));
         if (!ownedReference(reference) || reference.key !== key || reference.source !== source || reference.url !== url) continue;
-        evidence = JSON.parse(await readFile(join(this.directory, `${reference.id}.json`), 'utf8'));
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) continue;
         throw error;
       }
-      if (!owned(evidence) || evidence.id !== reference.id || evidence.source !== source) continue;
-      if (accept && !accept(evidence)) { await this.forget(url, source, evidence.id, locator); continue; }
-      const now = Date.now(), age = now - Date.parse(evidence.retrievedAt), referenceAge = now - Date.parse(reference.retrievedAt);
-      if (Number.isFinite(age) && Number.isFinite(referenceAge) && age >= 0 && referenceAge >= 0 && Math.max(age, referenceAge) < freshness) return evidence;
+      const loaded = new Map<string, Evidence>();
+      for (const entry of referenceEntries(reference)) {
+        const referenceAge = Date.now() - Date.parse(entry.retrievedAt);
+        if (!Number.isFinite(referenceAge) || referenceAge < 0 || referenceAge >= freshness) continue;
+        let evidence = loaded.get(entry.id);
+        if (!evidence) {
+          try { evidence = await this.load(entry.id); loaded.set(entry.id, evidence); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) continue; throw error; }
+        }
+        if (evidence.source !== source) continue;
+        const selected = evidence.observations!.find(item => entry.observationId ? item.id === entry.observationId : item.retrievedAt === entry.retrievedAt);
+        if (!selected) continue;
+        const projected = projectObservation(evidence, selected), age = Date.now() - Date.parse(projected.retrievedAt);
+        if (age >= 0 && age < freshness && (!accept || accept(projected))) return projected;
+      }
     }
     return undefined;
   }
@@ -256,11 +312,11 @@ export class EvidenceStore {
     let evidence: unknown;
     try { evidence = JSON.parse(await readFile(join(this.directory, `${id}.json`), 'utf8')); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('证据不存在或已过期，请重新读取原始链接');
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw Object.assign(new Error('证据不存在或已过期，请重新读取原始链接'), { code: 'ENOENT' });
       throw error;
     }
-    if (!owned(evidence) || evidence.id !== id || evidence.contentHash !== contentHash(evidence.content)) throw new Error('证据文件格式或正文校验不正确');
-    return evidence;
+    if (!owned(evidence) || evidence.id !== id) throw new Error('证据文件格式或正文校验不正确');
+    return normalizeEvidence(evidence);
   }
 
   async get(id: string, offset = 0, length = 4000, focus?: FocusOptions) {
@@ -327,23 +383,40 @@ export class EvidenceStore {
         continue;
       }
       if (!owned(value) || name !== `${value.id}.json`) { preserved++; continue; }
-      if (expiredOnly && Number.isFinite(Date.parse(value.retrievedAt)) && Date.parse(value.retrievedAt) >= cutoff) { evidenceIds.add(value.id); continue; }
-      try { await rm(path, { force: true }); removed++; }
+      try {
+        await serializeFile(path, async () => {
+          const current: unknown = JSON.parse(await readFile(path, 'utf8'));
+          if (!owned(current) || name !== `${current.id}.json`) { preserved++; return; }
+          if (expiredOnly) {
+            let evidence: Evidence;
+            try { evidence = normalizeEvidence(current); }
+            catch { preserved++; failures.push({ file: name, code: 'BAD_CACHE' }); return; }
+            if (lastObservedAt(evidence) >= cutoff) { evidenceIds.add(evidence.id); return; }
+          }
+          await rm(path, { force: true }); removed++;
+        });
+      }
       catch (error) { evidenceIds.add(value.id); preserved++; failures.push({ file: name, code: (error as NodeJS.ErrnoException).code ?? 'CACHE_BUSY' }); }
     }
-    for (const { name, value } of references) {
-      if (expiredOnly && evidenceIds.has(value.id) && Date.parse(value.retrievedAt) >= cutoff) continue;
-      if (expiredOnly && Date.parse(value.retrievedAt) >= cutoff) {
-        try {
-          const evidence: unknown = JSON.parse(await readFile(join(this.directory, `${value.id}.json`), 'utf8'));
-          if (owned(evidence) && evidence.id === value.id && Date.parse(evidence.retrievedAt) >= cutoff) continue;
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-            preserved++; failures.push({ file: name, code: (error as NodeJS.ErrnoException).code ?? 'BAD_CACHE' }); continue;
+    for (const { name } of references) {
+      const path = join(this.directory, name);
+      try {
+        await serializeFile(path, async () => {
+          const current: unknown = JSON.parse(await readFile(path, 'utf8'));
+          if (!ownedReference(current)) throw Object.assign(new Error('URL 缓存格式不正确'), { code: 'BAD_CACHE' });
+          const entries: UrlEntry[] = [];
+          if (expiredOnly) for (const entry of referenceEntries(current)) {
+            if (Date.parse(entry.retrievedAt) < cutoff) continue;
+            if (evidenceIds.has(entry.id)) { entries.push(entry); continue; }
+            try {
+              const evidence: unknown = JSON.parse(await readFile(join(this.directory, `${entry.id}.json`), 'utf8'));
+              if (owned(evidence) && evidence.id === entry.id && lastObservedAt(normalizeEvidence(evidence)) >= cutoff) entries.push(entry);
+            } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
           }
-        }
+          if (!entries.length) await rm(path, { force: true });
+          else if (JSON.stringify(entries) !== JSON.stringify(current.entries)) await writeAtomic(path, JSON.stringify({ ...current, ...entries[0]!, entries }) + '\n');
+        });
       }
-      try { await rm(join(this.directory, name), { force: true }); }
       catch (error) { preserved++; failures.push({ file: name, code: (error as NodeJS.ErrnoException).code ?? 'CACHE_BUSY' }); }
     }
     return { removed, preserved, failures };

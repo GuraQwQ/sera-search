@@ -3,7 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { AccessPolicy, ApiConfig, Config, Document, ReadOptions, SearchHit, SearchRequest, Source } from './types.js';
 import { sourceConfig } from './source-config.js';
 import { describeOperation, reportCoverage } from './providers/operations.js';
-import { endpoint, response, plain, date, permitted } from './providers/shared.js';
+import { endpoint, response, plain, date, permitted, withoutAuthentication } from './providers/shared.js';
 import { sourceNameSchema } from './source-schema.js';
 import { accessState, policyFor } from './source-policy.js';
 import { specialistSites, relatedPlatforms } from './provider-catalog.js';
@@ -133,7 +133,10 @@ export function createStructuredSource(config: Config, definition: ConnectorDefi
       if (!source.capability.configured) throw Object.assign(new Error('来源已停用'), { code: 'SOURCE_DISABLED' });
       const params = schemas.get(name)!.parse(request.params ?? {}) as Record<string, any>;
       const selectedClient = access.policy.authentication === 'none' ? anonymousClient : client;
-      if (hooks.search?.[name] && !operation.request) return hooks.search[name]!({ ...request, operation: name }, params, selectedClient);
+      if (hooks.search?.[name] && !operation.request) {
+        const run = () => hooks.search![name]!({ ...request, operation: name }, params, selectedClient);
+        return access.policy.authentication === 'none' ? withoutAuthentication(settings.apiKey, definition.auth, run) : run();
+      }
       if (!operation.request || !operation.output) throw new Error('此操作需要专用协议适配器');
       const context = { query: request.query, limit: request.limit, since: request.since, until: request.until, params };
       const spec = operation.request;
@@ -160,11 +163,14 @@ export function createStructuredSource(config: Config, definition: ConnectorDefi
       const access = accessState(config, source, 'read', definition.read?.access ?? fallbackAccess); if (access.code) throw Object.assign(new Error(access.reason), { code: access.code });
       if (!source.capability.configured) throw Object.assign(new Error('来源已停用'), { code: 'SOURCE_DISABLED' });
       const selectedClient = access.policy.authentication === 'none' ? anonymousClient : client;
-      if (hooks.read && !definition.read) return hooks.read(url, signal, options, selectedClient);
+      if (hooks.read && !definition.read) {
+        const run = () => hooks.read!(url, signal, options, selectedClient);
+        return access.policy.authentication === 'none' ? withoutAuthentication(settings.apiKey, definition.auth, run) : run();
+      }
       const spec = definition.read!, address = new URL(url), match = address.pathname.match(new RegExp(spec.pattern));
       if (spec.request.method === 'GET' && spec.request.body !== undefined) throw Object.assign(new Error('GET 请求不能配置 body'), { code: 'BAD_CONNECTOR_CONFIG' });
       if (!spec.hosts.includes(address.hostname) || !match) throw new Error('链接不属于此结构化来源');
-      const context = { id: decodeURIComponent(match[1] ?? ''), match: [...match], url, params: Object.fromEntries(address.searchParams) };
+      const context = { id: decodeURIComponent(match[1] ?? ''), match: [...match], url, params: { ...Object.fromEntries(address.searchParams), ...options?.params } };
       const body = expand(spec.request.body, context);
       const data = await selectedClient(expand(spec.request.path, context), signal, expand(spec.request.query ?? {}, context), spec.request.method === 'POST' && body === undefined ? {} : body, spec.request.format);
       const errors = definition.type === 'graphql' && data && typeof data === 'object' && Array.isArray(data.errors) ? data.errors : [];

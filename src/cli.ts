@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { Engine } from './core.js';
-import { install, loadConfig, errorMessage } from './config.js';
+import { install, loadConfig, loadConfigBootstrap, errorMessage } from './config.js';
 import { sourceNames, catalogGroups, intents } from './types.js';
 import type { SourceName } from './types.js';
 import { authStatus, login, logout } from './auth.js';
@@ -238,8 +238,16 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     } finally { prompt?.removeListener('close', cancel); prompt?.close(); process.removeListener('SIGINT', cancel); }
     return;
   }
-  const config = await loadConfig(location);
+  const config = await (command === 'mcp' || command === 'config' ? loadConfigBootstrap(location) : loadConfig(location));
   if (command === 'mcp') { const { startMcp } = await import('./mcp.js'); await startMcp(config); return; }
+  if (command === 'config') {
+    try {
+      const selected = sources(values.sources);
+      const result = await configureSources(config, { ...(values.input ? JSON.parse(await readFile(values.input, 'utf8')) : {}), ...(selected ? { sources: selected } : {}) });
+      process.stdout.write((values.json ? JSON.stringify(result, null, 2) : display(result)) + '\n');
+    } catch (error) { process.stderr.write(JSON.stringify({ error: errorMessage(error, config) }) + '\n'); process.exitCode = 1; }
+    return;
+  }
   const engine = new Engine(config);
   const controller = new AbortController();
   const cancel = () => controller.abort();
@@ -252,7 +260,6 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       operation: values.operation ?? task.operation, params: values.params === undefined ? task.params : JSON.parse(values.params), contentTypes: values['content-type'] ?? task.contentTypes, maxSources: values['max-sources'] === undefined ? task.maxSources : integer(values['max-sources'], 1), strategy: values.strategy ?? task.strategy, signal: controller.signal };
     const read = { sources: selected, query: values.query, keywords: values.keyword, length: integer(values.length, 2000), refresh: values.refresh, maxAgeMs: values['max-age'] === undefined ? undefined : integer(values['max-age'], 0), timeoutMs: values['timeout-ms'] === undefined ? undefined : integer(values['timeout-ms'], 20000), browser: values.browser, raw: values.raw, locator: values.locator === undefined ? undefined : JSON.parse(values.locator), contentTypes: values['content-type'], operation: values.operation, params: search.params, signal: controller.signal };
     switch (command) {
-      case 'config': result = await configureSources(config, { ...(values.input ? JSON.parse(await readFile(values.input, 'utf8')) : {}), ...(selected ? { sources: selected } : {}) }); break;
       case 'login': {
         const source = sourceNameSchema.parse(text);
         let credentials;
@@ -263,9 +270,13 @@ async function main(args = process.argv.slice(2)): Promise<void> {
           input = input.trim();
           if (input.startsWith('{')) { try { credentials = credentialsSchema.parse(JSON.parse(input)); } catch { throw new Error('凭据需要有效 JSON：apiKey 或 username/password'); } }
           else credentials = credentialsSchema.parse({ apiKey: input });
-        } else if (values['from-env']) credentials = credentialsSchema.parse({ apiKey: process.env[values['from-env']] });
+        } else if (values['from-env']) {
+          const apiKey = process.env[values['from-env']]?.trim();
+          if (!apiKey) throw new Error('环境中未找到非空 Key，请先设置对应环境变量');
+          credentials = credentialsSchema.parse({ apiKey });
+        }
         if (values['session-only'] && !values.platform) throw new Error('--session-only 需要指定 --platform');
-        result = await login(config, source, credentials, values.platform, controller.signal, { sessionOnly: values['session-only'] });
+        result = await login(config, source, credentials, values.platform, controller.signal, { sessionOnly: values['session-only'], preserveCredentials: Boolean(values['from-env'] && !values.stdin) });
         break;
       }
       case 'logout': result = await logout(config, sourceNameSchema.parse(text), values.platform, controller.signal); break;

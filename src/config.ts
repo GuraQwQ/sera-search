@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type { Config } from './types.js';
 import { platformIdPattern, catalogGroups, specialistSourceNames } from './types.js';
 import type { CatalogGroup } from './types.js';
-import { writeAtomic } from './files.js';
+import { serializeFile, writeAtomic } from './files.js';
 import { apiSources, loadCredentials, migrateCredentials, notLoggedIn } from './credentials.js';
 import { specialistSites } from './provider-catalog.js';
 import { connectorDefinitionSchema } from './connectors.js';
@@ -56,19 +56,44 @@ export function configLocation(options: ConfigLocation = {}) {
   return { home, file: resolve(options.file ?? process.env.SERA_CONFIG ?? join(home, 'config.json')) };
 }
 
-export async function loadConfig(options: ConfigLocation = {}): Promise<Config> {
+async function readConfigFile(options: ConfigLocation) {
   const location = configLocation(options);
-  let input: unknown = {}, original = '';
-  try { original = await readFile(location.file, 'utf8'); input = JSON.parse(original); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`无法读取配置 ${location.file}，请检查 UTF-8 JSON 格式`);
-  }
+  return serializeFile(location.file, async () => {
+    let input: unknown = {}, original = '';
+    try { original = await readFile(location.file, 'utf8'); input = JSON.parse(original); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`无法读取配置 ${location.file}，请检查 UTF-8 JSON 格式`);
+    }
+    return { input, original, location };
+  });
+}
+
+function baseConfig(input: unknown, options: ConfigLocation): Config {
+  const location = configLocation(options);
   const parsed = schema.safeParse(input);
   if (!parsed.success) throw new Error(`配置字段有误：${parsed.error.issues.map(issue => issue.path.join('.') + ' ' + issue.message).join('；')}`);
-  const config: Config = { ...parsed.data, home: resolve(options.home ?? process.env.SERA_HOME ?? parsed.data.home ?? location.home) };
-  if (original && input && typeof input === 'object' && !Array.isArray(input)) await migrateCredentials(config.home, location.file, input as Record<string, unknown>, original);
+  return { ...parsed.data, home: resolve(options.home ?? process.env.SERA_HOME ?? parsed.data.home ?? location.home), configFile: location.file,
+    group: z.enum(catalogGroups).parse(options.group ?? 'default'),
+    catalogFile: options.catalog ? resolve(options.catalog) : options.group === 'galgame' ? fileURLToPath(new URL('../catalogs/galgame.json', import.meta.url)) : parsed.data.catalogFile ? resolve(dirname(location.file), parsed.data.catalogFile) : fileURLToPath(new URL('../catalogs/sites.json', import.meta.url)) };
+}
+
+async function attachCredentials(config: Config) {
   config.credentials = await loadCredentials(config.home);
-  config.configFile = location.file;
+  for (const name of apiSources) {
+    const record = config.credentials[name];
+    if (record?.status === 'active') Object.assign(config[name] ??= {}, record.credentials);
+  }
+  return config;
+}
+
+// 配置修复和 MCP 启动只取得主配置与固定位置；业务调用仍完整校验外部引用。
+export async function loadConfigBootstrap(options: ConfigLocation = {}): Promise<Config> {
+  const { input } = await readConfigFile(options);
+  return attachCredentials(baseConfig(input, options));
+}
+
+export async function resolveConfig(input: unknown, options: ConfigLocation = {}): Promise<Config> {
+  const config = baseConfig(input, options), location = configLocation(options);
   for (const file of config.connectorFiles ?? []) {
     const path = resolve(dirname(location.file), file);
     let data: unknown;
@@ -77,20 +102,21 @@ export async function loadConfig(options: ConfigLocation = {}): Promise<Config> 
     config.connectors!.push(...definitions);
   }
   config.connectors = [...new Map(config.connectors!.map(item => [item.id, item])).values()];
-  config.group = z.enum(catalogGroups).parse(options.group ?? 'default');
   if (config.group === 'game-wikis') {
     const group = schema.parse(JSON.parse(await readFile(new URL('../catalogs/game-wikis.json', import.meta.url), 'utf8')));
     config.wiki = { ...config.wiki, sites: { ...group.wiki.sites, ...config.wiki?.sites } };
   }
-  config.catalogFile = options.catalog ? resolve(options.catalog) : config.group === 'galgame' ? fileURLToPath(new URL('../catalogs/galgame.json', import.meta.url)) : parsed.data.catalogFile ? resolve(dirname(location.file), parsed.data.catalogFile) : fileURLToPath(new URL('../catalogs/sites.json', import.meta.url));
   const catalogSchema = z.object({ sites: z.record(z.string().regex(platformIdPattern), z.object({ domains: z.array(z.string().min(1)).min(1), label: z.string().min(1), description: z.string().optional() })) });
-  try { config.catalog = catalogSchema.parse(JSON.parse(await readFile(config.catalogFile, 'utf8'))); if (config.group === 'default') config.catalog.sites = { ...specialistSites, ...config.catalog.sites }; }
+  try { config.catalog = catalogSchema.parse(JSON.parse(await readFile(config.catalogFile!, 'utf8'))); if (config.group === 'default') config.catalog.sites = { ...specialistSites, ...config.catalog.sites }; }
   catch { throw new Error('站点目录需要有效 UTF-8 JSON 与 sites/domains/label 字段'); }
-  for (const name of apiSources) {
-    const record = config.credentials[name];
-    if (record?.status === 'active') Object.assign(config[name] ??= {}, record.credentials);
-  }
-  return config;
+  return attachCredentials(config);
+}
+
+export async function loadConfig(options: ConfigLocation = {}): Promise<Config> {
+  const { input, original, location } = await readConfigFile(options);
+  const config = await resolveConfig(input, options);
+  if (original) await migrateCredentials(config.home, location.file);
+  return attachCredentials(config);
 }
 
 export async function install(options: ConfigLocation & { skillDir?: string; components?: import('./components.js').ComponentName[]; python?: string; browser?: string; node?: string; signal?: AbortSignal } = {}) {

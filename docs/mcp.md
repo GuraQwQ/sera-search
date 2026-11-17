@@ -78,6 +78,8 @@ MCP 提供 18 个工具：`sera_setup`、`sera_config`、`sera_connectors`、`se
 
 该接口校验字段并返回脱敏投影，凭据通过 `sera_login` 登记；可更新字段与 CLI `config --input` 共用契约，见[配置指南](configuration.md#查看与更新运行配置)。`home` 由服务器启动时固定。
 
+外部声明文件失效时，可用 `{"connectorFiles":[]}` 移除引用或提交新的声明列表。MCP 启动及配置工具只校验主配置，补丁合并后再验证完整新配置；业务工具仍严格检查全部引用。无效补丁保留原配置，修复后同一连接即可继续调用。
+
 `sera_login` 的 `credentials`、`fromEnv`、`platform` 三条路径必须且只能选一条。已有 Key 可只传服务器进程中的环境变量名：
 
 ```json
@@ -85,6 +87,8 @@ MCP 提供 18 个工具：`sera_setup`、`sera_config`、`sera_connectors`、`se
 ```
 
 这读取 MCP 服务器启动时继承的环境，不会读取客户端或当前终端后来增加的变量；变更环境后需重新启动服务。若变量不存在，返回补齐提示。用户直接提供凭据时可传 `credentials:{"apiKey":"…"}`，Twitch 使用 `apiKey/clientId`；结果不回显凭据，API 实际调用时才验证。
+
+`fromEnv` 仅更新 Key，保留已有有效登录记录的辅助字段；显式 `credentials` 则完整替换该条凭据。
 
 平台会话验证可传 `{"source":"opencli","platform":"zhihu","sessionOnly":true}`。`sessionOnly` 仅适用于平台；默认 `false`，可按后端流程打开官方登录页，需用户完成扫码或验证后才算登录。每次工具调用重新加载配置与登录记录，同一连接后续查询即可采用已保存设置；配置读取不等同于平台会话已通过验证。
 

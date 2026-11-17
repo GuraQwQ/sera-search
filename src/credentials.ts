@@ -3,7 +3,7 @@ import { readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { writeAtomic } from './files.js';
+import { mutateJsonFile, writeAtomic } from './files.js';
 import { platformIdPattern, specialistSourceNames } from './types.js';
 import type { AuthRecord, Config, SavedCredentials, SourceName } from './types.js';
 
@@ -79,30 +79,31 @@ export async function removeCredential(home: string, source: SourceName, platfor
   return { source, ...(platform ? { platform } : {}), status: notLoggedIn };
 }
 
-export async function migrateCredentials(home: string, file: string, input: Record<string, unknown>, original: string) {
-  const records = await loadCredentials(home);
-  const custom = input.sources && typeof input.sources === 'object' && !Array.isArray(input.sources) ? input.sources as Record<string, unknown> : {};
-  const legacy = [...new Set<string>([...apiSources, ...Object.keys(custom).filter(name => sourceNameSchema.safeParse(name).success)])].flatMap(source => {
-    return [input[source], custom[source]].flatMap(config => {
-      if (!config || typeof config !== 'object' || Array.isArray(config)) return [];
-      const value = config as Record<string, unknown>;
-      const keys = ['apiKey', 'username', 'password'].filter(key => typeof value[key] === 'string' && value[key]);
-      return keys.length ? [{ source, value, keys }] : [];
+export async function migrateCredentials(home: string, file: string) {
+  await mutateJsonFile(file, async (input, original) => {
+    const records = await loadCredentials(home);
+    const custom = input.sources && typeof input.sources === 'object' && !Array.isArray(input.sources) ? input.sources as Record<string, unknown> : {};
+    const legacy = [...new Set<string>([...apiSources, ...Object.keys(custom).filter(name => sourceNameSchema.safeParse(name).success)])].flatMap(source => {
+      return [input[source], custom[source]].flatMap(config => {
+        if (!config || typeof config !== 'object' || Array.isArray(config)) return [];
+        const value = config as Record<string, unknown>;
+        const keys = ['apiKey', 'username', 'password'].filter(key => typeof value[key] === 'string' && value[key]);
+        return keys.length ? [{ source, value, keys }] : [];
+      });
     });
-  });
-  if (!legacy.length) return;
-  // 先保留可校验的原配置，再逐文件迁移；中断后重复执行不会覆盖新登录。
-  await writeAtomic(join(home, 'migrations', `config-${createHash('sha256').update(original).digest('hex')}.json`), original, true);
-  for (const source of new Set(legacy.map(item => item.source))) {
-    if (!records[source]) {
-      const credentials = Object.assign({}, ...legacy.filter(item => item.source === source).map(({ value, keys }) => Object.fromEntries(keys.map(key => [key, value[key]])))) as SavedCredentials;
-      await saveCredential(home, source, credentials);
+    if (!legacy.length) return;
+    // 先保留可校验的原配置，再逐文件迁移；中断后重复执行不会覆盖新登录。
+    await writeAtomic(join(home, 'migrations', `config-${createHash('sha256').update(original).digest('hex')}.json`), original, true);
+    for (const source of new Set(legacy.map(item => item.source))) {
+      if (!records[source]) {
+        const credentials = Object.assign({}, ...legacy.filter(item => item.source === source).map(({ value, keys }) => Object.fromEntries(keys.map(key => [key, value[key]])))) as SavedCredentials;
+        await saveCredential(home, source, credentials);
+      }
     }
-  }
-  const migrated = await loadCredentials(home);
-  for (const { source, value, keys } of legacy) {
-    if (!migrated[source]) throw new Error('登录记录迁移未完成，原配置已保留');
-    for (const key of keys) delete value[key];
-  }
-  await writeAtomic(file, JSON.stringify(input, null, 2) + '\n');
+    const migrated = await loadCredentials(home);
+    for (const { source, value, keys } of legacy) {
+      if (!migrated[source]) throw new Error('登录记录迁移未完成，原配置已保留');
+      for (const key of keys) delete value[key];
+    }
+  });
 }

@@ -81,6 +81,8 @@ node dist/cli.js config --home ./.sera --input ./source-settings.json --json
 
 输入经校验后保存；Key、密码通过 `login`／`sera_login` 管理，数据目录由 CLI 启动参数或 MCP 服务启动时确定。用户已核对免费档后，才将 `freeTierConfirmed` 设为 `true`。动态连接器格式见[连接器指南](connectors.md)。
 
+外部连接器声明文件移动或删除后，可通过 `config --input` 或 MCP `sera_config` 提交 `{"connectorFiles":[]}` 移除引用，也可替换成新的文件列表。更新先合并补丁，再校验完整的新配置及引用，通过后原子保存；失败保留原文件。普通业务调用继续报告失效引用，MCP 服务仍可通过配置工具完成修复。同一服务进程内的登录、向导和配置更新按配置文件排队，保留各自修改。
+
 ## 动态来源与连接器
 
 `sources` 按来源 ID 保存统一设置，例如 `enabled`、`baseUrl`、`userAgent` 与 `freeTierConfirmed`；它覆盖同名顶层来源的对应字段。API Key 继续通过 `login` 登记，活动凭据记录优先。
@@ -126,6 +128,8 @@ node .\dist\cli.js logout exa --home ./.sera
 ```
 
 环境变量经登记后成为本地登录记录。API 登录返回“已记录”，下一次请求才验证凭据；需要凭据的渠道无有效记录或被上游确认认证失效时，纯文本查询只返回“未登录，不可用”，JSON 保留 `runs` 和 `NOT_LOGGED_IN` 状态。限流、余额不足和网络失败按实际错误记录。
+
+`login --from-env` 与 MCP `sera_login.fromEnv` 更新 Key 时保留已有有效记录中的 `clientId` 等辅助字段，适合轮换 Twitch Token。显式凭据 JSON（CLI `--stdin` 或 MCP `credentials`）完整替换该条凭据，需包含本次要保存的所有字段。
 
 登录记录是本地 JSON，包含 API Key 或 API 账号，需保管数据目录。读取旧配置时会先备份，再迁移其中的凭据；`migrations/` 备份也可能包含旧凭据。迁移可重复执行，已登记的凭据优先。
 

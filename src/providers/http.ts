@@ -68,10 +68,10 @@ function github(config: ApiConfig): Source {
     async read(url, signal) {
       const parsed = new URL(url);
       if (!['github.com', 'raw.githubusercontent.com', 'api.github.com'].includes(parsed.hostname)) throw new Error('GitHub 读取需要仓库、文件、issue、PR 或发布链接');
-      const parts = parsed.pathname.split('/').filter(Boolean);
+      const parts = parsed.pathname.split('/').filter(Boolean).map(decodeURIComponent);
       if (parsed.hostname === 'api.github.com') {
         if (parts[0] !== 'repos' || !parts[1] || !parts[2] || parts[3] !== 'releases' || !/^\d+$/.test(parts[4] ?? '') || parts.length !== 5) throw new Error('GitHub API 读取需要 releases/<数字ID> 链接');
-        const item = await get(parts.map((part, index) => index === 1 || index === 2 ? encodeURIComponent(decodeURIComponent(part)) : part).join('/'), signal);
+        const item = await get(parts.map((part, index) => index === 1 || index === 2 ? encodeURIComponent(part) : part).join('/'), signal);
         if (String(item.id) !== parts[4]) throw Object.assign(new Error('GitHub 返回发布记录与请求 ID 不一致'), { code: 'CONTENT_MISMATCH' });
         return releaseDocument(item, url);
       }
@@ -79,7 +79,7 @@ function github(config: ApiConfig): Source {
       if (!owner || !repo) throw new Error('GitHub 链接缺少仓库名');
       const root = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo.replace(/\.git$/, ''))}`;
       if (parsed.hostname === 'github.com' && parts[2] === 'releases') {
-        const tag = parts[3] === 'tag' && parts.length > 4 ? parts.slice(4).map(decodeURIComponent).join('/') : undefined;
+        const tag = parts[3] === 'tag' && parts.length > 4 ? parts.slice(4).join('/') : undefined;
         const id = /^\d+$/.test(parts[3] ?? '') && parts.length === 4 ? parts[3] : undefined;
         const path = tag ? `tags/${encodeURIComponent(tag)}` : parts[3] === 'latest' && parts.length === 4 ? 'latest' : id;
         if (!path) throw new Error('GitHub 发布读取需要 releases/tag/<标签>、releases/latest 或 releases/<数字ID> 链接');

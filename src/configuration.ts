@@ -1,13 +1,10 @@
-import { readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
-import { commandSettingsSchema, errorMessage, loadConfig, parseConfig, sourceSettingsSchema } from './config.js';
+import { commandSettingsSchema, errorMessage, loadConfig, resolveConfig, sourceSettingsSchema } from './config.js';
 import { connectorDefinitionSchema } from './connectors.js';
 import { Engine } from './core.js';
-import { writeAtomic } from './files.js';
+import { mutateJsonFile } from './files.js';
 import { sourceConfig } from './source-config.js';
 import { sourceNameSchema } from './source-schema.js';
-import { sourceNames } from './types.js';
 import type { Config } from './types.js';
 
 export const configurableBackends = ['opencli', 'agent-reach', 'ghgrab', 'scrapling', 'metadata-parser', 'aliens-eye', 'sherlock', 'gods-eye-view'] as const;
@@ -19,53 +16,35 @@ export const configurationInputSchema = z.strictObject({
   connectors: z.array(connectorDefinitionSchema).optional(),
 });
 
-const pendingUpdates = new Map<string, Promise<unknown>>();
 export async function configureSources(config: Config, request: unknown = {}) {
-  const key = config.configFile ?? config.home;
-  const previous = pendingUpdates.get(key) ?? Promise.resolve();
-  const next = previous.catch(() => {}).then(() => applyConfiguration(config, request));
-  pendingUpdates.set(key, next);
-  try { return await next; }
-  finally { if (pendingUpdates.get(key) === next) pendingUpdates.delete(key); }
-}
-
-async function applyConfiguration(config: Config, request: unknown) {
   const input = configurationInputSchema.parse(request);
   const location = { home: config.home, file: config.configFile, catalog: config.catalogFile, group: config.group };
   const file = config.configFile;
-  let current = await loadConfig(location);
+  let current: Config;
   const changed = input.updates !== undefined || input.backends !== undefined || input.connectorFiles !== undefined || input.connectors !== undefined;
   if (changed) {
     if (!file) throw new Error('配置文件位置尚未确定');
-    let raw: Record<string, any>;
-    try { raw = JSON.parse(await readFile(file, 'utf8')); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; raw = {}; }
-    const before = JSON.stringify(raw);
-    if (input.connectorFiles) raw.connectorFiles = input.connectorFiles;
-    if (input.connectors) raw.connectors = [...new Map([...(raw.connectors ?? []), ...input.connectors].map(definition => [definition.id, definition])).values()];
-    const definitions = z.array(connectorDefinitionSchema).parse(raw.connectors ?? []);
-    for (const path of raw.connectorFiles ?? []) {
-      const data = JSON.parse(await readFile(resolve(dirname(file), path), 'utf8'));
-      definitions.push(...z.array(connectorDefinitionSchema).parse(Array.isArray(data) ? data : [data]));
-    }
-    const known = new Set<string>([...sourceNames, ...definitions.map(definition => definition.id)]);
-    for (const name of input.sources ?? []) if (!known.has(name)) throw new Error(`来源不存在：${name}`);
-    for (const [name, settings] of Object.entries(input.updates ?? {})) {
-      if (!known.has(name)) throw new Error(`来源不存在：${name}，请先配置连接器定义`);
-      if ((configurableBackends as readonly string[]).includes(name)) throw new Error(`组件 ${name} 的设置请放入 backends`);
-      raw.sources ??= {}; raw.sources[name] = { ...raw.sources[name], ...settings };
-    }
-    for (const [name, settings] of Object.entries(input.backends ?? {})) {
-      const key = name === 'agent-reach' ? 'agentReach' : name;
-      const command = commandSettingsSchema.parse({ ...raw[key], ...settings });
-      raw[key] = command;
-      // 组件入口统一由对应顶层配置管理，清除旧的通用启用覆盖。
-      if (raw.sources?.[name]) delete raw.sources[name].enabled;
-    }
-    new Engine({ ...current, ...parseConfig(raw), home: current.home, connectors: [...new Map(definitions.map(definition => [definition.id, definition])).values()] });
-    if (JSON.stringify(raw) !== before) await writeAtomic(file, JSON.stringify(raw, null, 2) + '\n');
+    current = await mutateJsonFile(file, async raw => {
+      if (input.connectorFiles) raw.connectorFiles = input.connectorFiles;
+      if (input.connectors) raw.connectors = [...new Map([...(raw.connectors ?? []), ...input.connectors].map(definition => [definition.id, definition])).values()];
+      for (const [name, settings] of Object.entries(input.updates ?? {})) {
+        if ((configurableBackends as readonly string[]).includes(name)) throw new Error(`组件 ${name} 的设置请放入 backends`);
+        raw.sources ??= {}; raw.sources[name] = { ...raw.sources[name], ...settings };
+      }
+      for (const [name, settings] of Object.entries(input.backends ?? {})) {
+        const key = name === 'agent-reach' ? 'agentReach' : name;
+        const command = commandSettingsSchema.parse({ ...raw[key], ...settings });
+        raw[key] = command;
+        // 组件入口统一由对应顶层配置管理，清除旧的通用启用覆盖。
+        if (raw.sources?.[name]) delete raw.sources[name].enabled;
+      }
+      const updated = await resolveConfig(raw, location), entries = new Engine(updated).sources;
+      const known = new Set<string>(entries.map(source => source.capability.name));
+      for (const name of [...(input.sources ?? []), ...Object.keys(input.updates ?? {})]) if (!known.has(name)) throw new Error(`来源不存在：${name}，请先配置连接器定义`);
+      return updated;
+    });
     current = await loadConfig(location);
-  }
+  } else current = await loadConfig(location);
   const names = input.sources ?? [...new Engine(current).sources.map(source => source.capability.name)];
   const entries = new Engine(current).sources;
   for (const name of names) if (!entries.some(source => source.capability.name === name)) throw new Error(`来源不存在：${name}`);
