@@ -24,7 +24,7 @@ SERA 把网页、代码、社区、学术、作品数据库和互联网归档接
 
 ## 快速开始
 
-Windows x64 可下载[轻量 ZIP](https://github.com/GuraQwQ/sera-search/releases/download/v1.0.0/SERA-v1.0.0-lite-windows-x64.zip)或[完整 ZIP](https://github.com/GuraQwQ/sera-search/releases/download/v1.0.0/SERA-v1.0.0-full-windows-x64.zip)，解压后运行 `sera.cmd`。完整版预装六个可选组件及其依赖；两版均检测本机已有环境，缺失时显示要求和下载入口。使用方法见[发布包指南](../../docs/releases.md)。
+Windows x64 可下载[轻量 ZIP](https://github.com/GuraQwQ/sera-search/releases/download/v2.0.0/SERA-v2.0.0-lite-windows-x64.zip)或[完整 ZIP](https://github.com/GuraQwQ/sera-search/releases/download/v2.0.0/SERA-v2.0.0-full-windows-x64.zip)，解压后运行 `sera.cmd`。完整版预装六个可选组件及其依赖；两版均检测本机已有环境，缺失时显示要求和下载入口。使用方法见[发布包指南](../../docs/releases.md)。
 
 需要 **Node.js 22 或以上版本**。当前从源码运行，尚未发布到 npm。
 

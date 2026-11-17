@@ -24,7 +24,7 @@ SERA connects your agent to tools for searching websites, code, communities, aca
 
 ## Quick start
 
-For Windows x64, download the [lightweight ZIP](https://github.com/GuraQwQ/sera-search/releases/download/v1.0.0/SERA-v1.0.0-lite-windows-x64.zip) or [full ZIP](https://github.com/GuraQwQ/sera-search/releases/download/v1.0.0/SERA-v1.0.0-full-windows-x64.zip), extract it, and run `sera.cmd`. The full package includes all six optional components and their dependencies. Both packages detect existing runtime programs and report missing requirements with download links. See the [release package guide](docs/releases.md).
+For Windows x64, download the [lightweight ZIP](https://github.com/GuraQwQ/sera-search/releases/download/v2.0.0/SERA-v2.0.0-lite-windows-x64.zip) or [full ZIP](https://github.com/GuraQwQ/sera-search/releases/download/v2.0.0/SERA-v2.0.0-full-windows-x64.zip), extract it, and run `sera.cmd`. The full package includes all six optional components and their dependencies. Both packages detect existing runtime programs and report missing requirements with download links. See the [release package guide](docs/releases.md).
 
 Requires **Node.js 22 or later**. Run from source; an npm release is not yet available.
 

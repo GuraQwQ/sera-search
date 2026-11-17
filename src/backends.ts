@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { z } from 'zod';
+import { readFile } from 'node:fs/promises';
 import { backendNames, extensionNames } from './types.js';
 import type { BackendName, Config, Source } from './types.js';
 import { integrationEnvironment } from './components.js';
@@ -10,6 +11,7 @@ import { document, hit, object, permitted, rows, string } from './providers/shar
 
 export const backendSchema = z.object({ source: z.enum(backendNames), tool: z.string().min(1).optional(), arguments: z.record(z.string(), z.unknown()).optional(), timeoutMs: z.number().int().min(100).max(300000).optional() });
 const failure = (code: string, message: string) => Object.assign(new Error(message), { code });
+const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
 // MCP 服务复用连接，让浏览器会话跨工具调用存活；配置改变时替换对应连接。
 export class BackendPool {
@@ -34,7 +36,7 @@ export class BackendPool {
       return this.connect(config, source, signal);
     }
     if (!connection) {
-      const client = new Client({ name: 'sera-backend', version: '1.0.0' });
+      const client = new Client({ name: 'sera-backend', version });
       const controller = new AbortController();
       const connecting = AbortSignal.any([signal, controller.signal]);
       const ready = (async () => {
