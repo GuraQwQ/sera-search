@@ -60,8 +60,9 @@ export const declaredReadHosts: Record<string, string> = {
   'packages.ecosyste.ms': 'ecosystems', 'api.deps.dev': 'deps-dev', 'stat.ripe.net': 'ripestat', 'api.ooni.io': 'ooni', 'explorer.ooni.org': 'ooni', 'urlscan.io': 'urlscan',
   'rcsb.org': 'rcsb-pdb', 'data.rcsb.org': 'rcsb-pdb', 'uniprot.org': 'uniprot', 'rest.uniprot.org': 'uniprot', 'pubchem.ncbi.nlm.nih.gov': 'pubchem', 'materialsproject.org': 'materials-project',
   'exoplanetarchive.ipac.caltech.edu': 'nasa-exoplanets', 'hepdata.net': 'hepdata', 'gbif.org': 'gbif', 'api.gbif.org': 'gbif', 'inaturalist.org': 'inaturalist', 'api.inaturalist.org': 'inaturalist', 'cmr.earthdata.nasa.gov': 'earthdata-cmr',
-  'fred.stlouisfed.org': 'fred', 'api.stlouisfed.org': 'fred', 'api.worldbank.org': 'world-bank', 'comtradeapi.un.org': 'un-comtrade', 'courtlistener.com': 'courtlistener', 'federalregister.gov': 'federal-register', 'openstreetmap.org': 'osm-overpass',
+  'fred.stlouisfed.org': 'fred', 'api.stlouisfed.org': 'fred', 'api.worldbank.org': 'world-bank', 'data.worldbank.org': 'world-bank', 'comtradeapi.un.org': 'un-comtrade', 'courtlistener.com': 'courtlistener', 'federalregister.gov': 'federal-register', 'openstreetmap.org': 'osm-overpass',
   'metmuseum.org': 'met', 'collectionapi.metmuseum.org': 'met', 'artic.edu': 'artic', 'api.artic.edu': 'artic', 'chatarchive.tv': 'chatarchive', 'sakugabooru.com': 'sakugabooru', 'isthereanydeal.com': 'isthereanydeal',
   'api.modrinth.com': 'modrinth', 'modrinth.com': 'modrinth', 'speedrun.com': 'speedrun', 'boardgamegeek.com': 'boardgamegeek', 'scryfall.com': 'scryfall', 'api.scryfall.com': 'scryfall', 'acoustid.org': 'acoustid', 'api.acoustid.org': 'acoustid', 'setlist.fm': 'setlistfm',
   'q1.qlogo.cn': 'qq-avatar', 'p.qlogo.cn': 'qq-group-avatar', 'user.qzone.qq.com': 'qq-public-profile', 'users.qzone.qq.com': 'qq-portrait-legacy', 'mp.weixin.qq.com': 'wechat-article-history',
+  'last.fm': 'lastfm', 'discogs.com': 'discogs', 'listenbrainz.org': 'listenbrainz', 'clips.twitch.tv': 'twitch', 'wikidata.org': 'wikidata',
 };

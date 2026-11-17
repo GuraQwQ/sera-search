@@ -5,9 +5,10 @@ import { createPublicDataSources } from './providers/public-data-connectors.js';
 import { createHobbySources } from './providers/hobby-connectors.js';
 import { createSocialConnectorSources } from './providers/social-connectors.js';
 import { createStructuredSource } from './connectors.js';
+import { createWikidataSource } from './providers/wikidata.js';
 
 export function createDeclaredSources(config: Config): Source[] {
-  return [...createInfrastructureSources(config), ...createScienceSources(config), ...createPublicDataSources(config), ...createHobbySources(config), ...createSocialConnectorSources(config)];
+  return [...createInfrastructureSources(config), ...createScienceSources(config), ...createPublicDataSources(config), ...createHobbySources(config), ...createSocialConnectorSources(config), createWikidataSource(config)];
 }
 
 export function configuredSources(config: Config, existing: Source[]): Source[] {

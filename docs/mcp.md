@@ -88,7 +88,13 @@ MCP 提供 18 个工具：`sera_setup`、`sera_config`、`sera_connectors`、`se
 
 平台会话验证可传 `{"source":"opencli","platform":"zhihu","sessionOnly":true}`。`sessionOnly` 仅适用于平台；默认 `false`，可按后端流程打开官方登录页，需用户完成扫码或验证后才算登录。每次工具调用重新加载配置与登录记录，同一连接后续查询即可采用已保存设置；配置读取不等同于平台会话已通过验证。
 
-`sera_channels` 返回每个动作的参数 Schema，`entrypoint` 为 `search`、`comments` 或 `images`；后两者分别交给 `sera_comments` 与 `sera_images`。`sera_search`／`sera_research` 使用 `operation`、`params`、`contentTypes` 和按源区分的 `sourceOptions`。智谱、豆包、SerpAPI 的 `platform` 均为 `web`，检索引擎或行业用 `operation`。片段定位用 `locator`，实际范围见 `runs[].coverage`，调用计划见 `plan`。接口例子与来源边界见[垂直来源](specialist-sources.md)。
+`sera_channels` 返回每个动作的参数 Schema，`entrypoint` 为 `search`、`read`、`comments` 或 `images`，分别使用对应工具。`sera_read`／`sera_read_many` 支持 `operation`、`params`、`contentTypes`：URL 独立传递，动作 Schema 描述 `params`。例如读取已知公开视频的实际字幕：
+
+```json
+{"url":"https://www.youtube.com/watch?v=VIDEO_ID","sources":["opencli"],"operation":"transcript","params":{"lang":"en","mode":"raw"},"contentTypes":["subtitle"]}
+```
+
+`sera_search`／`sera_research` 使用 `operation`、`params`、`contentTypes` 和按源区分的 `sourceOptions`。智谱、豆包、SerpAPI 的 `platform` 均为 `web`，检索引擎或行业用 `operation`。片段定位用 `locator`，实际范围见 `runs[].coverage`，调用计划及待补参数见 `plan`；游标按各动作 Schema 回传到 `params`。接口例子与来源边界见[垂直来源](specialist-sources.md)。
 
 ## 结构化连接器
 

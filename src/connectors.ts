@@ -27,7 +27,7 @@ export interface ConnectorDefinition {
   access?: AccessPolicy;
   limits?: { min_interval_ms?: number; max_response_bytes?: number };
   operations: Record<string, ConnectorOperation>;
-  read?: { hosts: string[]; pattern: string; request: NonNullable<ConnectorOperation['request']>; title?: string; content_kind?: 'page' | 'post' | 'subtitle' | 'metadata' };
+  read?: { hosts: string[]; pattern: string; request: NonNullable<ConnectorOperation['request']>; title?: string; content_kind?: 'page' | 'post' | 'subtitle' | 'metadata'; access?: AccessPolicy };
   limitations?: string[];
 }
 export type StructuredClient = (path: string, signal: AbortSignal, query?: Record<string, unknown>, body?: unknown, format?: 'json' | 'text' | 'response', headers?: Record<string, string>) => Promise<any>;
@@ -45,7 +45,7 @@ export const connectorDefinitionSchema = z.object({
   operations: z.record(sourceNameSchema, z.object({ description: z.string().min(1), content_types: z.array(z.string().min(1)).min(1), input_schema: z.record(z.string(), z.unknown()), request: requestSchema.optional(),
     output: z.object({ items: z.string().optional(), id: z.string().optional(), title: z.string(), url: z.string(), snippet: z.string().optional(), published_at: z.string().optional(), content_kind: z.enum(['page', 'post', 'subtitle', 'metadata']).optional() }).optional(),
     pagination: z.object({ next: z.string().optional(), total: z.string().optional(), cursor_param: z.string().optional() }).optional(), access: accessSchema.optional() })),
-  read: z.object({ hosts: z.array(z.string().min(1)).min(1), pattern: z.string().refine(value => { try { new RegExp(value); return true; } catch { return false; } }), request: requestSchema, title: z.string().optional(), content_kind: z.enum(['page', 'post', 'subtitle', 'metadata']).optional() }).optional(), limitations: z.array(z.string()).optional(),
+  read: z.object({ hosts: z.array(z.string().min(1)).min(1), pattern: z.string().refine(value => { try { new RegExp(value); return true; } catch { return false; } }), request: requestSchema, title: z.string().optional(), content_kind: z.enum(['page', 'post', 'subtitle', 'metadata']).optional(), access: accessSchema.optional() }).optional(), limitations: z.array(z.string()).optional(),
 });
 
 const slots = new Map<string, { tail: Promise<void>; lastStart: number }>();
@@ -111,32 +111,35 @@ function expand(value: unknown, context: Record<string, unknown>): any {
 export function createStructuredSource(config: Config, definition: ConnectorDefinition, hooks: ConnectorHooks = {}): Source {
   const override = config.connectors?.find(item => item.id === definition.id);
   if (override) definition = { ...definition, ...override, operations: { ...definition.operations, ...override.operations } };
-  const settings = sourceConfig(config, definition.id), client = connectorClient(settings, definition);
+  const settings = sourceConfig(config, definition.id), client = connectorClient(settings, definition), anonymousClient = connectorClient({ ...settings, apiKey: undefined }, definition);
   const entries = Object.entries(definition.operations), schemas = new Map(entries.map(([name, operation]) => {
     const parsed = z.fromJSONSchema(operation.input_schema as any);
     return [name, operation.request && operation.output && parsed instanceof z.ZodObject ? parsed.extend({ resultOffset: z.number().int().nonnegative().default(0) }) : parsed];
   }));
   const allowed = entries.filter(([, operation]) => !['paid', 'trial'].includes((operation.access ?? definition.access)?.billing ?? 'free'));
   const operations = allowed.map(([name, operation]) => ({ ...describeOperation(name, operation.description, operation.content_types, schemas.get(name)!), ...(operation.access ?? definition.access ? { access: operation.access ?? definition.access } : {}) }));
-  const required = definition.auth?.type && definition.auth.type !== 'none' && definition.access?.authentication !== 'optional';
+  const fallbackAccess: AccessPolicy = definition.access ?? { authentication: definition.auth?.type && definition.auth.type !== 'none' ? 'api-key' : 'none', billing: 'free' };
+  const policies = [...allowed.map(([, operation]) => operation.access ?? fallbackAccess), ...(hooks.read || definition.read ? [definition.read?.access ?? fallbackAccess] : [])];
+  const required = policies.length > 0 && policies.every(policy => ['api-key', 'session'].includes(policy.authentication));
   const source: Source = {
     connector: definition,
-    capability: { name: definition.id, platforms: definition.platforms ?? relatedPlatforms[definition.id] ?? [definition.id], search: allowed.length > 0, read: Boolean(hooks.read || definition.read), configured: settings.enabled !== false && (!required || Boolean(settings.apiKey)), requiresLogin: Boolean(required), loggedIn: !required || Boolean(settings.apiKey), category: 'catalog', accessMethod: 'api', contentTypes: [...new Set(operations.flatMap(item => item.contentTypes))], operations, access: definition.access, requirement: definition.label ?? definition.id, limitations: definition.limitations },
+    capability: { name: definition.id, platforms: definition.platforms ?? relatedPlatforms[definition.id] ?? [definition.id], search: allowed.length > 0, read: Boolean(hooks.read || definition.read), configured: settings.enabled !== false, requiresLogin: required, loggedIn: !required || Boolean(settings.apiKey), category: 'catalog', accessMethod: 'api', contentTypes: [...new Set(operations.flatMap(item => item.contentTypes))], operations, access: fallbackAccess, requirement: definition.label ?? definition.id, limitations: definition.limitations },
     async search(request) {
-      const name = request.operation ?? allowed[0]?.[0], operation = name && definition.operations[name];
+      const name = request.operation ?? (definition.id === 'github' ? request.githubType : undefined) ?? allowed[0]?.[0], operation = name && definition.operations[name];
       if (!name && entries.length && !allowed.length) throw Object.assign(new Error('此来源的操作需要付费或只有一次性试用额度'), { code: 'SOURCE_EXCLUDED' });
       if (!operation || !name) throw Object.assign(new Error('操作不存在，请查看 channels'), { code: 'UNSUPPORTED_OPERATION' });
-      const access = accessState(config, source, name, operation.access ?? definition.access);
+      const access = accessState(config, source, name, operation.access ?? fallbackAccess);
       if (access.code) throw Object.assign(new Error(access.reason), { code: access.code });
-      if (!source.capability.configured) throw Object.assign(new Error('此来源需要有效的认证配置'), { code: required ? 'NOT_LOGGED_IN' : 'SOURCE_DISABLED' });
+      if (!source.capability.configured) throw Object.assign(new Error('来源已停用'), { code: 'SOURCE_DISABLED' });
       const params = schemas.get(name)!.parse(request.params ?? {}) as Record<string, any>;
-      if (hooks.search?.[name] && !operation.request) return hooks.search[name]!({ ...request, operation: name }, params, client);
+      const selectedClient = access.policy.authentication === 'none' ? anonymousClient : client;
+      if (hooks.search?.[name] && !operation.request) return hooks.search[name]!({ ...request, operation: name }, params, selectedClient);
       if (!operation.request || !operation.output) throw new Error('此操作需要专用协议适配器');
       const context = { query: request.query, limit: request.limit, since: request.since, until: request.until, params };
       const spec = operation.request;
       if (spec.method === 'GET' && spec.body !== undefined) throw Object.assign(new Error('GET 请求不能配置 body'), { code: 'BAD_CONNECTOR_CONFIG' });
       const payload = expand(spec.body, context);
-      const value = await client(expand(spec.path, context), request.signal, expand(spec.query ?? {}, context), spec.method === 'POST' && payload === undefined ? {} : payload, spec.format);
+      const value = await selectedClient(expand(spec.path, context), request.signal, expand(spec.query ?? {}, context), spec.method === 'POST' && payload === undefined ? {} : payload, spec.format);
       const errors = definition.type === 'graphql' && value && typeof value === 'object' && Array.isArray(value.errors) ? value.errors : [];
       if (errors.length && !value.data) throw Object.assign(new Error(`${definition.id} GraphQL 返回协议错误`), { code: 'GRAPHQL_ERROR' });
       const values = at(value, operation.output.items), items = Array.isArray(values) ? values : values === undefined ? [] : [values];
@@ -154,15 +157,16 @@ export function createStructuredSource(config: Config, definition: ConnectorDefi
       });
     },
     ...(hooks.read || definition.read ? { read: async (url: string, signal: AbortSignal, options?: ReadOptions) => {
-      const access = accessState(config, source); if (access.code) throw Object.assign(new Error(access.reason), { code: access.code });
-      if (!source.capability.configured) throw Object.assign(new Error('此来源需要有效的认证配置'), { code: required ? 'NOT_LOGGED_IN' : 'SOURCE_DISABLED' });
-      if (hooks.read && !definition.read) return hooks.read(url, signal, options, client);
+      const access = accessState(config, source, 'read', definition.read?.access ?? fallbackAccess); if (access.code) throw Object.assign(new Error(access.reason), { code: access.code });
+      if (!source.capability.configured) throw Object.assign(new Error('来源已停用'), { code: 'SOURCE_DISABLED' });
+      const selectedClient = access.policy.authentication === 'none' ? anonymousClient : client;
+      if (hooks.read && !definition.read) return hooks.read(url, signal, options, selectedClient);
       const spec = definition.read!, address = new URL(url), match = address.pathname.match(new RegExp(spec.pattern));
       if (spec.request.method === 'GET' && spec.request.body !== undefined) throw Object.assign(new Error('GET 请求不能配置 body'), { code: 'BAD_CONNECTOR_CONFIG' });
       if (!spec.hosts.includes(address.hostname) || !match) throw new Error('链接不属于此结构化来源');
       const context = { id: decodeURIComponent(match[1] ?? ''), match: [...match], url, params: Object.fromEntries(address.searchParams) };
       const body = expand(spec.request.body, context);
-      const data = await client(expand(spec.request.path, context), signal, expand(spec.request.query ?? {}, context), spec.request.method === 'POST' && body === undefined ? {} : body, spec.request.format);
+      const data = await selectedClient(expand(spec.request.path, context), signal, expand(spec.request.query ?? {}, context), spec.request.method === 'POST' && body === undefined ? {} : body, spec.request.format);
       const errors = definition.type === 'graphql' && data && typeof data === 'object' && Array.isArray(data.errors) ? data.errors : [];
       if (errors.length && !data.data) throw Object.assign(new Error(`${definition.id} GraphQL 返回协议错误`), { code: 'GRAPHQL_ERROR' });
       return { source: definition.id, url, title: spec.title ? plain(at(data, spec.title)) || url : url, content: typeof data === 'string' ? data : JSON.stringify(data, null, 2), contentKind: spec.content_kind ?? 'metadata', ...(context.id ? { locator: { kind: 'record' as const, id: context.id } } : {}), metadata: { connector: definition.id, contentScope: 'structured-record', ...(errors.length ? { partial: true, protocolErrorCount: errors.length } : {}) } };
@@ -193,7 +197,8 @@ export function adaptStructuredSource(config: Config, original: Source): Source 
     label: original.capability.requirement ?? name, access, operations, limitations: original.capability.limitations, auth };
   const source = createStructuredSource(config, definition, { search: Object.fromEntries(descriptions.map(operation => [operation.name, (request: SearchRequest, params: Record<string, unknown>) => original.search!({ ...request, params })])),
     ...(original.read ? { read: (url: string, signal: AbortSignal, options?: ReadOptions) => original.read!(url, signal, options) } : {}) });
-  source.capability = { ...source.capability, ...original.capability, configured: original.capability.configured && sourceConfig(config, name).enabled !== false, operations: [...(source.capability.operations ?? []), ...(original.capability.operations ?? []).filter(item => item.entrypoint && item.entrypoint !== 'search')], access: source.capability.access };
+  const accessOverride = config.connectors?.some(item => item.id === name) && !source.capability.requiresLogin;
+  source.capability = { ...source.capability, ...original.capability, ...(accessOverride ? { requiresLogin: source.capability.requiresLogin, loggedIn: source.capability.loggedIn } : {}), configured: (original.capability.configured || Boolean(accessOverride)) && sourceConfig(config, name).enabled !== false, operations: [...(source.capability.operations ?? []), ...(original.capability.operations ?? []).filter(item => item.entrypoint && item.entrypoint !== 'search')], access: source.capability.access };
   for (const key of ['channels', 'login', 'logout', 'comments', 'images'] as const) if (original[key]) Object.assign(source, { [key]: original[key] });
   return source;
 }

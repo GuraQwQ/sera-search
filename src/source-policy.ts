@@ -25,7 +25,7 @@ const policies: Record<string, AccessPolicy> = {
 };
 
 export function policyFor(source: Source, operation?: string): AccessPolicy {
-  return source.capability.operations?.find(item => item.name === operation)?.access ?? source.capability.access ?? policies[source.capability.name]
+  return (operation === 'read' ? source.connector?.read?.access : undefined) ?? source.capability.operations?.find(item => item.name === operation)?.access ?? source.capability.access ?? policies[source.capability.name]
     ?? { authentication: source.capability.requiresLogin ? 'api-key' : 'none', billing: 'free' };
 }
 
@@ -34,14 +34,14 @@ export function accessState(config: Config, source: Source, operation?: string, 
   const policy: AccessPolicy = source.capability.name === 'openalex' && ['free-quota', 'mixed'].includes(declared.billing)
     ? { ...declared, authentication: settings.apiKey ? 'api-key' : 'optional', billing: settings.apiKey ? 'mixed' : 'free-quota', quota: settings.apiKey ? '免费每日预算耗尽后会消耗已购余额；调用前需确认账户仅使用免费档' : '匿名免费每日预算；额度耗尽后等待重置', evidence: 'https://help.openalex.org/access/pricing/' }
     : declared;
-  const credentialReady = policy.authentication === 'api-key' ? Boolean(settings.apiKey) : policy.authentication === 'session' ? source.capability.configured : source.capability.loggedIn ?? (!source.capability.requiresLogin || Boolean(settings.apiKey));
+  const credentialReady = policy.authentication === 'api-key' ? Boolean(settings.apiKey) : policy.authentication === 'session' ? source.capability.configured && source.capability.loggedIn !== false : true;
   const blocked = policy.billing === 'paid' || policy.billing === 'trial';
   const confirmation = ['mixed', 'unknown'].includes(policy.billing) && settings.freeTierConfirmed !== true;
-  const authenticated = Boolean(settings.apiKey) || policy.authentication === 'session';
+  const authenticated = policy.authentication !== 'none' && (Boolean(settings.apiKey) || policy.authentication === 'session');
   const quota = ['free-quota', 'mixed', 'unknown'].includes(policy.billing);
   const priority = blocked ? 100 : confirmation ? 90 : !credentialReady ? 80 : quota ? authenticated ? 30 : 20 : policy.authentication !== 'none' && authenticated ? 10 : 0;
   return { policy, priority, automatic: !blocked && !confirmation && credentialReady && source.capability.configured,
-    ...(blocked ? { code: 'SOURCE_EXCLUDED', reason: '该操作需要付费或只有一次性试用额度' } : confirmation ? { code: 'FREE_TIER_UNCONFIRMED', reason: '免费档尚未确认，请在来源配置中设置 freeTierConfirmed 后使用' } : {}) };
+    ...(blocked ? { code: 'SOURCE_EXCLUDED', reason: '该操作需要付费或只有一次性试用额度' } : confirmation ? { code: 'FREE_TIER_UNCONFIRMED', reason: '免费档尚未确认，请在来源配置中设置 freeTierConfirmed 后使用' } : !credentialReady ? { code: 'NOT_LOGGED_IN', reason: '此动作需要有效的认证配置' } : {}) };
 }
 
 export function applyPolicy(config: Config, source: Source): Source {

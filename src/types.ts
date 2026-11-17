@@ -1,6 +1,6 @@
 export const specialistSourceNames = ['aicu', 'danmakus', 'operationhong', 'matsuri', 'laplace', 'filmot', 'holodex', 'semantic-scholar', 'openreview', 'osv', 'github-advisory', 'gdelt', 'open-library', 'clinicaltrials', 'steamdb', 'vgmdb', 'open-meteo', 'mangaupdates', 'novelupdates', 'syosetu', 'kakuyomu', 'huggingface', 'biorxiv', 'europepmc', 'zenodo', 'google-patents', 'j-platpat', 'ndl', 'nga', '5ch', 'hackernews', 'lobsters'] as const;
 export type SpecialistSourceName = typeof specialistSourceNames[number];
-export const structuredSourceNames = ['common-crawl', 'gh-archive', 'wikimedia-analytics', 'ecosystems', 'deps-dev', 'ripestat', 'ooni', 'urlscan', 'rcsb-pdb', 'uniprot', 'chembl', 'pubchem', 'materials-project', 'nasa-exoplanets', 'hepdata', 'gbif', 'inaturalist', 'earthdata-cmr', 'fred', 'world-bank', 'un-comtrade', 'eurostat', 'courtlistener', 'federal-register', 'osm-overpass', 'met', 'artic', 'chatarchive', 'sakugabooru', 'isthereanydeal', 'modrinth', 'speedrun', 'boardgamegeek', 'scryfall', 'acoustid', 'setlistfm', 'qq-avatar', 'qq-group-avatar', 'qq-public-profile', 'qq-portrait-legacy', 'wechat-official-account', 'wechat-article-history'] as const;
+export const structuredSourceNames = ['wikidata', 'common-crawl', 'gh-archive', 'wikimedia-analytics', 'ecosystems', 'deps-dev', 'ripestat', 'ooni', 'urlscan', 'rcsb-pdb', 'uniprot', 'chembl', 'pubchem', 'materials-project', 'nasa-exoplanets', 'hepdata', 'gbif', 'inaturalist', 'earthdata-cmr', 'fred', 'world-bank', 'un-comtrade', 'eurostat', 'courtlistener', 'federal-register', 'osm-overpass', 'met', 'artic', 'chatarchive', 'sakugabooru', 'isthereanydeal', 'modrinth', 'speedrun', 'boardgamegeek', 'scryfall', 'acoustid', 'setlistfm', 'qq-avatar', 'qq-group-avatar', 'qq-public-profile', 'qq-portrait-legacy', 'wechat-official-account', 'wechat-article-history'] as const;
 export const sourceNames = ['exa', 'tavily', 'brave', 'github', 'agent-reach', 'opencli', 'bilibili', 'v2ex', 'web', 'zhipu', 'doubao', 'crossref', 'openalex', 'pubmed', 'serpapi', 'wiki', 'skills', 'bangumi', 'anilist', 'jikan', 'mangadex', 'vndb', 'musicbrainz', 'lastfm', 'listenbrainz', 'discogs', 'youtube', 'netease', 'baidu-images', 'sogou-images', 'trace-moe', 'saucenao', 'twitch', 'discord', 'instagram', 'bing', 'sites', 'wayback', 'archive', 'linuxdo', 'heybox', 'steam', 'nicovideo', 'ghgrab', 'scrapling', 'metadata-parser', 'google-news', 'iptv', 'aliens-eye', 'sherlock', 'gods-eye-view', ...specialistSourceNames, ...structuredSourceNames] as const;
 export type SourceName = string;
 export const extensionNames = ['aliens-eye', 'sherlock', 'gods-eye-view'] as const;
@@ -153,7 +153,7 @@ export interface SourceOperation {
   inputSchema: Record<string, unknown>;
   accessMethod: 'api' | 'site-search' | 'local';
   access?: AccessPolicy;
-  entrypoint?: 'search' | 'comments' | 'images';
+  entrypoint?: 'search' | 'read' | 'comments' | 'images';
 }
 
 export interface AccessPolicy {
@@ -328,7 +328,7 @@ export interface ReadReport {
   nextSteps?: string[];
   runs: SourceRun[];
 }
-export interface ReadOptions { sources?: SourceName[]; signal?: AbortSignal; query?: string; keywords?: string[]; length?: number; refresh?: boolean; maxAgeMs?: number; timeoutMs?: number; browser?: string; raw?: boolean; locator?: ContentLocator }
+export interface ReadOptions { sources?: SourceName[]; signal?: AbortSignal; query?: string; keywords?: string[]; length?: number; refresh?: boolean; maxAgeMs?: number; timeoutMs?: number; browser?: string; raw?: boolean; locator?: ContentLocator; contentTypes?: string[]; operation?: string; params?: Record<string, unknown> }
 export interface BatchReadReport { status: 'ok' | 'partial' | 'error'; documents: ReadReport[] }
 export interface ResearchSubject { id: string; name: string; aliases?: string[]; urls?: string[] }
 export interface ResearchCriterion { id: string; description: string; kind: 'required' | 'preference'; intent?: Intent; scope?: Record<string, string>; keywords?: string[] }

@@ -3,24 +3,60 @@ import type { Row } from './shared.js';
 import { z } from 'zod';
 import { NotLoggedInError, notLoggedIn } from '../credentials.js';
 import { extractMetadata } from './metadata-parser.js';
-import { describeOperation, selectOperation } from './operations.js';
+import { describeOperation, reportCoverage, selectOperation } from './operations.js';
 import { object, rows, string, plain, decoded, htmlText, textResponse, date, epoch, hit, endpoint, response, json, document, apiHeaders, permitted } from './shared.js';
 
 function github(config: ApiConfig): Source {
-  const headers: Record<string, string> = { Accept: 'application/vnd.github.text-match+json', 'User-Agent': 'SERA' };
+  const headers: Record<string, string> = { Accept: 'application/vnd.github.text-match+json', 'User-Agent': 'SERA', 'X-GitHub-Api-Version': '2022-11-28' };
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
   const get = (path: string, signal: AbortSignal) => json(endpoint(config, 'https://api.github.com/', path), { headers, signal }, 'GitHub');
+  const page = z.number().int().min(1).max(1000).default(1), searchParams = z.strictObject({ page });
+  const releaseParams = z.strictObject({ repository: z.string().regex(/^[\w.-]+\/[\w.-]+$/), page, tag: z.string().min(1).max(512).optional(), releaseId: z.string().regex(/^[1-9]\d*$/).optional() }).refine(value => !(value.tag && value.releaseId), 'tag 与 releaseId 只能选择一项');
+  const operations = [describeOperation('repositories', '搜索仓库，日期范围按最近推送时间', ['repository'], searchParams), describeOperation('code', '搜索代码，需要 GitHub Token', ['code'], searchParams),
+    describeOperation('issues', '搜索 issue 与 PR，日期范围按创建时间', ['issue'], searchParams), describeOperation('releases', '按仓库列出发布说明；tag 或 releaseId 读取单条，日期仅筛选当前页', ['release'], releaseParams)];
+  const access = { authentication: 'optional' as const, billing: 'free-quota' as const, quota: '公开 REST 匿名通常每小时60次，认证通常5000次；搜索另有独立分钟限额', evidence: 'https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api' };
+  operations[1]!.access = { ...access, authentication: 'api-key' };
+  const releaseRecord = (item: Row) => ({ id: item.id, tag: item.tag_name, name: item.name, body: item.body, publishedAt: item.published_at, createdAt: item.created_at,
+    prerelease: item.prerelease, immutable: item.immutable, targetCommitish: item.target_commitish, htmlUrl: item.html_url,
+    assets: Array.isArray(item.assets) ? rows(item.assets, 'GitHub 发布附件').map(asset => ({ id: asset.id, name: asset.name, size: asset.size, contentType: asset.content_type, digest: asset.digest, downloadUrl: asset.browser_download_url })) : [] });
+  const releaseDocument = (item: Row, url: string) => {
+    if (item.draft === true || !Number.isSafeInteger(item.id) || !string(item.tag_name)) throw new Error('GitHub 未返回公开发布记录');
+    const value = releaseRecord(item), body = string(item.body);
+    return document('github', string(item.html_url) || url, string(item.name) || string(item.tag_name), body.trim() ? body : JSON.stringify(value, null, 2), {
+      contentKind: body.trim() ? 'post' : 'metadata', publishedAt: date(item.published_at), locator: { kind: 'record', id: String(item.id) }, metadata: { contentType: 'release', contentScope: 'release-notes-and-assets', ...value } });
+  };
   return {
-    capability: { name: 'github', search: true, read: true, configured: config.enabled !== false, requirement: '公开仓库可匿名访问，代码搜索需要 GitHub Token' },
+    capability: { name: 'github', search: true, read: true, configured: config.enabled !== false, platforms: ['github'], operations, contentTypes: ['repository', 'code', 'issue', 'release'], accessMethod: 'api', access, requirement: '公开仓库、issue、发布说明可匿名访问，代码搜索需要 GitHub Token' },
     async search(request) {
+      if (request.operation && request.githubType && request.operation !== request.githubType) throw Object.assign(new Error('operation 与 githubType 不一致，请选择同一 GitHub 动作'), { code: 'BAD_INPUT' });
+      const type = selectOperation({ ...request, operation: request.operation ?? request.githubType }, operations);
       if (!permitted(request.domains, 'github.com')) return [];
-      const type = request.githubType ?? 'repositories';
+      if (type === 'releases') {
+        const params = releaseParams.parse(request.params ?? {}), path = `repos/${params.repository.split('/').map(encodeURIComponent).join('/')}/releases`;
+        const selector = params.tag ? `/tags/${encodeURIComponent(params.tag)}` : params.releaseId ? `/${params.releaseId}` : '';
+        const address = endpoint(config, 'https://api.github.com/', path + selector), size = Math.min(request.limit, 100);
+        if (!selector) { address.searchParams.set('per_page', String(size)); address.searchParams.set('page', String(params.page)); }
+        const result = await response(address, { headers, signal: request.signal }, 'GitHub Releases'), value = await result.json();
+        const items = selector ? [object(value, 'GitHub 发布')] : rows(value, 'GitHub 发布列表');
+        const more = !selector && /rel="next"/.test(result.headers.get('link') ?? '');
+        reportCoverage(request, 'github:releases', { completeness: 'partial', truncated: more, ...(more ? { nextCursor: JSON.stringify({ ...params, page: params.page + 1 }) } : {}), limitations: ['仅返回公开发布记录；日期筛选当前页，附件仅保留元数据与下载链接。'] });
+        return items.filter(item => item.draft !== true && (!request.since || Boolean(date(item.published_at) && date(item.published_at)!.slice(0, 10) >= request.since))
+          && (!request.until || Boolean(date(item.published_at) && date(item.published_at)!.slice(0, 10) <= request.until))).slice(0, request.limit).flatMap(item => {
+          const value = releaseDocument(item, `https://github.com/${params.repository}/releases/tag/${encodeURIComponent(string(item.tag_name))}`);
+          return hit('github', { title: value.title, url: value.url, snippet: string(item.body), publishedAt: value.publishedAt, locator: value.locator, metadata: value.metadata });
+        });
+      }
+      const params = searchParams.parse(request.params ?? {});
       if (type === 'code' && !config.apiKey) throw new NotLoggedInError();
-      if (request.since && type === 'code') throw new Error('GitHub 代码搜索不支持发布日期过滤，请使用仓库或 issue 搜索');
+      if ((request.since || request.until) && type === 'code') throw new Error('GitHub 代码搜索不支持发布日期过滤，请使用仓库或 issue 搜索');
       const url = endpoint(config, 'https://api.github.com/', `search/${type}`);
-      url.searchParams.set('q', `${request.query}${request.since ? ` ${type === 'repositories' ? 'pushed' : 'created'}:>=${request.since.slice(0, 10)}` : ''}`);
+      const timeField = type === 'repositories' ? 'pushed' : 'created';
+      url.searchParams.set('q', `${request.query}${request.since ? ` ${timeField}:>=${request.since.slice(0, 10)}` : ''}${request.until ? ` ${timeField}:<=${request.until.slice(0, 10)}` : ''}`);
       url.searchParams.set('per_page', String(Math.min(request.limit, 100)));
-      const data = await json(url, { headers, signal: request.signal }, 'GitHub');
+      url.searchParams.set('page', String(params.page));
+      const result = await response(url, { headers, signal: request.signal }, 'GitHub'), data = object(await result.json(), 'GitHub 搜索');
+      const more = /rel="next"/.test(result.headers.get('link') ?? '');
+      reportCoverage(request, `github:${type}`, { completeness: 'partial', truncated: more || data.incomplete_results === true, ...(more ? { nextCursor: JSON.stringify({ page: params.page + 1 }) } : {}), limitations: ['GitHub 搜索最多可访问前1000条结果，范围取决于查询与当前身份。'] });
       return rows(data.items, 'GitHub').flatMap((item) => hit('github', {
         title: string(item.full_name) || string(item.title) || string(item.name),
         url: string(item.html_url),
@@ -31,11 +67,26 @@ function github(config: ApiConfig): Source {
     },
     async read(url, signal) {
       const parsed = new URL(url);
-      if (!['github.com', 'raw.githubusercontent.com'].includes(parsed.hostname)) throw new Error('GitHub 读取需要 github.com 或 raw.githubusercontent.com 链接');
+      if (!['github.com', 'raw.githubusercontent.com', 'api.github.com'].includes(parsed.hostname)) throw new Error('GitHub 读取需要仓库、文件、issue、PR 或发布链接');
       const parts = parsed.pathname.split('/').filter(Boolean);
+      if (parsed.hostname === 'api.github.com') {
+        if (parts[0] !== 'repos' || !parts[1] || !parts[2] || parts[3] !== 'releases' || !/^\d+$/.test(parts[4] ?? '') || parts.length !== 5) throw new Error('GitHub API 读取需要 releases/<数字ID> 链接');
+        const item = await get(parts.map((part, index) => index === 1 || index === 2 ? encodeURIComponent(decodeURIComponent(part)) : part).join('/'), signal);
+        if (String(item.id) !== parts[4]) throw Object.assign(new Error('GitHub 返回发布记录与请求 ID 不一致'), { code: 'CONTENT_MISMATCH' });
+        return releaseDocument(item, url);
+      }
       const [owner, repo] = parts;
       if (!owner || !repo) throw new Error('GitHub 链接缺少仓库名');
       const root = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo.replace(/\.git$/, ''))}`;
+      if (parsed.hostname === 'github.com' && parts[2] === 'releases') {
+        const tag = parts[3] === 'tag' && parts.length > 4 ? parts.slice(4).map(decodeURIComponent).join('/') : undefined;
+        const id = /^\d+$/.test(parts[3] ?? '') && parts.length === 4 ? parts[3] : undefined;
+        const path = tag ? `tags/${encodeURIComponent(tag)}` : parts[3] === 'latest' && parts.length === 4 ? 'latest' : id;
+        if (!path) throw new Error('GitHub 发布读取需要 releases/tag/<标签>、releases/latest 或 releases/<数字ID> 链接');
+        const item = await get(`${root}/releases/${path}`, signal);
+        if (tag && item.tag_name !== tag || id && String(item.id) !== id) throw Object.assign(new Error('GitHub 返回发布记录与请求不一致'), { code: 'CONTENT_MISMATCH' });
+        return releaseDocument(item, url);
+      }
       if (parsed.hostname === 'github.com' && ['issues', 'pull'].includes(parts[2] ?? '') && /^\d+$/.test(parts[3] ?? '')) {
         const number = parts[3]!;
         const issue = await get(`${root}/${parts[2] === 'pull' ? 'pulls' : 'issues'}/${number}`, signal);
@@ -161,7 +212,7 @@ export function createHttpSources(config: Config): Source[] {
       const item = object(data.data, 'B站');
       if (!string(item.title)) throw new Error('B站未返回视频元数据');
       const metadata = { bvid: item.bvid, title: item.title, description: item.desc, duration: item.duration, owner: item.owner, statistics: item.stat };
-      return document('bilibili', url, string(item.title), JSON.stringify(metadata, null, 2), { contentKind: 'metadata', publishedAt: epoch(item.pubdate) });
+      return document('bilibili', url, string(item.title), JSON.stringify(metadata, null, 2), { contentKind: 'metadata', publishedAt: epoch(item.pubdate), metadata: { contentType: 'video-metadata' } });
     },
   };
   const v2ex: Source = {

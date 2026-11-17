@@ -151,7 +151,9 @@ function display(value: unknown): string {
   if (report.hits) {
     const lines = [`查询：${report.query}；状态：${report.status}`];
     for (const [index, hit] of report.hits.entries()) lines.push(`\n${index + 1}. ${hit.title}\n${hit.url}\n来源：${hit.sources.join(', ')}\n${hit.snippet}`);
-    if (!report.hits.length) lines.push('本次查询没有获得匹配结果，请检查来源记录或调整查询。');
+    const pending = report.plan?.pendingActions ?? [];
+    if (!report.hits.length) lines.push(pending.length && !report.runs.length ? '待补齐动作参数或选择对应入口。' : '本次查询没有获得匹配结果，请检查来源记录或调整查询。');
+    for (const action of pending) lines.push(`${action.source} / ${action.entrypoint}:${action.operation}：${action.required.length ? '待补参数 ' + action.required.join(', ') : '请使用对应入口调用'}`);
     for (const run of report.runs) if (!['ok', 'empty'].includes(run.status)) lines.push(`\n${run.source}: ${run.message ?? run.status}`);
     if (report.documents) {
       lines.push(`\n已读取 ${report.comparison.documentsRead} 份证据：`);
@@ -248,7 +250,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     const task = command === 'search' && values.input ? JSON.parse(await readFile(values.input, 'utf8')) : {};
     const search = { ...task, query: text || task.query, sources: selected ?? task.sources, platform: values.platform ?? task.platform, limit: integer(values.limit, task.limit ?? 5), githubType: values['github-type'] ?? task.githubType, domains: values.domain ?? task.domains, since: values.since ?? task.since, until: values.until ?? task.until, at: values.at ?? task.at, aliases: values.alias ?? task.aliases, terms: values.term ?? task.terms, excludeUrls: values['exclude-url'] ?? task.excludeUrls, intent: values.intent === undefined ? task.intent : z.enum(intents).parse(values.intent),
       operation: values.operation ?? task.operation, params: values.params === undefined ? task.params : JSON.parse(values.params), contentTypes: values['content-type'] ?? task.contentTypes, maxSources: values['max-sources'] === undefined ? task.maxSources : integer(values['max-sources'], 1), strategy: values.strategy ?? task.strategy, signal: controller.signal };
-    const read = { sources: selected, query: values.query, keywords: values.keyword, length: integer(values.length, 2000), refresh: values.refresh, maxAgeMs: values['max-age'] === undefined ? undefined : integer(values['max-age'], 0), timeoutMs: values['timeout-ms'] === undefined ? undefined : integer(values['timeout-ms'], 20000), browser: values.browser, raw: values.raw, locator: values.locator === undefined ? undefined : JSON.parse(values.locator), signal: controller.signal };
+    const read = { sources: selected, query: values.query, keywords: values.keyword, length: integer(values.length, 2000), refresh: values.refresh, maxAgeMs: values['max-age'] === undefined ? undefined : integer(values['max-age'], 0), timeoutMs: values['timeout-ms'] === undefined ? undefined : integer(values['timeout-ms'], 20000), browser: values.browser, raw: values.raw, locator: values.locator === undefined ? undefined : JSON.parse(values.locator), contentTypes: values['content-type'], operation: values.operation, params: search.params, signal: controller.signal };
     switch (command) {
       case 'config': result = await configureSources(config, { ...(values.input ? JSON.parse(await readFile(values.input, 'utf8')) : {}), ...(selected ? { sources: selected } : {}) }); break;
       case 'login': {

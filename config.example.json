@@ -31,6 +31,7 @@
   "google-news": { "languageCode": "zh-CN", "country": "CN", "edition": "CN:zh-Hans" },
   "iptv": { "baseUrl": "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8" },
   "sources": {
+    "wikidata": {},
     "common-crawl": {}, "gh-archive": {}, "wikimedia-analytics": {}, "ecosystems": {}, "deps-dev": {}, "ripestat": {}, "ooni": {}, "urlscan": {},
     "rcsb-pdb": {}, "uniprot": {}, "chembl": {}, "pubchem": {}, "materials-project": {}, "nasa-exoplanets": {}, "hepdata": {}, "gbif": {}, "inaturalist": {}, "earthdata-cmr": {},
     "fred": {}, "world-bank": {}, "un-comtrade": {}, "eurostat": {}, "courtlistener": {}, "federal-register": {}, "osm-overpass": {}, "met": {}, "artic": {},

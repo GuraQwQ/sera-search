@@ -8,8 +8,8 @@
 
 | 目标平台 | 提供者来源 | 实际材料 |
 |---|---|---|
-| `bilibili` | `bilibili`、`aicu`、`danmakus` 及其他已接入渠道 | 原生视频候选与元数据；第三方已收录评论、弹幕、场次，各动作范围不同 |
-| `youtube` | `youtube`、`filmot`、`holodex` | 视频与评论、已索引字幕、频道与直播／切片元数据分别调用 |
+| `bilibili` | `bilibili`、`opencli`、`aicu`、`danmakus` 及其他已接入渠道 | 原生视频候选与元数据、OpenCLI 作品字幕；第三方已收录评论、弹幕、场次，各动作范围不同 |
+| `youtube` | `youtube`、`opencli`、`filmot`、`holodex` | 视频与评论、指定视频转录、已索引字幕、频道与直播／切片元数据分别调用 |
 | `twitch` | `twitch`、`chatarchive` | Helix 元数据；ChatArchive 已收录场次与免费聊天回放页 |
 | `qq`／`wechat` | 同平台的头像、公开资源或公众号连接器 | 仅返回所选动作当前可取得的对象与字段 |
 
@@ -25,6 +25,13 @@
 | `holodex` | `videos`、`channels`、`channel` | 频道、直播、切片及联动关系；要求 `X-APIKEY`，结果为元数据 |
 | `chatarchive` | `streams`、`replay` | Twitch 已收录场次和指定场次免费聊天回放；`replay` 关键词只筛当前页，不是全历史关键词搜索 |
 | `bilibili` | `videos`；独立评论入口 | `videos` 按关键词发现公开视频，`params.page` 选择结果页；读取为视频元数据，当前没有用户搜索动作 |
+| `opencli` | 按实时注册表的 `read` 动作 | YouTube `video`／`transcript`、B站 `video`／`subtitle` 分别读取作品元数据和字幕正文；字幕可选 `lang`，YouTube 可选 `mode:grouped|raw` |
+| `youtube` | `videos`；独立评论入口 | Data API Key；关键词视频元数据，`pageToken` 续页，`until` 包含指定日期；实际字幕另用已配置的 OpenCLI |
+| `twitch` | `channels`、`categories`、`streams`、`videos`、`clips` | Helix Token＋Client-Id；现有动作通过 `params.after` 续页，视频日期在当前页过滤 |
+| `instagram` | `users`、`posts`、`hashtag`、`hashtag-top`、`self-media` | 按专业账号与授权媒体范围调用；媒体动作通过 `params.after` 续页，过滤为空的当前页仍可能有续页 |
+| `wikidata` | `search`、`entity` | 匿名实体名称检索、Q／P ID 读取、声明、限定条件、参考文献、外部 ID 和站点链接；保留修订号，数据为 CC0 |
+| `github` | `repositories`、`code`、`issues`、`releases` | 发布说明按仓库、tag 或 releaseId 查询，保留发布正文与附件元数据；公开动作可匿名，代码搜索需 Token |
+| `vndb` | `search`、`releases` | 作品与发行版本分开；发行保留语言、平台、关联 VN、商店链接、补丁、官方与免费标记 |
 | `semantic-scholar` | `papers` | 论文检索、摘要、引用计数和开放全文入口；可登记 Key，匿名额度可能限流 |
 | `openreview` | `papers`、`forum` | 论文与公开评审、回复、讨论；读取保留 note、forum 和回复关系，受实际可见范围影响 |
 | `huggingface` | `models`、`datasets`、`spaces` | 模型与数据集仓库、卡片字段、提交 SHA 与文件清单；Token 可选 |
@@ -42,13 +49,33 @@
 | `ndl` | `catalog` | OpenSearch 书目、馆藏及单条 DC-NDL 记录；使用条件依数据提供机构 |
 | `hackernews` | `posts` | Algolia 关键词、帖子与评论检索，原生读取讨论树 |
 | `lobsters` | `recent` | 当前最新帖子页的关键词筛选及讨论读取；历史发现可用 `sites --platform lobsters` |
-| `steam` | `store`、`news`、`players` | 商店实体、AppID 公告、当前人数；规格与公告读取复用原有实现 |
+| `steam` | `store`、`news`、`players`、`reviews` | 商店实体、AppID 公告、当前人数与公开游戏评价；`reviews` 免 Key，通过 AppID、语言和排序选当前评价页 |
 
 以下来源提供可执行的 `pages` 站点发现与原文读取，结果标记 `accessMethod:site-search`：`operationhong`、`matsuri`、`steamdb`、`vgmdb`、`novelupdates`、`kakuyomu`、`google-patents`、`j-platpat`、`nga`、`5ch`。它们同时登记到默认站点目录，可用 `--sources sites --platform 来源` 检索。站点可访问状态、页面正文及站内历史查询范围由实际响应确认。
 
 `laplace` 的 `local-records` 检索本地已导入记录。使用 `record --input 文件`，在请求中设置 `originSource:"laplace"`，保留实际内容、原始 URL、`method`、`observedAt` 和事件 `locator`。只检索已录制并实际导入的材料，沿用证据保留期与 `clean`。
 
 [Steam Web API 文档](https://steamapi.xpaw.me/)提供 Valve 接口参考；`steam` 执行已映射的 Valve 读操作，`steamdb` 返回该站页面发现与提取结果，两者分别报告实际取得的数据。
+
+## 实体、发行版本与公开评价
+
+Wikidata `search` 使用 `language`（默认 `zh`）、`type:item|property` 和 `offset`；`entity` 使用 `id` 和 `language`，未传 `id` 时将 query 作为 Q／P ID。`read wikidata:Q28865` 或实体 URL 取得记录；`wiki/Special:EntityData/Q28865.json?revision=修订号` 读取指定修订，保留原声明而不把实体关联视为独立事实证明。
+
+GitHub `releases` 必填 `repository:owner/repo`，`page` 默认 1；`tag` 与 `releaseId` 选择一项可定位单条发布。日期仅筛当前发布页，附件保留名称、大小、digest 和下载地址，实际附件内容仍需另读。仓库、代码和 issue 搜索使用各自接口及分页。
+
+VNDB `releases` 可按 `vnId`、`releaseId`、`steamAppId`、`externalUrl` 选择版本；没有身份参数时按 query 搜索发行标题，另可提供 `languages`、`platforms` 与 `page`。`read https://vndb.org/r...` 回读发行记录；主作品条目与某一发行版本的语言分别核对。
+
+Steam `reviews` 必填字符串 `appId`，query 不作评价正文全文搜索。可选 `languages`（默认 `["all"]`）、`sort:recent|updated|helpful|funny`、`reviewType:all|positive|negative`、`purchaseType:all|steam|non-steam`，以及 `pageSize`、`filterOfftopic`；日期映射到接口评价区间。返回的 `locator` 绑定 recommendationid，`research` 按该定位回读实际评价文本。匿名页可能缓存约十分钟，热门／搞笑排序不能当作完整遍历。
+
+```bash
+sera search "Python" --sources wikidata --operation search --params '{"language":"zh"}' --json
+sera read "wikidata:Q28865" --json
+sera search "发布说明" --sources github --operation releases --params '{"repository":"microsoft/TypeScript","page":1}' --json
+sera search "CLANNAD" --sources vndb --operation releases --params '{"steamAppId":"324160"}' --json
+sera search "公开评价" --sources steam --operation reviews --params '{"appId":"105600","languages":["schinese"],"sort":"recent"}' --json
+```
+
+这些动作的 `runs[].coverage.nextCursor` 返回 JSON 参数对象，解析后作为下一次 `params`；Steam 还会先续取当前上游页中的剩余评价。YouTube `videos` 的字符串游标传到 `params.pageToken`；Twitch 和 Instagram 媒体动作传到 `params.after`。一次空页或分页结束都不能证明资料库完整收录了目标时期。
 
 ## 多来源交叉核验
 
@@ -77,6 +104,8 @@ Filmot 命中字幕，Holodex 返回元数据；发现同一视频后继续核�
 ## 待补动作与正确入口
 
 缺少动作必填参数时，`search.plan.pendingActions` 列出 `source`、`operation`、`entrypoint` 和 `required`，该动作不发出请求。先按任务确认所需参数，再选择执行；待补项不是一次空结果。
+
+`entrypoint:"read"` 对应 CLI `read URL` 或 MCP `sera_read`，`operation` 选动作，`params` 只填写该动作 Schema 的附加参数。已知视频使用 `--content-type subtitle` 可选择实际字幕，使用 `video-metadata` 选择字段记录；URL 独立传入，`lang` 和 `mode` 等选项按实时注册表提供。字幕轨道列表、作品简介与实际字幕正文分别判断。
 
 `entrypoint:"comments"` 对应 CLI `comments URL` 或 MCP `sera_comments`，用于指定视频、歌曲或授权媒体的评论页；不能把该动作作为 `search --operation comments` 执行。Aicu 的同名原生动作属于另一份检索契约，应以渠道返回的 `entrypoint` 和 Schema 区分。
 

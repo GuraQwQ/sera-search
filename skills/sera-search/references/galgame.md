@@ -24,6 +24,8 @@ Galgame 使用独立 [catalogs/galgame.json](../../../catalogs/galgame.json) 站
 
 ```bash
 sera search "CLANNAD" --sources vndb,bangumi --json
+sera search "CLANNAD" --sources vndb --operation releases --params '{"steamAppId":"324160"}' --json
+sera search "公开评价" --sources steam --operation reviews --params '{"appId":"324160","languages":["schinese"]}' --json
 sera search "CLANNAD 感想" --sources sites --platform ymgal --group galgame --json
 sera research "visual novel text rendering" --sources sites --platform lemmasoft --group galgame --read-sources web --read-limit 3 --json
 sera channels --sources sites --group galgame --json
@@ -33,7 +35,7 @@ CLI 未在 PATH 时使用 `node <包根目录>/dist/cli.js`；沿用 `SERA_HOME`
 
 ## 核查语言、版本和来源
 
-1. VNDB／Bangumi 的作品 ID 用于消歧，继续追查制作方、发行物和对应语言；主条目与不同发行版本分别记录。
+1. VNDB／Bangumi 的作品 ID 用于消歧。VNDB `releases` 可按 `vnId`、`releaseId`、`steamAppId` 或 `externalUrl` 查询版本，`languages`／`platforms` 筛选，`read` 回读 `r...` 记录；主条目与不同发行版本的语言、商店关联分别核对。
 2. Steam／itch.io 的商店页核对发布日期、支持语言、版本说明及免费／试玩条件。社区发言和旧评论不替代当前官方语言或价格说明。
 3. 翻译项目的公告、补丁版本和作者说明只证明其明确写出的状态；更新日期与完整度分别确认。
 4. 评价、推荐和个人感想属于观点来源。角色／作品事实优先回到官方页面、对应游戏版本或原始制作资料。

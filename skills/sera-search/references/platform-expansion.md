@@ -12,7 +12,7 @@
 | 搜狗图片 | `sogou-images` 关键词图片入口 | 内部关键词接口或页面初始数据；反向图片输入选择 Lens／动画帧／插画匹配来源 |
 | Reddit | 平台帖子搜索与有限正文／评论读取；`sites` 可发现公开页面 | 专用平台路线按登录记录查询，正文读取保留当前后端内容范围 |
 | Bilibili | `bilibili` 原生视频候选和元数据，Aicu／Danmakus 等提供各自收录材料 | 原生 `--platform bilibili --operation videos`，`params.page` 选页；当前没有原生用户搜索动作 |
-| YouTube | `youtube` 原生、Filmot 字幕、Holodex 频道与直播／切片元数据 | 用 `channels --platform youtube` 发现动作，字幕、视频元数据与独立评论分别调用 |
+| YouTube | `youtube` 原生、OpenCLI 作品元数据／转录、Filmot 字幕、Holodex 频道与直播／切片元数据 | 用 `channels --platform youtube --json` 发现动作，字幕、视频元数据与独立评论分别调用 |
 | Twitch | 官方 Helix 分类、频道、直播、视频及剪辑；ChatArchive 已归档场次与聊天回放 | `--sources twitch --platform twitch --operation clips` 等；Token＋Client-Id。ChatArchive `replay` 仅筛回放当前页 |
 | Discord | 官方获授权服务器消息搜索、消息读取及有限上下文 | `--sources discord --platform discord --operation messages`；Bot Token、`guildId` 与可选 `channelId` |
 | Instagram／ins | 专业账号、近期媒体、hashtag、授权媒体评论；上游用户搜索仍可选 | `--platform instagram`，`operation` 选 `users`／`posts`／`hashtag`／`hashtag-top`／`self-media`，Token＋`accountId` |
@@ -29,10 +29,16 @@
 - **Reddit**：[OpenCLI read](https://github.com/jackwener/OpenCLI/blob/main/clis/reddit/read.js)有顶层数量、回复深度、每层回复预算、正文长度和 `expand-more`。SERA 当前只传 URL，尚未暴露这些参数。[Agent Reach](https://github.com/Panniantong/Agent-Reach/blob/main/agent_reach/channels/reddit.py)包含 public-web 路径；公开网页发现与账号后端是不同入口，不能概括为所有 Reddit 访问都需登录。
 - **Discord UI**：已安装版本的 [search](https://github.com/jackwener/OpenCLI/blob/v1.8.4/clis/discord-app/search.js)只读当前服务器／频道，消息截到 200 字符；[read](https://github.com/jackwener/OpenCLI/blob/v1.8.4/clis/discord-app/read.js)按 `--guild`／`--channel`／`--url` 定位，并返回消息 ID。[status](https://github.com/jackwener/OpenCLI/blob/v1.8.4/clis/discord-app/status.js)只证明桌面连接，不能充当登录证明。
 - **Discord 官方**：[Search Guild Messages](https://docs.discord.com/developers/resources/message.md#search-guild-messages)要求 `READ_MESSAGE_HISTORY`，受 `MESSAGE_CONTENT` intent 限制。SERA 在配置的服务器范围查询，202 响应按 `retry_after` 有界重试，结果保留消息 ID、频道 ID、回复与修改线索。`read` 获取消息和有限邻近上下文；消息新增／删除时，返回数量不能保证完整历史覆盖。
-- **Instagram**：[上游 search](https://github.com/jackwener/OpenCLI/blob/main/clis/instagram/search.js)搜索用户，`post` 是发布操作。原生来源调用官方 [Hashtag Search](https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-facebook-login/hashtag-search.md)与 [Business Discovery](https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-facebook-login/business-discovery.md)，面向专业账号及权限。hashtag 查询不请求被限制的用户名字段；Graph 分页链接转换成游标和下一页标志，避免保留 Token。`read` 的网页作品链接在授权账号首批媒体中解析，更旧对象可用 Graph 媒体 ID 链接。[评论](https://developers.facebook.com/documentation/instagram-platform/comment-moderation.md)限应用用户拥有的媒体。
-- **Twitch**：[Helix Reference](https://dev.twitch.tv/docs/api/reference/)要求 Client-Id 加 App／User Access Token。SERA 分别调用分类、频道、直播、视频、剪辑接口，返回预算内对象和游标线索；读取为元数据。频道搜索不是视频标题全文检索；[Chat EventSub](https://dev.twitch.tv/docs/chat/)是实时聊天路径，当前公开接口未验证可查询任意 VOD 历史聊天。
+- **Instagram**：[上游 search](https://github.com/jackwener/OpenCLI/blob/main/clis/instagram/search.js)搜索用户，`post` 是发布操作。原生来源调用官方 [Hashtag Search](https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-facebook-login/hashtag-search.md)与 [Business Discovery](https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-facebook-login/business-discovery.md)，面向专业账号及权限。媒体动作 `posts`／`self-media`／`hashtag`／`hashtag-top` 用 `params.after` 续页，`runs[].coverage.nextCursor` 保留真实游标；页内日期或关键词筛选为空仍可续查。Graph 分页 URL 转为游标和下一页标志，不保留 Token。`read` 的网页作品链接在授权账号首批媒体中解析，更旧对象可用 Graph 媒体 ID 链接。[评论](https://developers.facebook.com/documentation/instagram-platform/comment-moderation.md)限应用用户拥有的媒体。
+- **Twitch**：[Helix Reference](https://dev.twitch.tv/docs/api/reference/)要求 Client-Id 加 App／User Access Token。SERA 分别调用分类、频道、直播、视频、剪辑接口，所有既有动作以 `params.after` 接收 `runs[].coverage.nextCursor` 续页；读取为元数据。视频日期只过滤当前页，空页仍可能有续页；剪辑时间条件传原生接口。频道搜索不是视频标题全文检索；[Chat EventSub](https://dev.twitch.tv/docs/chat/)是实时聊天路径，当前公开接口未验证可查询任意 VOD 历史聊天。
 - **LinuxDo**：原生 `search.json` 查询帖子，`read` 返回指定楼层的 raw Markdown 或 cooked HTML。`comments` 根据主题楼层 ID 流取批次，按默认／`oldest` 顺序返回。`--parent` 使用结果中的真实帖子 ID 筛选直接回复；当前扫描批次可能没有匹配评论但仍有游标，可按预算继续扫描。
 - **小黑盒**：搜索按 Bing 中的实际帖子链接发现；原生 `/bbs/app/link/tree` 读取帖子和根评论，`/bbs/app/comment/sub/comments` 读取子评论。官网签名及访问条件可能变化，结果保留原始 ID 和范围；Cookie 可登记到登录记录，匿名样本已取得帖子与评论。
+
+## 视频元数据与字幕
+
+已知公开视频的读取也有独立 `entrypoint:read`：OpenCLI 的 YouTube `video`／`transcript` 和 B站 `video`／`subtitle` 按实时注册表映射。`read URL --sources opencli --content-type subtitle` 选择实际字幕，`--operation` 可显式指定动作，`--params '{"lang":"en"}'` 选择注册表支持的语言参数；YouTube 转录另支持 `mode:grouped|raw`。URL 在 `read` 首参，Schema 只描述附加参数。视频 `video` 的 field/value 记录保留为 `contentKind:metadata`，字幕为 `contentKind:subtitle`，轨道列表和作品简介分别核对。
+
+原生 YouTube `videos` 用 `params.pageToken` 续页，搜索覆盖见 `runs[].coverage`；`until` 是包含该日期的上界，对接口映射为次日零点。Key 和周期配额按实际账户处理。
 
 ## 独立评论动作
 
@@ -77,10 +83,10 @@
 | 中文动画、漫画、游戏、音乐条目 | `bangumi`、官方站 | [Bangumi API](https://github.com/bangumi/api/blob/master/open-api/api.yml)作品记录、别名、ID与关联资料 |
 | 动画、漫画、角色与制作人员 | `anilist`、`jikan`，官方站与资料库页面 | [AniList](https://docs.anilist.co/)和非官方 MAL 的 [Jikan](https://docs.api.jikan.moe/)记录；内容类型按结果确认 |
 | 漫画作品、作者、章节与语言线索 | `mangadex`，出版社与作品官网 | [MangaDex](https://api.mangadex.org/docs/)作品资料，元数据与章节图片分别处理 |
-| 视觉小说／Galgame | `vndb`、`bangumi`，官方设定与[社群目录](galgame.md) | [VNDB Kana](https://api.vndb.org/kana)作品／发行线索；用户列表、论坛内容与记录接口范围分别处理 |
+| 视觉小说／Galgame | `vndb`、`bangumi`，官方设定与[社群目录](galgame.md) | [VNDB Kana](https://api.vndb.org/kana)作品／发行版本，`releases` 支持 VN、发行 ID、Steam AppID 或外部商店链接；语言、平台与版本关系单独核对 |
 | 游戏机制、攻略、东方同人 | [独立游戏 Wiki 目录组](game-wikis.md)，Steam 已取得搜索命中 | 按游戏、语言与版本扩充实例；Liquipedia 单独适配调用要求 |
 | 插画、同人、社区评论 | Pixiv／豆瓣已有搜索签名；账号、内容范围和读取待核对 | 作品 ID、作者 ID 与官方作品站；讨论和作品资料分别保留来源 |
-| 其他百科与实体关系 | 常规 `wiki`、Wikidata 上游搜索、官方站点域名查询 | MediaWiki 实例按站配置；Wikidata 实体／关系单独查询；非 MediaWiki 百科按实际站点接口处理 |
+| 其他百科与实体关系 | 常规 `wiki`、原生 `wikidata`、官方站点域名查询 | Wikidata `search`／`entity` 及 `read wikidata:Q...` 取得实体声明、修订和外部 ID；MediaWiki 实例按站配置 |
 
 公开元数据不等于作品正文或所有章节均可获取。跨库去重优先作品 ID、MBID、DOI 或明确的关联 ID；复制的简介与同一 Wiki 转载不能算独立证据。Bangumi 要求包含应用／项目的 UA；AniList 有限流和按需使用条款；MusicBrainz 要求有意义的 UA 和请求节流，本次查询返回 503。各来源的登录、许可和响应范围按自己的接口处理。
 

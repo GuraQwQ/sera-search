@@ -4,11 +4,11 @@ import type { ApiConfig, Config, SearchHit, SearchRequest, Source, SourceName } 
 import { NotLoggedInError } from '../credentials.js';
 import { document, endpoint, hit, json, object, permitted, plain, rows, string } from './shared.js';
 import type { Row } from './shared.js';
-import { describeOperation } from './operations.js';
+import { describeOperation, reportCoverage, selectOperation } from './operations.js';
 
 const catalogMaterials: Record<string, Record<string, string[]>> = {
   skills: { search: ['skill'] }, bangumi: { all: ['book', 'anime', 'music', 'game', 'video'], book: ['book'], anime: ['anime'], music: ['music'], game: ['game'], real: ['video'] },
-  anilist: { anime: ['anime'], manga: ['manga'] }, jikan: { anime: ['anime'], manga: ['manga'] }, mangadex: { search: ['manga'] }, vndb: { search: ['novel'] },
+  anilist: { anime: ['anime'], manga: ['manga'] }, jikan: { anime: ['anime'], manga: ['manga'] }, mangadex: { search: ['manga'] }, vndb: { search: ['novel'], releases: ['game-release'] },
   musicbrainz: { recording: ['music'], artist: ['music'], release: ['music'] }, lastfm: { track: ['music'], artist: ['music'] },
   listenbrainz: { user: ['listening-statistics'] }, discogs: { all: ['music'], release: ['music'], master: ['music'], artist: ['music'], label: ['music'] },
 };
@@ -187,19 +187,56 @@ function mangadex(config: ApiConfig): Source {
 function vndb(config: ApiConfig): Source {
   const get = api(config, 'https://api.vndb.org/kana/', 'VNDB');
   const fields = 'id,title,alttitle,description,released,rating,length_minutes,image.url';
+  const releaseFields = 'id,title,alttitle,released,languages.lang,languages.title,languages.latin,languages.main,languages.mtl,platforms,vns.id,vns.title,vns.rtype,notes,patch,official,freeware,extlinks.url,extlinks.name,extlinks.id,extlinks.label';
+  const page = z.number().int().min(1).max(10000).default(1), searchParams = z.strictObject({ page });
+  const releaseParams = z.strictObject({ vnId: z.string().regex(/^v[1-9]\d*$/).optional(), steamAppId: z.string().regex(/^[1-9]\d*$/).optional(),
+    releaseId: z.string().regex(/^r[1-9]\d*$/).optional(), externalUrl: z.string().url().optional(), languages: z.array(z.string().regex(/^[a-z]{2,3}(?:-[A-Za-z]+)?$/)).min(1).max(20).optional(),
+    platforms: z.array(z.string().regex(/^[a-z0-9_-]+$/)).min(1).max(20).optional(), page });
+  const cap = capability('vndb', config, '公开视觉小说与发行版本目录', ['search', 'releases']);
+  cap.operations = cap.operations.map(operation => describeOperation(operation.name, operation.name === 'releases'
+    ? '按 VN ID、发行 ID、Steam AppID、外部商店链接或发行标题检索版本；保留语言、平台和商店关联' : '按关键词搜索视觉小说作品', operation.contentTypes, operation.name === 'releases' ? releaseParams : searchParams));
+  const releaseRecord = (item: Row) => ({ id: item.id, title: item.title, originalTitle: item.alttitle, released: item.released, languages: item.languages,
+    platforms: item.platforms, visualNovels: item.vns, notes: item.notes, patch: item.patch, official: item.official, freeware: item.freeware, externalLinks: item.extlinks });
   return {
-    capability: capability('vndb', config, '公开视觉小说目录'),
+    capability: cap,
     async search(request) {
-      selection(request, config, ['search'], 'search');
-      const value = await get('vn', request.signal, {}, { filters: ['search', '=', request.query], fields, sort: 'searchrank', results: Math.min(100, request.limit) });
+      const operation = selectOperation({ ...request, operation: request.operation ?? config.engine }, cap.operations);
+      const params = operation === 'releases' ? releaseParams.parse(request.params ?? {}) : searchParams.parse(request.params ?? {});
+      const filters: unknown[][] = [];
+      let titleSearch = false;
+      if (operation === 'releases') {
+        const input = params as z.output<typeof releaseParams>;
+        if (input.vnId) filters.push(['vn', '=', ['id', '=', input.vnId]]);
+        if (input.releaseId) filters.push(['id', '=', input.releaseId]);
+        if (input.steamAppId) filters.push(['extlink', '=', ['steam', input.steamAppId]]);
+        if (input.externalUrl) filters.push(['extlink', '=', input.externalUrl]);
+        if (!filters.length) {
+          if (!request.query.trim() || request.query.trim() === '*') throw new Error('VNDB 发行查询需要作品 ID、发行 ID、商店关联或发行标题');
+          filters.push(['search', '=', request.query]); titleSearch = true;
+        }
+        if (input.languages) filters.push(input.languages.length === 1 ? ['lang', '=', input.languages[0]] : ['or', ...input.languages.map(language => ['lang', '=', language])]);
+        if (input.platforms) filters.push(input.platforms.length === 1 ? ['platform', '=', input.platforms[0]] : ['or', ...input.platforms.map(platform => ['platform', '=', platform])]);
+      } else { filters.push(['search', '=', request.query]); titleSearch = true; }
+      if (request.since) filters.push(['released', '>=', request.since]);
+      if (request.until) filters.push(['released', '<=', request.until]);
+      const value = await get(operation === 'releases' ? 'release' : 'vn', request.signal, {}, { filters: filters.length === 1 ? filters[0] : ['and', ...filters],
+        fields: operation === 'releases' ? releaseFields : fields, sort: titleSearch ? 'searchrank' : 'id', results: Math.min(100, request.limit), page: params.page });
+      reportCoverage(request, `vndb:${operation}`, { completeness: 'partial', truncated: value.more === true, ...(value.more === true ? { nextCursor: JSON.stringify({ ...params, page: params.page + 1 }) } : {}),
+        limitations: ['数据库条目与发行日期可能不完整，语言、商店及版本关系按当前条目分别核对。'] });
+      if (operation === 'releases') return rows(value.results, 'VNDB 发行版本').filter(item => /^r[1-9]\d*$/.test(string(item.id))).flatMap(item => hit('vndb', {
+        title: string(item.alttitle) || string(item.title), url: `https://vndb.org/${item.id}`, snippet: [string(item.title), string(item.released), Array.isArray(item.platforms) ? item.platforms.join('、') : '', plain(item.notes)].filter(Boolean).join(' · '),
+        publishedAt: published(item.released), locator: { kind: 'record', id: string(item.id) }, metadata: { contentType: 'game-release', contentScope: 'release-metadata', record: releaseRecord(item) } }));
       return results('vndb', request, rows(value.results, 'VNDB').map(item => ({ title: string(item.title), url: `https://vndb.org/${item.id}`,
         snippet: plain(item.description), publishedAt: published(item.released), metadata: { id: item.id, record: item },
       })));
     },
     async read(url, signal) {
-      const id = numericId(url, ['vndb.org', 'www.vndb.org'], /^\/(v\d+)\/?$/, 'VNDB');
-      const item = rows((await get('vn', signal, {}, { filters: ['id', '=', id], fields, results: 1 })).results, 'VNDB')[0];
+      const id = numericId(url, ['vndb.org', 'www.vndb.org'], /^\/([vr]\d+)\/?$/, 'VNDB'), release = id.startsWith('r');
+      const item = rows((await get(release ? 'release' : 'vn', signal, {}, { filters: ['id', '=', id], fields: release ? releaseFields : fields, results: 1 })).results, 'VNDB')[0];
       if (!item) throw new Error('VNDB 未返回该作品记录');
+      if (item.id !== id) throw Object.assign(new Error('VNDB 返回记录与请求 ID 不一致'), { code: 'CONTENT_MISMATCH' });
+      if (release) return { ...record('vndb', `https://vndb.org/${id}`, string(item.alttitle) || string(item.title), releaseRecord(item), { id, contentType: 'game-release', contentScope: 'release-metadata' }),
+        locator: { kind: 'record' as const, id }, publishedAt: published(item.released) };
       return record('vndb', `https://vndb.org/${id}`, string(item.title), item);
     },
   };

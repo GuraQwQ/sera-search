@@ -12,7 +12,9 @@
 
 通常先使用默认的短片段，再按字段补关键词或展开需要的上下文。`read` 默认返回前2000字符；传 `--query <问题>` 或重复 `--keyword <词>` 后返回相关片段与标题位置，`selection` 区分 `focused` 和 `leading`。`fragments` 保留原文坐标；`contexts` 补充相关标题与表头，额外上下文最多为 `min(1000, length)` 个码点。全文仍可通过 `evidence.id` 读取。`--length` 控制返回字符预算，分页使用 `nextOffset`。坐标按 Unicode 码点计数，例如 `😀` 算一个字符。
 
-多个已知链接用 `read-many`（MCP：`sera_read_many`），最多20项、三路并行；重复 URL 合并请求，结果保持输入顺序，失败逐项返回。已知 Steam AppID、Niconico ID、DOI、PMID 可直接传给 `read` 或 `research`，无需先跑搜索。
+多个已知链接用 `read-many`（MCP：`sera_read_many`），最多20项、三路并行；重复 URL 合并请求，结果保持输入顺序，失败逐项返回。已知 Steam AppID、Niconico ID、DOI、PMID、`wikidata:Q28865` 这类明确实体 ID 可直接传给 `read` 或 `research`，无需先跑搜索。
+
+已知视频可按 `channels` 的 `entrypoint:read` 选择元数据或字幕，`read` 支持 `operation`、`params`、`contentTypes`。OpenCLI 的 YouTube `video` 和 B站 `video` 保留字段记录，类型为 `metadata`；`transcript`／`subtitle` 取得的实际文本类型为 `subtitle`，并保留接口给出的时间标记。不同动作、参数、材料和 `locator` 分别匹配缓存；同一 URL 的评论页不能充当视频正文或元数据。Wikidata 声明和外部 ID、VNDB 发行语言与商店关联仍属于各自数据库的记录，事实结论继续核对声明范围和原始出处。
 
 ```bash
 node dist/cli.js read-many "steam:105600" "sm8628149" --keyword "release_date" --keyword "firstRetrieve" --json

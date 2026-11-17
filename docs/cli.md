@@ -15,7 +15,7 @@ node dist/cli.js research "TypeScript 发行记录" --sources bing --read-source
 
 ## 发现连接器与访问条件
 
-`connectors` 导出结构化检索连接器定义，包含协议、检索动作、输入 Schema、字段映射、认证、费用和限速；专用评论和图片动作通过 `channels` 发现。只需相关来源时用 `--sources` 筛选。定义不包含账号凭据，实际可用状态继续查看 `capabilities` 与调用结果。
+`connectors` 导出结构化检索连接器定义，包含协议、检索动作、输入 Schema、字段映射、认证、费用和限速；专用读取、评论和图片动作通过 `channels` 发现。只需相关来源时用 `--sources` 筛选。定义不包含账号凭据，实际可用状态继续查看 `capabilities` 与调用结果。
 
 ```bash
 sera connectors --sources modrinth,scryfall --json
@@ -31,6 +31,16 @@ node dist/cli.js search "Bad Apple" --home ./.sera --sources bilibili --platform
 ```
 
 原生 B站搜索目前仅有 `videos`，`params.page` 选择结果页；当前没有用户搜索动作。未提供动作必填参数时，`search.plan.pendingActions` 返回 `source/operation/entrypoint/required`，该动作不请求。`entrypoint:"comments"` 应使用 `comments URL`／MCP `sera_comments`；把独立评论动作传给 `search` 会拒绝，视频候选不能替代评论。
+
+`entrypoint:"read"` 使用 `read URL --operation 动作 --params JSON`；URL 在首参，Schema 描述动作的 `params`。`--content-type` 也用于读取材料选择：`video-metadata` 选择视频信息，`subtitle` 选择实际字幕。OpenCLI 按实时注册表映射 YouTube `video`／`transcript`、B站 `video`／`subtitle`，并使用对应平台的已验证会话。未指定读取动作时按材料选择，视频默认取得元数据；字幕轨道列表不能作为字幕正文。
+
+```bash
+node dist/cli.js channels --sources opencli --platform youtube --json
+node dist/cli.js read "https://www.youtube.com/watch?v=VIDEO_ID" --sources opencli --operation transcript --content-type subtitle --params '{"lang":"en","mode":"raw"}' --json
+node dist/cli.js read "https://www.bilibili.com/video/BV17x411w7KC" --sources opencli --content-type subtitle --params '{"lang":"ai-zh"}' --json
+```
+
+读取动作、参数、材料与定位参与缓存匹配，元数据、不同语言字幕及评论各自回读。`read-many` 为本次每个 URL 使用同一组读取选项。
 
 智谱、豆包与 SerpAPI 的目标平台均为 `web`。智谱用 `--operation search_std`、`search_pro`、`search_pro_sogou` 或 `search_pro_quark`，豆包用 `web`、`finance`、`game`、`health` 或 `gov`，SerpAPI 网页检索用 `google` 或 `bing`；配置 `engine` 作为默认动作。
 
@@ -188,9 +198,11 @@ node dist/cli.js channels --sources opencli --platform zhihu --json
 node dist/cli.js clean --json
 ```
 
-`search`／`research` 还支持 `--github-type repositories|code|issues`、重复的 `--domain` 和 `--since`。域名、时间过滤按来源的实际接口映射。用户使用原生搜索语法时，应指定来源，避免将同一表达式直接套给不同引擎。
+`search`／`research` 还支持 `--github-type repositories|code|issues`、重复的 `--domain` 和 `--since`。GitHub 发布说明使用 `--operation releases --params '{"repository":"owner/repo"}'`，可用 `tag` 或 `releaseId` 指定单条。域名、时间过滤按来源的实际接口映射。用户使用原生搜索语法时，应指定来源，避免将同一表达式直接套给不同引擎。
 
 平台查询通过 `--sources` 选提供者、`--platform` 选目标、`--operation` 选动作。作品目录、音乐及社交 API 的细分使用动作，例如 MusicBrainz 的 `artist`、Twitch 的 `clips`；游戏 Wiki 和 Galgame 社区还需选择 `--group`。Bing RSS 不支持统一 `--since`，需要日期条件时选择支持的 API，或继续核对原文日期。
+
+`runs[].coverage.nextCursor` 按动作 Schema 续查：YouTube `videos` 传 `params.pageToken`；Twitch 既有查询动作及 Instagram 媒体动作传 `params.after`；GitHub、VNDB、Wikidata 和 Steam 评价返回的 JSON 参数对象可解析后作为下一次 `params`。`--until` 包含指定日期；YouTube 请求映射为次日零点的 `publishedBefore`。日期或关键词只在当前页筛选的动作，空页仍可能有续页，实际范围看 `coverage`。
 
 `comments` 支持 `--limit`、`--cursor`、`--parent` 和按来源定义的 `--order`；一次读取一个评论页，返回逐评论 ID、父子关系、正文、`scope` 与下一页游标，最多请求 100 条。图片动作最多请求 20 条，结果保留原图、承载页面和匹配类型等 `metadata`；图片链接、搜索缩略图与来源文章分别核对。
 
@@ -212,7 +224,7 @@ CLI 读取旧 `fields` 状态时先原子备份并迁移，也可以用 `migrate
 | `bing`、`sites` | 公开网页发现；站点目录用于选择域名，普通网页正文另选读取源 |
 | `brave`、`zhipu`、`doubao` | 使用已登记的 API Key；网页搜索，Brave 另有关键词图片；正文另选读取源 |
 | `serpapi` | Google／Bing 自然搜索、图片与 Lens；正文另选读取源 |
-| `github` | 读取公开仓库、代码搜索结果及 issue／PR 等资料；受 GitHub 权限和速率限制约束 |
+| `github` | 公开仓库、issue／PR、发布说明与附件元数据；代码搜索需要 Token，其他公开动作可匿名访问 |
 | `ghgrab` | 搜索使用 GitHub；仓库树与文件支持上游识别的 forge，完整工具由 `backend ghgrab` 发现 |
 | `scrapling` | 已知 URL 的网页提取；HTTP、浏览器与会话工具由 `backend scrapling` 发现 |
 | `metadata-parser` | 现成 HTML 的标题、meta 与声明 URL；可选增强 `web` 原始 HTML 读取 |
@@ -223,14 +235,15 @@ CLI 读取旧 `fields` 状态时先原子备份并迁移，也可以用 `migrate
 | `v2ex` | 公开帖子／节点资料读取；该 API 本身不是任意关键词全站搜索 |
 | `web` | Jina Reader 通用网页读取 |
 | `crossref`、`openalex`、`pubmed` | 公开书目与记录读取；摘要和元数据不能当成论文全文 |
+| `wikidata` | 名称检索和 Q／P 实体、声明、外部 ID、站点链接与指定修订；`read wikidata:Q28865` 直接读取 |
 | `wiki` | 七个默认 Wikimedia 站点和配置的 MediaWiki 实例；中英日 Wikipedia 与 `oldid` 指定修订读取 |
 | `wayback`、`archive` | 网页捕获索引／快照与馆藏元数据；捕获时间和原始发布日期分开 |
 | `linuxdo`、`heybox` | 原生主题／帖子与评论；访问权限、父楼层和游标按接口判断 |
 | 作品、音乐、技能与社交 API | 按资料对象与授权范围调用；详细入口见来源及平台指南 |
 
-当前注册 125 个内置来源 ID，配置可增加动态来源；`capabilities --sources` 可缩小查看范围。Agent Reach 的渠道从统一 CLI 的 `channels` 发现；OpenCLI 从实时注册表发现接受 `query` 或 `keyword` 位置参数的只读搜索命令。来源注册与登录记录说明可调用的路径，实际账号权限、额度与结果仍由请求确认。
+当前注册 126 个内置来源 ID，配置可增加动态来源；`capabilities --sources` 可缩小查看范围。Agent Reach 的渠道从统一 CLI 的 `channels` 发现；OpenCLI 从实时注册表发现接受 `query` 或 `keyword` 位置参数的只读搜索命令。来源注册与登录记录说明可调用的路径，实际账号权限、额度与结果仍由请求确认。
 
-`sera channels` 返回每个 `source/platform` 的 `search`、`read`、`configured`、`operations` 和入口信息；`operations[].entrypoint` 区分 `search`、`comments`、`images`，`inputSchema` 描述动作参数。平台关系不证明主体相同或数据独立，实际登录、材料和覆盖由调用结果确认。OpenCLI 的平台搜索覆盖比原文映射广；只有 `read: true` 的平台可直接通过该适配读取，其余可显式选择网页正文源。
+`sera channels --json` 返回每个 `source/platform` 的 `search`、`read`、`configured`、`operations` 和入口信息；`operations[].entrypoint` 区分 `search`、`read`、`comments`、`images`，`inputSchema` 描述动作参数。默认文本输出展示状态及待补动作，完整 Schema 使用 `--json` 查看。平台关系不证明主体相同或数据独立，实际登录、材料和覆盖由调用结果确认。OpenCLI 的平台搜索覆盖比原文映射广；只有 `read: true` 的平台可直接通过该适配读取，其余可显式选择网页正文源。
 
 Agent 的来源选择表位于项目 Skill；[领域指南](../skills/sera-search/references/domains.md)覆盖知识百科、语言与古籍、技术文档、学术医学、软件包、标准法规及公共数据。默认 Wiki 包含中英日 Wikipedia、中文 Wiktionary／Wikisource／Wikivoyage 和 Commons；其他公开 MediaWiki 实例可配置 `wiki.sites`。网页与 Wiki 历史版本、Internet Archive 馆藏见[档案指南](../skills/sera-search/references/archives.md)。
 

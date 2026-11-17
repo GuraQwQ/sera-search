@@ -24,6 +24,7 @@ export { createDirectorySources } from './providers/directory.js';
 export { createStructuredSource, connectorClient, connectorDefinitionSchema } from './connectors.js';
 export type { ConnectorDefinition, ConnectorOperation, ConnectorHooks, StructuredClient } from './connectors.js';
 export { createDeclaredSources } from './connector-registry.js';
+export { createWikidataSource } from './providers/wikidata.js';
 export { sourceConfig } from './source-config.js';
 export { sourceNameSchema } from './source-schema.js';
 export { accessState, policyFor } from './source-policy.js';

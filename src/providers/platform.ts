@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
+import { z } from 'zod';
 import type { Channel, CommandConfig, Config, ContentKind, Document, SearchHit, SearchRequest, Source, SourceName } from '../types.js';
 import { platformIdPattern } from '../types.js';
 import { credential, NotLoggedInError, notLoggedIn } from '../credentials.js';
+import { describeOperation } from './operations.js';
 
 const outputLimit = 4 * 1024 * 1024;
 const terminalCodes = new Set(['NEED_LOGIN', 'AUTH_REQUIRED', 'RATE_LIMITED', 'PLATFORM_BLOCKED', 'SECURITY_BLOCK', 'BUSY']);
@@ -147,6 +149,12 @@ function document(rows: unknown[], source: SourceName, url: string, platform: st
   const values = rows.map(object).filter((row): row is Record<string, unknown> => Boolean(row));
   const folded = values.length && values.every(row => typeof row.field === 'string' && 'value' in row)
     ? [Object.fromEntries(values.map(row => [String(row.field), row.value]))] : values;
+  if (action === 'video' && ['bilibili', 'youtube'].includes(platform) && folded.length) {
+    const first = folded[0]!, publicationTimeRaw = first.published_at ?? first.publish_time ?? first.publishDate;
+    const publishedAt = explicitDate(publicationTimeRaw);
+    return { source, url, title: text(first.title) || url, content: JSON.stringify(folded.length === 1 ? first : folded, null, 2), contentKind: 'metadata',
+      ...(publishedAt ? { publishedAt } : {}), metadata: { platform, action, contentType: 'video-metadata', contentScope: 'video-metadata', ...(publicationTimeRaw !== undefined ? { publicationTimeRaw } : {}) } };
+  }
   const incompleteKinds = new Set(['summary', 'snippet', 'search_results', 'track-only', 'tracks', 'subtitle_tracks', 'subtitle_track_list']);
   const body = folded.map(row => {
     const raw = object(row.raw);
@@ -154,6 +162,7 @@ function document(rows: unknown[], source: SourceName, url: string, platform: st
     const value = row.content ?? row.text ?? row.selftext;
     const content = typeof value === 'string' ? value : '';
     if (!content.trim()) return '';
+    if (action === 'subtitle' || action === 'transcript') return [text(row.timestamp) || [text(row.from ?? row.start), text(row.to ?? row.end)].filter(Boolean).join(' → '), text(row.speaker), content].filter(Boolean).join(' ');
     if (folded.length === 1) return content;
     return [text(row.title), checkedUrl(row.url), text(row.author), content].filter(Boolean).join('\n');
   }).filter(Boolean);
@@ -168,7 +177,7 @@ function document(rows: unknown[], source: SourceName, url: string, platform: st
   const hint = ['page', 'post', 'subtitle', 'metadata'].includes(declaredKind) ? declaredKind as ContentKind : scopeKinds[scope];
   // read 动作也可能返回字幕；只在缺少类型声明时按正文和平台推断。
   const isWebVtt = body.some(content => /^WEBVTT[^\r\n]*\r?\n/m.test(content) && /(?:^|\n)(?:\d{2}:)?\d{2}:\d{2}\.\d{3}\s+-->/.test(content));
-  const contentKind: ContentKind = hint ?? (isWebVtt || action === 'subtitle' || action === 'transcribe' ? 'subtitle'
+  const contentKind: ContentKind = hint ?? (isWebVtt || action === 'subtitle' || action === 'transcript' || action === 'transcribe' ? 'subtitle'
     : ['bilibili', 'youtube', 'douyin'].includes(platform) ? 'metadata'
     : platform === 'web' || platform === 'weixin' ? 'page' : 'post');
   const completeness = first.completeness_verified ?? raw?.completeness_verified;
@@ -238,13 +247,28 @@ function readable(site: string, entries: RegistryCommand[]): boolean {
   if (site === 'weixin') return entries.some(entry => entry.name === 'download'
     && ['url', 'output', 'download-images'].every(name => entry.args.some(arg => arg.name === name))
     && entry.args.every(arg => !arg.required || arg.name === 'url'));
-  const names = site === 'zhihu' ? ['question', 'answer-detail'] : site === 'xiaohongshu' ? ['note'] : site === 'bilibili' ? ['video']
-    : ['youtube', 'reddit', 'twitter', 'douyin', 'v2ex', 'github'].includes(site) ? ['read'] : [];
-  return entries.some(entry => {
+  return readCommands(site, entries).length > 0;
+}
+
+function readCommands(site: string, entries: RegistryCommand[]): RegistryCommand[] {
+  const names = site === 'zhihu' ? ['question', 'answer-detail'] : site === 'xiaohongshu' ? ['note'] : site === 'bilibili' ? ['video', 'subtitle']
+    : site === 'youtube' ? ['video', 'transcript'] : ['reddit', 'twitter', 'douyin', 'v2ex', 'github'].includes(site) ? ['read'] : [];
+  return entries.filter(entry => {
     const required = entry.args.filter(arg => arg.required);
-    return names.includes(entry.name) && required.length === 1 && required[0]!.positional === true
+    return entry.site === site && entry.access === 'read' && names.includes(entry.name) && required.length === 1 && required[0]!.positional === true
       && (site === 'zhihu' && entry.name === 'question' || /url|link|链接/i.test(required[0]!.help ?? ''));
   });
+}
+
+function readParameters(entry: RegistryCommand) {
+  return z.strictObject(Object.fromEntries(entry.args.filter(arg => !arg.positional && ['lang', 'mode'].includes(arg.name)).map(arg => [arg.name,
+    arg.name === 'mode' ? z.enum(['grouped', 'raw']).optional() : z.string().trim().min(1).max(100).optional()])));
+}
+
+function readOperation(entry: RegistryCommand) {
+  const subtitles = ['subtitle', 'transcript'].includes(entry.name);
+  return { ...describeOperation(entry.name, subtitles ? '读取该公开视频的字幕正文，可按语言选择' : '读取公开作品信息；视频元数据与字幕正文分别取得',
+    ['youtube', 'bilibili'].includes(entry.site) ? [subtitles ? 'subtitle' : 'video-metadata'] : ['post'], readParameters(entry), 'local'), entrypoint: 'read' as const };
 }
 
 function rows(value: unknown): unknown[] {
@@ -385,9 +409,11 @@ export function createPlatformSources(config: Config): Source[] {
           const commands = entries.filter(entry => entry.site === site);
           const search = commands.find(searchable);
           const read = readable(site, commands);
+          const operations = [...(search ? [describeOperation('search', '在此平台按关键词发现公开作品或页面', ['page'], z.strictObject({}), 'local')] : []), ...readCommands(site, commands).map(readOperation)];
           const requiresLogin = search ? needsOpenCliLogin(search) : commands.some(entry => needsOpenCliLogin(entry));
           const configured = !requiresLogin || Boolean(credential(config, 'opencli', site));
           return search || read ? [{ source: 'opencli', platform: site, search: Boolean(search), read, configured, status: configured ? requiresLogin ? '已记录' : '公开可用' : notLoggedIn,
+            operations, contentTypes: [...new Set(operations.flatMap(operation => operation.contentTypes))],
             ...(search ? { browser: search.browser, strategy: search.strategy } : {}) }] as Channel[] : [];
         });
       },
@@ -434,7 +460,7 @@ export function createPlatformSources(config: Config): Source[] {
         const result = hits(rows(await callOpenCli(args, signal)), 'opencli', request.limit, platform);
         return result.map(hit => ({ ...hit, metadata: { ...hit.metadata, browser: entry.browser, strategy: entry.strategy } }));
       },
-      read: async (url, suppliedSignal) => {
+      read: async (url, suppliedSignal, options) => {
         if (!opencli) throw new PlatformError('NEED_SETUP', '请配置 OpenCLI 的 command 与 args。');
         const signal = withTimeout(suppliedSignal);
         const site = siteForUrl(url);
@@ -446,9 +472,10 @@ export function createPlatformSources(config: Config): Source[] {
           return weixinDocument(config, opencli, entry, url, signal);
         }
         const targetUrl = new URL(url);
-        const name = site === 'zhihu' ? (/\/answer\/\d+/.test(targetUrl.pathname) ? 'answer-detail' : 'question')
-          : site === 'xiaohongshu' ? 'note' : site === 'bilibili' ? 'video' : 'read';
-        const entry = commands.find(row => row.site === site && row.name === name);
+        const subtitle = options?.contentTypes?.includes('subtitle');
+        const name = options?.operation ?? (site === 'zhihu' ? (/\/answer\/\d+/.test(targetUrl.pathname) ? 'answer-detail' : 'question')
+          : site === 'xiaohongshu' ? 'note' : site === 'bilibili' ? subtitle ? 'subtitle' : 'video' : site === 'youtube' ? subtitle ? 'transcript' : 'video' : 'read');
+        const entry = readCommands(site, commands).find(row => row.name === name);
         if (!entry) throw new PlatformError('UNSUPPORTED_COMMAND', `实时注册表没有可映射此链接的 ${site} 只读命令。`);
         if (needsOpenCliLogin(entry)) requireRecord(config, 'opencli', site);
         const positional = entry.args.filter(arg => arg.positional && arg.required);
@@ -461,7 +488,10 @@ export function createPlatformSources(config: Config): Source[] {
           throw new PlatformError('UNSUPPORTED_COMMAND', `${site}/${name} 未声明接受完整链接，请查看实时帮助。`);
         }
         requiredArguments(entry, [positional[0]!.name]);
-        const result = rows(await callOpenCli([site, name, '-f', 'json', '--', target], signal));
+        const params = readParameters(entry).parse(options?.params ?? {});
+        const args = [site, name, '-f', 'json'];
+        for (const [key, value] of Object.entries(params)) if (value !== undefined) args.push(`--${key}`, String(value));
+        const result = rows(await callOpenCli([...args, '--', target], signal));
         return document(result, 'opencli', url, site, name);
       },
     },

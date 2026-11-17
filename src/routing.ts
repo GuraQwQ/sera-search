@@ -12,6 +12,8 @@ export function specificSource(value: string, config: Config): SourceName | unde
   const declared = config.connectors?.find(item => item.read?.hosts.includes(url.hostname) && new RegExp(item.read.pattern).test(url.pathname));
   if (declared) return declared.id;
   if (host === 'weixin.sogou.com') return url.searchParams.get('type') === '1' ? 'wechat-official-account' : 'wechat-article-history';
+  if (host === 'ec.europa.eu' && url.pathname.startsWith('/eurostat/api/dissemination/statistics/1.0/data/')) return 'eurostat';
+  if (host === 'api.github.com' && url.pathname.startsWith('/repos/')) return 'github';
   if (host === 'www.ebi.ac.uk' || host === 'ebi.ac.uk') { if (url.pathname.includes('/chembl/')) return 'chembl'; if (url.pathname.includes('/europepmc/')) return 'europepmc'; }
   if (declaredReadHosts[host]) return declaredReadHosts[host];
   if (host === 'raw.githubusercontent.com' && /^\/Free-TV\/IPTV\//i.test(url.pathname) || config.iptv?.baseUrl && value.split('?')[0] === config.iptv.baseUrl.split('?')[0]) return 'iptv';
@@ -39,6 +41,8 @@ export function directTarget(query: string): string | undefined {
   if (/^10\.\d{4,9}\/\S+$/i.test(value)) return `https://doi.org/${value}`;
   const pmid = value.match(/^pmid:\s*(\d+)$/i);
   if (pmid) return `https://pubmed.ncbi.nlm.nih.gov/${pmid[1]}/`;
+  const wikidata = value.match(/^wikidata:\s*([QP][1-9]\d*)$/i);
+  if (wikidata) { const id = wikidata[1]!.toUpperCase(); return `https://www.wikidata.org/wiki/${id.startsWith('P') ? 'Property:' : ''}${id}`; }
   return undefined;
 }
 
@@ -58,6 +62,10 @@ export function taskRoute(query = '', intent?: Intent) {
 
 export function materialTypes(query: string): string[] {
   if (/^https?:\/\/\S+$/i.test(query.trim())) return [];
+  if (/Wikidata|维基数据|跨库.*(?:实体|标识)|外部数据库\s*ID/i.test(query)) return ['entity-metadata'];
+  if (/(?:Steam|游戏|商店).*(?:评价|评测|用户评论)|game.?reviews?/i.test(query)) return ['game-review'];
+  if (/(?:GitHub|仓库).*(?:发布说明|发行说明|release)|release.?notes/i.test(query)) return ['release'];
+  if (/(?:VNDB|视觉小说|galgame).*(?:发行版本|发行记录|语言版本)/i.test(query)) return ['game-release'];
   if (/直播.*(?:弹幕|聊天|发言|互动记录)|live.?chat/i.test(query)) return ['live-danmaku'];
   if (/直播.*(?:场次|记录|回放)|(?:直播间|Twitch).*记录|live.?session/i.test(query)) return ['live-session'];
   if (/(?:视频|B站|哔哩哔哩|bilibili|YouTube|油管).*评论|评论区|video.?comments/i.test(query)) return ['video-comment'];
@@ -88,6 +96,10 @@ export function materialTypes(query: string): string[] {
 }
 
 export function preferredSources(intent: Intent, query = '', types = materialTypes(query)): SourceName[] {
+  if (types.includes('entity-metadata')) return ['wikidata'];
+  if (types.includes('game-review')) return ['steam'];
+  if (types.includes('release')) return ['github'];
+  if (types.includes('game-release')) return ['vndb'];
   if (types.includes('live-danmaku')) return ['aicu', 'danmakus', 'laplace'];
   if (types.includes('video-danmaku') || types.includes('comment')) return ['aicu', 'bilibili'];
   if (types.includes('subtitle')) return ['filmot'];

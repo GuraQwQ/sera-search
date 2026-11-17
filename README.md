@@ -112,16 +112,16 @@ Full material remains available under its evidence ID. Passages retain Unicode o
 
 ## What you can search
 
-SERA currently registers **125 built-in source IDs** and exposes **18 MCP tools**. Configuration can add source IDs through structured connectors. Registration does not mean every source is available: operations depend on configuration, permissions, coverage, and the provider's actual response.
+SERA currently registers **126 built-in source IDs** and exposes **18 MCP tools**. Configuration can add source IDs through structured connectors. Registration does not mean every source is available: operations depend on configuration, permissions, coverage, and the provider's actual response.
 
 | Material | Example sources | What you get |
 |---|---|---|
 | Websites, news, and official documentation | Bing, Exa, Tavily, Brave, Zhipu, Doubao, SerpAPI | Candidate URLs and snippets; original text through supported reading backends |
-| Repositories, code, and platform content | GitHub, Agent Reach, OpenCLI, Bilibili, V2EX | Repositories, files, posts, or platform records through discoverable operations |
-| Academic records and encyclopedias | Crossref, OpenAlex, PubMed, MediaWiki | Bibliography, abstracts, page source, and specific revisions |
+| Repositories, code, and platform content | GitHub, Agent Reach, OpenCLI, Bilibili, V2EX | Repositories, release notes, files, posts, or platform records through discoverable operations |
+| Academic records and encyclopedias | Crossref, OpenAlex, PubMed, MediaWiki, Wikidata | Bibliography, abstracts, page source, revisions, and structured entity IDs |
 | Research artifacts and public data | OpenReview, Europe PMC, Hugging Face, UniProt, World Bank, Eurostat | Reviews, open research material, scientific records, and bounded data queries |
 | Subtitles, live archives, and event histories | Filmot, Holodex, Aicu, Danmakus, GH Archive | Matching segments, timestamps, event records, and reported collection limits |
-| Games, animation, music, and media records | Steam, Niconico, VNDB, Bangumi, MusicBrainz, and others | Object IDs, release records, specifications, credits, and metadata |
+| Games, animation, music, and media records | Steam, Niconico, VNDB, Bangumi, MusicBrainz, and others | Object IDs, release versions, public game reviews, specifications, credits, and metadata |
 | Historical pages and lost information | Wayback Machine, Internet Archive | Capture indexes, actual snapshots, collection metadata, and file listings |
 | Communities, comments, and image sources | LinuxDo, Heybox, YouTube, NetEase Music, image and reverse-image providers | Original posts, comment pages, reply relationships, hosting pages, and match clues |
 | Repository and browser tools, news feeds, and channel catalogs | ghgrab, Scrapling, metadata_parser, Google News RSS, Free-TV IPTV | Repository trees and files, browser responses, declared HTML metadata, RSS records, and channel metadata |
@@ -129,6 +129,8 @@ SERA currently registers **125 built-in source IDs** and exposes **18 MCP tools*
 | Known QQ resources and WeChat publications | QQ avatar and profile connectors, WeChat account and article connectors | Visible object metadata, article discovery, and authorized publication records within each operation's scope |
 
 Discover relevant connector definitions with `sera connectors --sources modrinth,scryfall --json`, or `node dist/cli.js connectors` from source. MCP clients use `sera_connectors`. Definitions describe operations, input schemas, access conditions, quotas, and limitations; configure `sources`, `connectorFiles`, or `connectors` to add or customize them. See the [connector guide](docs/connectors.md).
+
+For a known video, discover `channels --sources opencli --platform youtube --json`, then use the declared `read` operation to select video metadata or subtitles. `read --content-type subtitle` selects YouTube transcripts or Bilibili subtitles through the configured OpenCLI session. Release versions, reviews, and continuation parameters are documented in the [material and operation guide](docs/specialist-sources.md).
 
 Automatic routing prefers anonymous free access, then free authenticated access, then recurring free quotas; authenticated quota sources rank below anonymous quota sources. Paid operations and one-time trials are excluded. Mixed or unverified billing requires `freeTierConfirmed: true` in the source configuration after checking the account's free tier. This declaration does not cap the provider's billing; verify account settings and reported quotas.
 

@@ -2,9 +2,10 @@ import type { ApiConfig, Config, Source, Document } from '../types.js';
 import { date, decoded, document, endpoint, epoch, hit, json, object, permitted, response, rows, string, textResponse } from './shared.js';
 import { z } from 'zod';
 import { describeOperation, reportCoverage, selectOperation } from './operations.js';
+import { readSteamReviews, searchSteamReviews, steamReviewsAppId, steamReviewsOperation } from './steam-reviews.js';
 
 export interface SteamTarget {
-  kind: 'store' | 'news-list' | 'news' | 'players';
+  kind: 'store' | 'news-list' | 'news' | 'players' | 'reviews';
   appId?: string;
   newsId?: string;
   idKind?: 'feed' | 'event' | 'announcement';
@@ -12,6 +13,7 @@ export interface SteamTarget {
 
 export function steamTarget(value: string): SteamTarget | undefined {
   const url = new URL(value), host = url.hostname.replace(/^www\./, ''), path = url.pathname;
+  const reviews = steamReviewsAppId(value); if (reviews) return { kind: 'reviews', appId: reviews };
   if (host === 'api.steampowered.com' && /^\/ISteamUserStats\/GetNumberOfCurrentPlayers\/v0*1\/?$/i.test(path) && /^[1-9]\d*$/.test(url.searchParams.get('appid') ?? '')) return { kind: 'players', appId: url.searchParams.get('appid')! };
   if (host === 'api.steampowered.com' && /^\/ISteamNews\/GetNewsForApp\/v0*2\/?$/i.test(path) && /^[1-9]\d*$/.test(url.searchParams.get('appid') ?? '')) return { kind: 'news-list', appId: url.searchParams.get('appid')! };
   if (host === 'store.steampowered.com' && /^\/api\/appdetails\/?$/.test(path) && /^[1-9]\d*$/.test(url.searchParams.get('appids') ?? '')) return { kind: 'store', appId: url.searchParams.get('appids')! };
@@ -35,6 +37,7 @@ export function steamDocumentMatches(url: string, value: Document): boolean {
   if (!target) return true;
   const metadata = value.metadata ?? {};
   if (target.appId && String(metadata.appId ?? '') !== target.appId) return false;
+  if (target.kind === 'reviews') return ['review-page', 'review-record'].includes(String(metadata.contentScope));
   if (target.kind !== 'news') return metadata.contentScope === (target.kind === 'store' ? 'store-specification' : target.kind === 'players' ? 'current-player-count' : 'news-list');
   const field = target.idKind === 'feed' ? 'feedGid' : target.idKind === 'event' ? 'eventGid' : 'announcementGid';
   return metadata.contentScope === 'single-news-record' && String(metadata[field] ?? '') === target.newsId;
@@ -48,11 +51,12 @@ function steam(config: ApiConfig = {}): Source {
   const headers = { 'User-Agent': 'SERA', Accept: 'application/json' };
   const storeParams = z.strictObject({ region: z.string().regex(/^[A-Za-z]{2}$/).optional(), language: z.string().min(1).optional() });
   const appParams = z.strictObject({ appId: z.string().regex(/^[1-9]\d*$/) });
-  const operations = [describeOperation('store', '搜索 Steam 商店实体', ['game'], storeParams), describeOperation('players', '查询 AppID 当前在线人数', ['player-count'], appParams), describeOperation('news', '按 AppID 查询带时间范围的公告', ['news'], appParams)];
+  const operations = [describeOperation('store', '搜索 Steam 商店实体', ['game'], storeParams), describeOperation('players', '查询 AppID 当前在线人数', ['player-count'], appParams), describeOperation('news', '按 AppID 查询带时间范围的公告', ['news'], appParams), steamReviewsOperation];
   return {
-    capability: { name: 'steam', search: true, read: true, configured: config.enabled !== false, category: 'catalog', platforms: ['steam'], requiresLogin: false, loggedIn: true, operations, contentTypes: ['game', 'news', 'player-count'], accessMethod: 'api', requirement: '公开商店实体、规格、公告和当前人数；公告保留各自标识与时间' },
+    capability: { name: 'steam', search: true, read: true, configured: config.enabled !== false, category: 'catalog', platforms: ['steam'], requiresLogin: false, loggedIn: true, operations, contentTypes: ['game', 'news', 'player-count', 'game-review'], accessMethod: 'api', requirement: '公开商店实体、规格、公告、当前人数与作品评价；保留记录标识与时间' },
     async search(request) {
       const operation = selectOperation(request, operations);
+      if (operation === 'reviews') return searchSteamReviews(config, request);
       if (operation !== 'store') {
         const { appId } = appParams.parse(request.params ?? {}), players = operation === 'players';
         const publicUrl = new URL(players ? 'https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/' : 'https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/');
@@ -79,9 +83,10 @@ function steam(config: ApiConfig = {}): Source {
       const result = await json(url, { headers, signal: request.signal }, 'Steam 商店搜索');
       return rows(result.items, 'Steam 商店实体').filter(item => /^[1-9]\d*$/.test(String(item.id))).slice(0, request.limit).flatMap(item => hit('steam', { title: string(item.name), url: `https://store.steampowered.com/app/${item.id}/`, snippet: 'Steam 商店实体候选；名称与发行商需继续核对', metadata: { appId: item.id, imageUrl: item.tiny_image, contentScope: 'store-entity' } }));
     },
-    async read(url, signal) {
+    async read(url, signal, options) {
       const target = steamTarget(url), address = new URL(url);
       if (!target) throw steamError('Steam 读取需要商品、公告列表或单条公告链接', 'STEAM_URL_UNSUPPORTED', url);
+      if (target.kind === 'reviews') return readSteamReviews(config, url, signal, options);
       if (target.kind === 'players') {
         const api = endpoint(config, 'https://api.steampowered.com/', 'ISteamUserStats/GetNumberOfCurrentPlayers/v1/' + address.search);
         const result = await json(api, { headers, signal }, 'Steam 当前人数');
@@ -128,7 +133,7 @@ function steam(config: ApiConfig = {}): Source {
         return document('steam', url, `Steam ${target.appId} 公告`, JSON.stringify(data, null, 2), { contentKind: 'metadata', metadata: { appId: target.appId, contentScope: 'news-list', returned: items.length, ...(total !== undefined ? { total } : {}), truncated, ...(truncated && dates.length ? { nextEndDate: Math.min(...dates) - 1 } : {}), apiUrl: config.baseUrl ? undefined : api.href } });
       }
       if (data.steam_appid !== undefined && String(data.steam_appid) !== target.appId) throw steamError('Steam 作品AppID与请求不符', 'CONTENT_MISMATCH', url);
-      return document('steam', url, string(data.name), JSON.stringify(data, null, 2), { contentKind: 'metadata', metadata: { appId: target.appId, contentScope: 'store-specification', language: api.searchParams.get('l'), region: api.searchParams.get('cc'), releaseDateRaw: data.release_date } });
+      return document('steam', url, string(data.name), JSON.stringify(data, null, 2), { contentKind: 'metadata', metadata: { appId: target.appId, contentType: 'game', contentScope: 'store-specification', language: api.searchParams.get('l'), region: api.searchParams.get('cc'), releaseDateRaw: data.release_date } });
     },
   };
 }
@@ -153,7 +158,7 @@ function nicovideo(config: ApiConfig = {}): Source {
       const field = (name: string) => decoded(xml.match(new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)<\\/${name}>`))?.[1]?.replace(/^<!\[CDATA\[([\s\S]*)\]\]>$/, '$1'));
       const record = { videoId: id, title: field('title'), description: field('description'), firstRetrieve: field('first_retrieve'), userId: field('user_id'), userNickname: field('user_nickname'), viewCounter: field('view_counter'), watchUrl: field('watch_url') };
       if (!record.title) throw new Error('Niconico 视频缺少公开标题，未取得有效元数据');
-      return document('nicovideo', url, record.title, JSON.stringify(record, null, 2), { contentKind: 'metadata', publishedAt: date(record.firstRetrieve), metadata: { videoId: id, contentScope: 'video-metadata' } });
+      return document('nicovideo', url, record.title, JSON.stringify(record, null, 2), { contentKind: 'metadata', publishedAt: date(record.firstRetrieve), metadata: { videoId: id, contentType: 'video-metadata', contentScope: 'video-metadata' } });
     },
   };
 }

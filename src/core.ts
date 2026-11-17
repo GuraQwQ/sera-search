@@ -1,11 +1,12 @@
 import { sourceConfig } from './source-config.js';
+import { createHash } from 'node:crypto';
 import { accessState, applyPolicy, allowedOperations } from './source-policy.js';
 import { adaptStructuredSource } from './connectors.js';
 import { createDeclaredSources, configuredSources } from './connector-registry.js';
 import { sourceNameSchema } from './source-schema.js';
 import { z } from 'zod';
 import { sourceNames, platformIdPattern, intents } from './types.js';
-import type { Channel, Config, Source, SourceName, SearchOptions, SearchReport, SearchHit, AggregatedHit, SourceRun, ReadReport, ResearchReport, Evidence, CommentReport, ImageRequest, ReadOptions, BatchReadReport, ResearchOptions, ResearchState, SearchAttempt } from './types.js';
+import type { Channel, Config, Source, SourceName, SearchOptions, SearchReport, SearchHit, AggregatedHit, SourceRun, ReadReport, ResearchReport, Evidence, CommentReport, ImageRequest, ReadOptions, BatchReadReport, ResearchOptions, ResearchState, SearchAttempt, Document, SourceOperation } from './types.js';
 import { canonicalUrl, retrievalKey, publisher, textPage, focusText, EvidenceStore } from './evidence.js';
 import { errorMessage } from './config.js';
 import { createHttpSources } from './providers/http.js';
@@ -66,7 +67,7 @@ export const searchSchema = z.object({
 export const focusSchema = z.object({ query: z.string().trim().min(1).max(4096).optional(), keywords: z.array(z.string().trim().min(1).max(256)).max(32).optional(), length: z.number().int().min(1).max(20000).default(2000) });
 export const recordSchema = z.object({ url: z.string().url(), title: z.string().min(1), content: z.string().refine(value => Boolean(value.trim()), '外部材料需要实际取得的内容'), method: z.string().min(1), observedAt: z.string().datetime({ offset: true }), publishedAt: z.string().datetime({ offset: true }).optional(), contentKind: z.enum(['page', 'post', 'subtitle', 'metadata']).default('page'), metadata: z.record(z.string(), z.unknown()).optional(), originSource: sourceNameSchema.optional(), locator: locatorSchema.optional() });
 const readSettings = { timeoutMs: z.number().int().min(100).max(300000).optional(), browser: z.string().min(1).optional(), raw: z.boolean().default(false) };
-export const readSchema = focusSchema.extend({ sources: z.array(sourceNameSchema).min(1).optional(), refresh: z.boolean().default(false), maxAgeMs: z.number().finite().nonnegative().optional(), locator: locatorSchema.optional(), ...readSettings });
+export const readSchema = focusSchema.extend({ sources: z.array(sourceNameSchema).min(1).optional(), refresh: z.boolean().default(false), maxAgeMs: z.number().finite().nonnegative().optional(), locator: locatorSchema.optional(), contentTypes: searchSchema.shape.contentTypes, operation: searchSchema.shape.operation, params: searchSchema.shape.params, ...readSettings });
 export const researchSchema = searchSchema.extend({
   readLimit: z.number().int().min(0).max(20).default(5), readSources: z.array(sourceNameSchema).min(1).optional(),
   goals: z.array(z.string().trim().min(1).max(256)).max(100).optional(), state: researchStateSchema.optional(),
@@ -138,7 +139,9 @@ export class Engine {
     this.store = new EvidenceStore(config);
   }
 
-  capabilities(names?: SourceName[]) { return this.sources.filter(source => !names || names.includes(source.capability.name)).map(source => { const state = accessState(this.config, source); return { ...source.capability, priority: state.priority, automatic: state.automatic, status: source.capability.requiresLogin && !source.capability.loggedIn ? notLoggedIn : state.reason ?? (source.capability.configured ? '可调用' : '不可用'), availability: '调用时检查' }; }); }
+  private availableAction(source: Source) { return source.capability.operations?.map(operation => accessState(this.config, source, operation.name)).find(state => state.automatic) ?? accessState(this.config, source); }
+
+  capabilities(names?: SourceName[]) { return this.sources.filter(source => !names || names.includes(source.capability.name)).map(source => { const state = this.availableAction(source); return { ...source.capability, priority: state.priority, automatic: state.automatic, status: source.capability.requiresLogin && !source.capability.loggedIn ? notLoggedIn : state.reason ?? (source.capability.configured ? '可调用' : '不可用'), availability: '调用时检查' }; }); }
 
   connectors(names?: SourceName[]) { return this.sources.filter(source => !names || names.includes(source.capability.name)).flatMap(source => source.connector ? [source.connector] : []); }
 
@@ -150,16 +153,17 @@ export class Engine {
       if (!source) return { channels: [], run: this.unavailable(name, source) };
       try {
         signal.throwIfAborted();
-        const channels: Channel[] = source.channels && source.capability.configured && !this.config.connectors?.find(item => item.id === name)?.platforms ? await httpTrace.run(requests, () => source.channels!(signal)) : (source.capability.platforms ?? [name]).map(platform => ({ source: name,
+        const dynamic = source.capability.backend || ['agent-reach', 'opencli'].includes(name);
+        const channels: Channel[] = source.channels && source.capability.configured && (dynamic || !this.config.connectors?.find(item => item.id === name)?.platforms) ? await httpTrace.run(requests, () => source.channels!(signal)) : (source.capability.platforms ?? [name]).map(platform => ({ source: name,
           platform,
           search: source.capability.search && (!source.capability.searchPlatforms || source.capability.searchPlatforms.includes(platform)), read: source.capability.read, configured: source.capability.configured,
           comments: source.capability.comments, images: source.capability.images,
           operations: source.capability.operations, contentTypes: source.capability.contentTypes,
           browser: false, description: source.capability.requirement, status: source.capability.requiresLogin && !source.capability.loggedIn ? notLoggedIn : source.capability.configured ? '可调用' : '不可用' }));
-        const state = accessState(this.config, source);
+        const state = this.availableAction(source);
         const selected = (options.platform ? channels.filter(channel => channel.platform === options.platform || options.platform === 'academic' && source.capability.category === 'academic') : channels).map(channel => {
-          const operations = channel.operations ? [...channel.operations, ...(source.capability.operations ?? []).filter(operation => operation.entrypoint && operation.entrypoint !== 'search' && !channel.operations!.some(item => item.name === operation.name && item.entrypoint === operation.entrypoint))] : source.capability.operations;
-          return { ...channel, comments: channel.comments ?? source.capability.comments, images: channel.images ?? source.capability.images, access: source.capability.access, priority: state.priority, automatic: channel.configured && state.automatic, operations, ...(state.reason ? { status: state.reason } : {}) };
+          const operations = dynamic ? channel.operations ?? source.capability.operations : source.capability.operations ?? channel.operations;
+          return { ...channel, comments: channel.comments ?? source.capability.comments, images: channel.images ?? source.capability.images, contentTypes: dynamic ? channel.contentTypes ?? source.capability.contentTypes : source.capability.contentTypes ?? channel.contentTypes, access: source.capability.access, priority: state.priority, automatic: channel.configured && state.automatic, operations, ...(state.reason ? { status: state.reason } : {}) };
         });
         return { channels: selected, run: { source: name, status: selected.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: selected.length, network: networkReport(requests, this.config) } as SourceRun };
       } catch (error) { return { channels: [], run: { ...await this.failure(name, error, started, signal), network: networkReport(requests, this.config) } }; }
@@ -179,6 +183,26 @@ export class Engine {
   private accessFailure(source: Source, operation?: string): SourceRun | undefined {
     const state = source.capability.access ? accessState(this.config, source, operation) : undefined;
     return state?.code ? { source: source.capability.name, status: 'unavailable', code: state.code, message: state.reason, elapsedMs: 0, returned: 0 } : undefined;
+  }
+
+  private matchesMaterial(document: Document, requested?: string[]) {
+    if (!requested?.length) return true;
+    const declared = [document.metadata?.contentType, ...(Array.isArray(document.metadata?.contentTypes) ? document.metadata.contentTypes : [])].filter((value): value is string => typeof value === 'string');
+    const types = [document.contentKind, ...declared];
+    if (!declared.length && document.contentKind === 'metadata' && document.metadata?.objectKind !== 'comments') {
+      const source = this.sources.find(item => item.capability.name === document.source);
+      const materials = [...new Set(source?.capability.operations?.filter(item => !item.entrypoint || ['search', 'read'].includes(item.entrypoint)).flatMap(item => item.contentTypes) ?? source?.capability.contentTypes ?? [])];
+      // 单一结构化材料可由来源声明补充；元数据不能据此冒充页面、帖子或字幕正文。
+      if (materials.length === 1 && !['page', 'post', 'subtitle'].includes(materials[0]!)) types.push(materials[0]!);
+    }
+    return materialMatches(types, requested);
+  }
+
+  private matchesRead(document: Document, options: ReadOptions) {
+    if (document.metadata?.objectKind === 'comments' || !this.matchesMaterial(document, options.contentTypes)) return false;
+    if (document.source === 'web' && Boolean(document.metadata?.raw) !== Boolean(options.raw)) return false;
+    const previous = document.metadata?.readRequest as { operation?: string; params?: Record<string, unknown> } | undefined;
+    return previous?.operation === options.operation && JSON.stringify(previous?.params ?? {}) === JSON.stringify(options.params ?? {});
   }
 
   private async failure(source: SourceName, error: unknown, started: number, signal: AbortSignal): Promise<SourceRun> {
@@ -205,34 +229,39 @@ export class Engine {
   async search(options: SearchOptions, sourceOrder?: SourceName[]): Promise<SearchReport> {
     const input = searchSchema.parse(options);
     if (input.since && input.until && input.since > input.until) throw new Error('since 不能晚于 until');
+    const githubOperation = input.sourceOptions?.github?.operation ?? input.operation;
+    if (input.githubType && githubOperation && input.githubType !== githubOperation) throw Object.assign(new Error('githubType 与 GitHub operation 不一致，请选择同一操作'), { code: 'BAD_INPUT' });
     const material = input.contentTypes ?? materialTypes(input.query);
     const inferred = taskRoute(input.query, input.intent), route = material.length ? { ...inferred, reason: `按材料 ${material.join('、')} 匹配来源和动作；时间条件由动作解释` } : inferred;
     const supportsPlatform = (source: Source) => !input.platform || (source.capability.searchPlatforms ?? source.capability.platforms)?.includes(input.platform)
       || ['agent-reach', 'opencli'].includes(source.capability.name) || Boolean(input.sources?.includes(source.capability.name) && source.capability.backend && source.channels && !source.capability.searchPlatforms) || input.platform === 'academic' && source.capability.category === 'academic';
     const searchOperations = (source: Source) => source.capability.operations?.filter(item => !item.entrypoint || item.entrypoint === 'search');
-    const operationFor = (source: Source) => input.sourceOptions?.[source.capability.name]?.operation ?? input.operation
-      ?? searchOperations(source)?.filter(item => materialMatches(item.contentTypes, material)).sort((a, b) => a.contentTypes.length - b.contentTypes.length)[0]?.name;
+    const requestedOperationFor = (source: Source) => input.sourceOptions?.[source.capability.name]?.operation ?? input.operation ?? (source.capability.name === 'github' ? input.githubType : undefined);
     const parametersFor = (source: Source) => input.sourceOptions?.[source.capability.name]?.params ?? input.params ?? {};
     const requiredFor = (source: Source, operation: string | undefined) => {
       const schema = source.capability.operations?.find(item => item.name === operation)?.inputSchema;
       const properties = schema?.properties as Record<string, { default?: unknown }> | undefined;
       return ((schema?.required as string[] | undefined) ?? []).filter(key => parametersFor(source)[key] === undefined && properties?.[key]?.default === undefined);
     };
+    const operationFor = (source: Source) => requestedOperationFor(source) ?? searchOperations(source)?.filter(item => !material.length || materialMatches(item.contentTypes, material)).sort((a, b) => {
+      const ready = (operation: typeof a) => !requiredFor(source, operation.name).length && (!source.capability.access || accessState(this.config, source, operation.name).automatic);
+      return Number(ready(b)) - Number(ready(a)) || (material.length ? a.contentTypes.length - b.contentTypes.length : 0);
+    })[0]?.name;
     const pendingActions = this.sources.filter(source => (!input.sources || input.sources.includes(source.capability.name)) && supportsPlatform(source)).flatMap(source => {
       const requested = input.sourceOptions?.[source.capability.name]?.operation ?? input.operation;
       return (source.capability.operations ?? []).filter(operation => operation.entrypoint !== 'images' && (requested ? operation.name === requested : material.length ? materialMatches(operation.contentTypes, material) : Boolean(input.sources || input.platform) && operation === searchOperations(source)?.[0])).flatMap(operation => {
         const required = requiredFor(source, operation.name);
-        return operation.entrypoint === 'comments' || required.length ? [{ source: source.capability.name, operation: operation.name, entrypoint: operation.entrypoint ?? 'search' as const, required }] : [];
+        return operation.entrypoint === 'comments' || operation.entrypoint === 'read' || required.length ? [{ source: source.capability.name, operation: operation.name, entrypoint: operation.entrypoint ?? 'search' as const, required }] : [];
       });
     });
     const selected = input.sources ? [...new Set(input.sources)] : input.at ? ['wayback' as SourceName] : input.platform
       ? this.sources.filter(source => source.capability.configured && source.search && supportsPlatform(source)).map(source => source.capability.name)
-       : [...new Set<SourceName>([...(sourceOrder ?? preferredSources(route.intent, input.query, material)), ...(material.length || input.operation ? this.sources.filter(source => source.search && source.capability.configured).map(source => source.capability.name) : ['agent-reach' as const])])].filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search && (name !== 'sites' || Boolean(input.platform))));
+       : [...new Set<SourceName>([...(sourceOrder ?? preferredSources(route.intent, input.query, material)), ...Object.keys(input.sourceOptions ?? {}), ...(material.length || input.operation || input.githubType ? this.sources.filter(source => source.search && source.capability.configured).map(source => source.capability.name) : ['agent-reach' as const])])].filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search && (name !== 'sites' || Boolean(input.platform))));
     const matching = selected.filter(name => {
       const source = this.sources.find(source => source.capability.name === name);
       if (!source) return Boolean(input.sources);
       const operations = searchOperations(source), operation = operationFor(source), effective = operations?.find(item => item.name === operation) ?? (!operation ? operations?.[0] : undefined);
-      if (!input.sources && !material.length && !operation && relatedPlatforms[name]) return false;
+      if (!input.sources && !material.length && !requestedOperationFor(source) && relatedPlatforms[name]) return false;
       if (material.length && operations?.length && !operation && !materialMatches(operations.flatMap(item => item.contentTypes), material)) return false;
       return (input.sources || supportsPlatform(source)) && (input.sources || input.at || !material.length || materialMatches(effective?.contentTypes ?? operations?.flatMap(item => item.contentTypes) ?? source.capability.contentTypes, material))
         && (!operation || input.sources || Boolean(effective)) && !requiredFor(source, effective?.name).length;
@@ -355,14 +384,15 @@ export class Engine {
     for (const name of input.sources ?? [fallback]) {
       const source = this.sources.find(item => item.capability.name === name), started = Date.now(), signal = this.signal(options.signal), requests: NetworkRequest[] = [];
       if (!source?.comments || !source.capability.configured) { runs.push(this.unavailable(name, source)); continue; }
-      const restricted = this.accessFailure(source); if (restricted) { runs.push(restricted); continue; }
+      const restricted = this.accessFailure(source, 'comments'); if (restricted) { runs.push(restricted); continue; }
       try {
         const page = await httpTrace.run(requests, () => source.comments!({ ...input, url, signal }));
         runs.push({ source: name, status: page.comments.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: page.comments.length, network: networkReport(requests, this.config) });
         if (!page.comments.length) return { status: 'empty', page, runs };
         const result: CommentReport = { status: 'ok', page, runs };
         try {
-          const saved = await this.store.save({ source: name, url: page.url, title: '评论：' + page.url, content: JSON.stringify(page, null, 2), contentKind: 'post', metadata: { objectKind: 'comments', scope: page.scope, truncated: page.truncated, nextCursor: page.nextCursor } });
+          const identity = createHash('sha256').update(JSON.stringify([page.scope, input.parentId ?? null, input.cursor ?? null, input.order ?? null, input.limit])).digest('hex');
+          const saved = await this.store.save({ source: name, url: page.url, title: '评论：' + page.url, content: JSON.stringify(page, null, 2), contentKind: 'post', locator: { kind: 'record', id: `comments:${identity}` }, metadata: { objectKind: 'comments', scope: page.scope, truncated: page.truncated, nextCursor: page.nextCursor } });
           const { content: _content, ...metadata } = saved;
           result.evidence = metadata;
         } catch (error) { result.status = 'partial'; result.cacheWarnings = [errorMessage(error, this.config)]; }
@@ -390,8 +420,7 @@ export class Engine {
     const view = (content: string) => input.query || input.keywords?.length ? focusText(content, input, input.length) : { ...textPage(content, 0, input.length), selection: 'leading' as const };
     if (!input.refresh) {
       try {
-        const cached = await this.store.find(url, eligible, input.maxAgeMs, evidence => evidence.metadata?.bodyAvailable !== false
-          && (evidence.source !== 'web' || Boolean(evidence.metadata?.raw) === input.raw)
+        const cached = await this.store.find(url, eligible, input.maxAgeMs, evidence => evidence.metadata?.bodyAvailable !== false && this.matchesRead(evidence, input)
           && (evidence.source !== 'steam' || steamDocumentMatches(url, evidence)), input.locator);
         if (cached && cached.source !== 'external') {
           const { content, ...metadata } = cached;
@@ -408,17 +437,20 @@ export class Engine {
         if (input.sources) runs.push(this.unavailable(name, source));
         continue;
       }
-      const restricted = this.accessFailure(source); if (restricted) { runs.push(restricted); continue; }
+      const operation = input.operation ?? source.capability.operations?.filter(item => item.entrypoint === 'read' && materialMatches(item.contentTypes, input.contentTypes ?? [])).sort((a, b) => a.contentTypes.length - b.contentTypes.length)[0]?.name;
+      const restricted = this.accessFailure(source, operation ?? 'read'); if (restricted) { runs.push(restricted); continue; }
       const started = Date.now(), signal = this.signal(options.signal, input.timeoutMs), requests: NetworkRequest[] = [];
       try {
         signal.throwIfAborted();
-        const document = await httpTrace.run(requests, () => source.read!(url, signal, input));
+        if (input.operation && !source.channels && !source.capability.operations?.some(item => item.name === input.operation && item.entrypoint === 'read')) throw Object.assign(new Error('此动作不能通过 read 执行，请查看 channels 的 entrypoint'), { code: 'UNSUPPORTED_OPERATION' });
+        const observed = await httpTrace.run(requests, () => source.read!(url, signal, { ...input, operation }));
+        const document: Document = { ...observed, metadata: { ...observed.metadata, ...(input.operation || Object.keys(input.params ?? {}).length ? { readRequest: { operation: input.operation, params: input.params ?? {} } } : {}) } };
         if (input.locator && (document.locator?.kind !== input.locator.kind || document.locator?.id !== input.locator.id)) throw Object.assign(new Error('读取结果未定位到请求的片段或事件'), { code: 'CONTENT_MISMATCH' });
         if (typeof document.content !== 'string' || !document.content.trim()) throw new Error('读取结果没有正文或有效元数据');
         if (name === 'steam' && !steamDocumentMatches(url, document)) throw Object.assign(new Error('读取对象与目标 URL 不匹配，需要对应公告或原文'), { code: 'CONTENT_MISMATCH' });
-        const bodyAvailable = document.metadata?.bodyAvailable !== false;
-        runs.push({ source: name, status: bodyAvailable ? 'ok' : 'error', elapsedMs: Date.now() - started, returned: bodyAvailable ? 1 : 0, network: networkReport(requests, this.config),
-          ...(!bodyAvailable ? { code: 'CONTENT_INCOMPLETE', message: '已取得页面框架或标题，目标正文尚未取得' } : {}) });
+        const bodyAvailable = document.metadata?.bodyAvailable !== false, materialAvailable = this.matchesMaterial(document, input.contentTypes);
+        runs.push({ source: name, status: bodyAvailable && materialAvailable ? 'ok' : 'error', elapsedMs: Date.now() - started, returned: bodyAvailable && materialAvailable ? 1 : 0, network: networkReport(requests, this.config),
+          ...(!bodyAvailable ? { code: 'CONTENT_INCOMPLETE', message: '已取得页面框架或标题，目标正文尚未取得' } : !materialAvailable ? { code: 'CONTENT_MISMATCH', message: '已取得内容尚不能确认为请求的材料类型' } : {}) });
         try {
           const evidence = await this.store.save(document);
           if (!input.locator && document.locator) {
@@ -430,15 +462,15 @@ export class Engine {
             catch (error) { cacheWarnings.push(`URL 缓存未保存：${errorMessage(error, this.config)}`); }
           }
           const { content: _content, ...metadata } = evidence;
-          if (!bodyAvailable) {
-            partial = { status: 'partial', evidence: metadata, ...view(document.content), cacheHit: false, runs, nextSteps: ['页面框架已保存，继续使用公开结构化 API、原始正文入口或其他允许的读取来源。'], ...(cacheWarnings.length ? { cacheWarnings } : {}) };
+          if (!bodyAvailable || !materialAvailable) {
+            partial = { status: 'partial', evidence: metadata, ...view(document.content), cacheHit: false, runs, nextSteps: [!bodyAvailable ? '页面框架已保存，继续使用公开结构化 API、原始正文入口或其他允许的读取来源。' : '已取得材料已保存，请继续选择提供目标材料类型的读取入口。'], ...(cacheWarnings.length ? { cacheWarnings } : {}) };
             continue;
           }
           return { status: document.metadata?.partial ? 'partial' : 'ok', evidence: metadata, ...view(document.content), cacheHit: false, runs, ...(cacheWarnings.length ? { cacheWarnings } : {}) };
         } catch (error) {
           cacheWarnings.push(`证据保存未完成：${errorMessage(error, this.config)}`);
           const { content, ...metadata } = document;
-          if (!bodyAvailable) {
+          if (!bodyAvailable || !materialAvailable) {
             partial = { status: 'partial', document: metadata, ...view(content), cacheHit: false, runs, cacheWarnings, nextSteps: ['目标正文尚未取得，请继续使用其他允许的入口。'] };
             continue;
           }
@@ -457,9 +489,13 @@ export class Engine {
   }
 
   async readMany(urls: string[], options: ReadOptions = {}): Promise<BatchReadReport> {
-    const addresses = z.array(z.string().min(1)).min(1).max(20).parse(urls).map(url => canonicalUrl(directTarget(url) ?? url));
+    const inputs = z.array(z.string()).min(1).max(20).parse(urls);
     readSchema.parse(options);
-    const unique = [...new Set(addresses)], reports = new Map<string, ReadReport>();
+    const addresses = inputs.map(url => {
+      try { return canonicalUrl(directTarget(url) ?? url); }
+      catch (error) { return { status: 'error' as const, runs: [{ source: options.sources?.[0] ?? 'web', status: 'error' as const, elapsedMs: 0, returned: 0, code: 'BAD_INPUT', message: errorMessage(error, this.config) }] }; }
+    });
+    const unique = [...new Set(addresses.filter((value): value is string => typeof value === 'string'))], reports = new Map<string, ReadReport>();
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(3, unique.length) }, async () => {
       while (next < unique.length) {
@@ -467,7 +503,7 @@ export class Engine {
         reports.set(url, await this.read(url, options));
       }
     }));
-    const documents = addresses.map(url => reports.get(url)!);
+    const documents = addresses.map(value => typeof value === 'string' ? reports.get(value)! : value);
     return { status: documents.every(item => item.status === 'ok') ? 'ok' : documents.every(item => item.status === 'error') ? 'error' : 'partial', documents };
   }
 
@@ -507,14 +543,45 @@ export class Engine {
       ? state.nextQuery : input.state && focus ? focusedQuery : input.query);
     if (stagnant && state.nextAction === 'change-query' && previous.query === query && input.discoveryQuery === undefined) query = subject?.aliases?.[0] ?? input.aliases?.[0] ?? shortSeed;
     const route = taskRoute(query, criterion?.intent ?? input.intent);
+    const requestedMaterials = input.contentTypes ?? materialTypes(query);
     const preferred = preferredSources(route.intent, query, input.contentTypes ?? materialTypes(query)).filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search));
     const used = new Set(state.history.filter(round => round.query === query && (round.newItems ?? round.newUrls) + round.newEvidence === 0).flatMap(round => round.sources));
     const suggested = state.nextAction === 'change-source' ? state.nextSources?.filter(name => preferred.includes(name)) ?? [] : [];
     const sourceOrder = [...new Set([...suggested, ...preferred.filter(name => !used.has(name)), ...preferred.filter(name => used.has(name))])];
-    const direct = !input.at && !input.since && !input.until && !input.operation && !input.sources?.includes('wayback') && (route.intent !== 'historical' || route.directUrl?.startsWith('https://web.archive.org/web/')) ? route.directUrl : undefined;
+    const readDeclarations = new Map<SourceName, SourceOperation[]>(), readDiscoveryFailures: SourceRun[] = [];
+    const directSource = route.directUrl ? specificSource(route.directUrl, this.config) : undefined;
+    const directPlatform = input.platform ?? (directSource ? this.sources.find(source => source.capability.name === directSource)?.capability.platforms?.[0] : undefined);
+    if (route.directUrl) for (const name of input.readSources ?? input.sources ?? []) {
+      const source = this.sources.find(item => item.capability.name === name), requested = input.sourceOptions?.[name]?.operation ?? input.operation;
+      if (!requested || !source?.channels || !source.read || !source.capability.configured || source.capability.operations?.some(operation => operation.name === requested)
+        || !(source.capability.backend || ['agent-reach', 'opencli'].includes(name))) continue;
+      const discovered = await this.channels({ sources: [name], platform: directPlatform, signal: options.signal });
+      const operations = discovered.channels.flatMap(channel => channel.operations ?? []);
+      readDeclarations.set(name, operations);
+      if (!operations.some(operation => operation.name === requested)) readDiscoveryFailures.push({ source: name, status: 'unavailable', returned: 0, elapsedMs: 0, code: discovered.runs.find(run => run.code)?.code ?? 'UNSUPPORTED_OPERATION', message: '当前平台没有声明此原文读取动作，请查看 channels 的 entrypoint' });
+    }
+    const readOptionsFor = (source: SourceName) => {
+      const scoped = input.sourceOptions?.[source], operation = scoped?.operation ?? input.operation;
+      return operation && [...(this.sources.find(item => item.capability.name === source)?.capability.operations ?? []), ...(readDeclarations.get(source) ?? [])].some(item => item.name === operation && item.entrypoint === 'read')
+        ? { operation, params: scoped?.params ?? input.params } : {};
+    };
+    const explicitRead = (input.readSources ?? input.sources ?? []).some(source => Boolean(readOptionsFor(source).operation));
+    const readRequest = (source: SourceName) => Boolean(readOptionsFor(source).operation || readDiscoveryFailures.some(run => run.source === source));
+    const operationSources = input.sources ?? input.readSources ?? [];
+    const searchSources = input.sources?.some(source => !readRequest(source)) ? input.sources.filter(source => !readRequest(source)) : input.sources;
+    const structuredSearch = input.githubType || input.operation && (operationSources.length ? operationSources.some(source => !readRequest(source)) : !explicitRead)
+      || Object.keys(input.params ?? {}).length && !explicitRead && !readDiscoveryFailures.length
+      || Object.entries(input.sourceOptions ?? {}).some(([source, settings]) => (settings?.operation || Object.keys(settings?.params ?? {}).length) && !readRequest(source));
+    const direct = !input.at && !input.since && !input.until && !structuredSearch && !input.sources?.includes('wayback') && (route.intent !== 'historical' || route.directUrl?.startsWith('https://web.archive.org/web/')) ? route.directUrl : undefined;
+    const accepted = (evidence: Document) => {
+      const allowed = input.readSources ?? input.sources;
+      if (allowed && !allowed.includes(evidence.source) && !(evidence.source === 'external' && allowed.includes(String(evidence.metadata?.originSource)))) return false;
+      return this.matchesRead(evidence, { contentTypes: requestedMaterials, raw: input.raw, ...readOptionsFor(evidence.source) });
+    };
     const documents: ReadReport[] = [];
     const knownEvidence = new Set(state.evidenceIds), examined = new Set(state.examinedUrls.map(canonicalUrl));
     const examinedItems = new Set(state.examinedItems ?? state.examinedUrls.map(canonicalUrl));
+    for (const evidence of initial.evidence.values()) if (!accepted(evidence)) { examined.delete(canonicalUrl(evidence.url)); examinedItems.delete(canonicalUrl(evidence.url)); examinedItems.delete(retrievalKey(evidence)); }
     for (const candidate of state.candidates) if (!initial.evidence.has(candidate.evidenceId)) { examined.delete(canonicalUrl(candidate.url)); examinedItems.delete(candidate.itemKey ?? canonicalUrl(candidate.url)); }
     for (const assessment of state.assessments) if (assessment.citations.some(item => !initial.evidence.has(item.evidenceId))) {
       for (const url of state.subjects.find(item => item.id === assessment.subjectId)?.urls ?? []) { examined.delete(canonicalUrl(url)); for (const key of examinedItems) if (key === canonicalUrl(url) || key.startsWith(canonicalUrl(url) + '\n')) examinedItems.delete(key); }
@@ -538,16 +605,16 @@ export class Engine {
           || [subject?.name, ...(subject?.aliases ?? [])].some(name => name && `${evidence.title}\n${evidence.content}`.toLowerCase().includes(name.toLowerCase()));
         const at = evidence.locator?.occurredAt ?? evidence.publishedAt;
         const outside = at && (input.since && at.slice(0, 10) < input.since || input.until && at.slice(0, 10) > input.until);
-        if (!belongs || outside || reviewed.has(evidence.id) || evidence.metadata?.bodyAvailable === false) continue;
+        if (!belongs || outside || reviewed.has(evidence.id) || evidence.metadata?.bodyAvailable === false || !accepted(evidence)) continue;
         const { content, ...metadata } = evidence;
         documents.push({ status: 'ok', evidence: metadata, ...focusText(content, { query: criterion?.description, keywords: input.keywords ?? criterion?.keywords }, input.length), cacheHit: true, runs: [] });
         addCandidate(metadata);
       }
     }
-    let search: SearchReport = { query, status: 'ok', hits: [], runs: [], route };
+    let search: SearchReport = { query, status: 'ok', hits: [], runs: [], route, plan: { strategy: input.strategy ?? 'fallback', contentTypes: requestedMaterials, selected: [], stopReason: 'exhausted' } };
     if ((!initial.coverage.complete || input.refresh) && !documents.length && !options.signal?.aborted) {
       search = direct ? { ...search, hits: mergeHits([{ source: specificSource(direct, this.config) ?? input.readSources?.[0] ?? 'web', title: direct, url: direct, snippet: '', metadata: { directTarget: true } }]) }
-        : await this.search({ ...input, query, intent: route.intent, excludeItems: [...discoveredItems], signal: options.signal }, sourceOrder);
+        : await this.search({ ...input, sources: searchSources, query, intent: route.intent, excludeItems: [...new Set([...(input.excludeItems ?? []), ...discoveredItems])], signal: options.signal }, sourceOrder);
       const available = search.hits.filter(hit => !waiting.has(hit.url) && (input.refresh || !examinedItems.has(retrievalKey(hit)))
         && hit.retrievals.some(item => item.metadata?.relevance?.status !== 'irrelevant'));
       const score = (hit: AggregatedHit) => Math.max(...hit.retrievals.map(item => item.metadata?.relevance?.score ?? 0));
@@ -561,18 +628,34 @@ export class Engine {
         while (next < selected.length && !options.signal?.aborted) {
           const index = next++, hit = selected[index]!;
           const native = hit.sources.filter(name => this.sources.some(source => source.capability.name === name && source.read));
-          read[index] = await this.read(hit.url, { sources: input.readSources ?? input.sources ?? [...new Set<SourceName>([...native, specificSource(hit.url, this.config) ?? 'web', 'web', 'scrapling'])], signal: options.signal, locator: hit.locator,
+          const readers = input.readSources ?? input.sources ?? [...new Set<SourceName>([...native, specificSource(hit.url, this.config) ?? 'web', 'web', 'exa', 'tavily', 'scrapling', 'agent-reach', 'opencli'])];
+          const settings = { signal: options.signal, locator: hit.locator, contentTypes: requestedMaterials.length ? requestedMaterials : undefined,
             query: criterion?.description ?? input.query, keywords: input.keywords ?? criterion?.keywords, length: input.length,
-            refresh: input.refresh, timeoutMs: input.timeoutMs, browser: input.browser, raw: input.raw });
+            refresh: input.refresh, timeoutMs: input.timeoutMs, browser: input.browser, raw: input.raw };
+          if (readers.some(name => readOptionsFor(name).operation || readDiscoveryFailures.some(run => run.source === name))) {
+            const runs: SourceRun[] = [];
+            let result: ReadReport | undefined;
+            for (const name of readers) {
+              const unavailable = readDiscoveryFailures.find(run => run.source === name);
+              if (unavailable) { runs.push(unavailable); continue; }
+              const value = await this.read(hit.url, { ...settings, sources: [name], ...readOptionsFor(name) });
+              runs.push(...value.runs);
+              if (!result || value.status === 'ok' || !result.content && value.content) result = value;
+              if (value.status === 'ok' || options.signal?.aborted) break;
+            }
+            read[index] = { ...(result ?? { status: 'error' as const }), runs };
+          } else read[index] = await this.read(hit.url, { ...settings, sources: readers });
         }
       }));
       for (const [index, document] of read.entries()) {
         if (!document) continue;
         documents.push(document);
         const url = selected[index]!.url, key = retrievalKey(selected[index]!);
-        if (document.content !== undefined && (document.evidence ?? document.document)?.metadata?.bodyAvailable !== false) {
+        const material = document.evidence ?? document.document;
+        if (document.evidence) state.evidenceIds.push(document.evidence.id);
+        if (document.content !== undefined && material && material.metadata?.bodyAvailable !== false && accepted({ ...material, content: document.content })) {
           examined.add(url); examinedItems.add(key); failures.delete(url);
-          if (document.evidence) { examined.add(document.evidence.url); state.evidenceIds.push(document.evidence.id); addCandidate(document.evidence); }
+          if (document.evidence) { examined.add(document.evidence.url); addCandidate(document.evidence); }
         } else {
           const retryAt = document.runs.map(run => run.retryAt).filter((value): value is string => Boolean(value)).sort().at(-1);
           failures.set(url, { url, codes: document.runs.map(run => run.code ?? run.status), ...(retryAt ? { retryAt } : {}) });
@@ -617,7 +700,7 @@ export class Engine {
     const warnings = [...new Set(inspected.warnings)];
     return { ...search, status: search.status !== 'error' && documents.some(item => item.status !== 'ok') ? 'partial' : search.status,
       documents, state, coverage: inspected.coverage, ...(warnings.length ? { stateWarnings: warnings } : {}),
-      comparison: { documentsRead: documents.filter(item => item.content !== undefined && (item.evidence ?? item.document)?.metadata?.bodyAvailable !== false).length,
+      comparison: { documentsRead: documents.filter(item => { const material = item.evidence ?? item.document; return item.content !== undefined && material && material.metadata?.bodyAvailable !== false && accepted({ ...material, content: item.content }); }).length,
         publisherGroups: [...grouped(item => publisher(item.url))].map(([publisher, evidenceIds]) => ({ publisher, evidenceIds })),
         duplicateContent: [...grouped(item => item.contentHash)].filter(([, ids]) => ids.length > 1).map(([contentHash, evidenceIds]) => ({ contentHash, evidenceIds })),
         groups: inspected.groups, progress, nextSteps } };

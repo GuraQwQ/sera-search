@@ -109,24 +109,26 @@ flowchart LR
 
 ## 可以查什么
 
-当前注册 **125 个内置来源 ID**，MCP 提供 **18 个工具**；配置还可增加动态来源 ID。注册数量不代表全部可用，具体动作由配置、权限、收录范围与上游响应确认。
+当前注册 **126 个内置来源 ID**，MCP 提供 **18 个工具**；配置还可增加动态来源 ID。注册数量不代表全部可用，具体动作由配置、权限、收录范围与上游响应确认。
 
 账号与地理扩展通过 `install --components aliens-eye,sherlock,gods-eye-view` 按需安装。Agent 用 `backend 来源` 发现真实工具，自行选择站点、关联信号、区域及后续动作；账号候选、关联依据和地理查询结果可保存为证据。使用方法见[账号与地理扩展](../../docs/extensions.md)。
 
 | 资料 | 入口示例 | 返回内容 |
 |---|---|---|
 | 网页、新闻与官方文档 | Bing、Exa、Tavily、Brave、智谱、豆包、SerpAPI | 候选链接、摘要；支持的后端继续提取原文 |
-| 仓库、代码与平台内容 | GitHub、Agent Reach、OpenCLI、B站、V2EX | 仓库、文件、帖子或平台记录，按实时渠道选择动作 |
-| 学术与百科 | Crossref、OpenAlex、PubMed、MediaWiki | 书目、摘要、页面原文与指定修订 |
+| 仓库、代码与平台内容 | GitHub、Agent Reach、OpenCLI、B站、V2EX | 仓库、发布说明、文件、帖子或平台记录，按实时渠道选择动作 |
+| 学术与百科 | Crossref、OpenAlex、PubMed、MediaWiki、Wikidata | 书目、摘要、页面原文、指定修订与结构化实体 ID |
 | 科研材料与公共数据 | OpenReview、Europe PMC、Hugging Face、UniProt、World Bank、Eurostat | 公开评审、开放研究材料、科学记录与限定范围的数据查询 |
 | 字幕、直播归档与历史事件 | Filmot、Holodex、Aicu、Danmakus、GH Archive | 命中片段、时间戳、事件记录和实际收录限制 |
-| 游戏、动漫、音乐与作品资料 | Steam、Niconico、VNDB、Bangumi、MusicBrainz 等 | 对象 ID、发行记录、规格、署名与元数据 |
+| 游戏、动漫、音乐与作品资料 | Steam、Niconico、VNDB、Bangumi、MusicBrainz 等 | 对象 ID、发行版本、公开游戏评价、规格、署名与元数据 |
 | 历史网页与失传信息 | Wayback、Internet Archive | 捕获索引、实际快照、馆藏及文件目录 |
 | 社区、评论与图片来源 | LinuxDo、小黑盒、YouTube、网易云、图片与反向识图接口 | 原帖、评论分页、父子回复、图片承载页及匹配线索 |
 | 仓库与浏览器工具、新闻和频道目录 | ghgrab、Scrapling、metadata_parser、Google News RSS、Free-TV IPTV | 仓库树与文件、浏览器响应、HTML 声明元数据、RSS 记录与频道资料 |
 | 已知 QQ 资源与微信公众号 | QQ 头像／资料连接器、公众号／文章连接器 | 指定对象当前可见元数据、文章发现与授权账号已发表记录，按动作区分范围 |
 
 用 `sera connectors --sources modrinth,scryfall --json` 查看相关连接器定义；源码运行使用 `node dist/cli.js connectors`，MCP 使用 `sera_connectors`。定义包含动作、输入 Schema、认证、费用、配额及限制；配置入口为 `sources`、`connectorFiles` 与 `connectors`，详见[连接器指南](../../docs/connectors.md)。
+
+已有视频链接时，先用 `channels --sources opencli --platform youtube --json` 查看实际 `read` 动作，再选择视频元数据或字幕。`read --content-type subtitle` 通过已配置的 OpenCLI 会话读取 YouTube 转录或 B站字幕。发行版本、游戏评价与分页参数见[材料与动作指南](../../docs/specialist-sources.md)。
 
 自动选路依次优先匿名免费、认证免费和周期免费配额；认证加配额的来源低于匿名配额来源。付费必需动作和一次性试用排除；混合计费或计费未确认的入口需先核对账号免费档，再配置 `freeTierConfirmed: true`。该声明不能限制服务端账单，仍需核对账号设置与实际配额。
 

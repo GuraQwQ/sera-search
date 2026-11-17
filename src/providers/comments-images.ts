@@ -3,10 +3,11 @@ import { z } from 'zod';
 import { NotLoggedInError, notLoggedIn } from '../credentials.js';
 import { object, rows, string, plain, date, epoch, hit, endpoint, response, json, document, permitted, fetchResponse } from './shared.js';
 import type { Row } from './shared.js';
-import { describeOperation, selectOperation } from './operations.js';
+import { describeOperation, reportCoverage, selectOperation } from './operations.js';
 
 const browserHeaders = { 'User-Agent': 'Mozilla/5.0' };
 const id = (value: unknown) => typeof value === 'string' || typeof value === 'number' ? String(value) : '';
+const youtubeSearchParams = z.strictObject({ pageToken: z.string().min(1).optional() });
 
 function requireKey(config: ApiConfig) { if (!config.apiKey) throw new NotLoggedInError(); }
 
@@ -304,7 +305,7 @@ function capability(name: SourceName, config: ApiConfig, requirement: string, ca
   const loggedIn = !key || Boolean(config.apiKey);
   const reverse = ['trace-moe', 'saucenao'].includes(name), imageOperation = reverse ? 'reverse' : 'keyword';
   const operations = category === 'catalog' ? [describeOperation(name === 'youtube' ? 'videos' : 'songs',
-    name === 'youtube' ? '按关键词搜索视频元数据' : '按关键词搜索歌曲元数据', [name === 'youtube' ? 'video' : 'music'], z.strictObject({}))]
+    name === 'youtube' ? '按关键词搜索视频元数据，pageToken 继续下一页' : '按关键词搜索歌曲元数据', [name === 'youtube' ? 'video' : 'music'], name === 'youtube' ? youtubeSearchParams : z.strictObject({}))]
     : [{ ...describeOperation(imageOperation, reverse ? '按图片 URL 匹配作品来源' : '按关键词搜索图片', ['image'], reverse
       ? z.strictObject({ imageUrl: z.string().url(), query: z.string().trim().min(1).optional(), limit: z.number().int().min(1).max(20).default(5) })
       : z.strictObject({ query: z.string().trim().min(1), limit: z.number().int().min(1).max(20).default(5) })), entrypoint: 'images' as const }];
@@ -330,9 +331,14 @@ export function createActionSources(config: Config): Source[] {
     { capability: youtubeCapability,
       comments: request => youtubeComments(youtube, request),
       async search(request) {
-        selectOperation(request, youtubeCapability.operations!); z.strictObject({}).parse(request.params ?? {});
+        selectOperation(request, youtubeCapability.operations!); const params = youtubeSearchParams.parse(request.params ?? {});
         if (!permitted(request.domains, 'www.youtube.com')) return [];
-        const data = await youtubeApi(youtube, 'search', { part: 'snippet', type: 'video', q: request.query, maxResults: String(request.limit), ...(request.since ? { publishedAfter: request.since + 'T00:00:00Z' } : {}) }, request.signal);
+        const data = await youtubeApi(youtube, 'search', { part: 'snippet', type: 'video', q: request.query, maxResults: String(request.limit),
+          ...(request.since ? { publishedAfter: request.since + 'T00:00:00Z' } : {}),
+          ...(request.until ? { publishedBefore: new Date(Date.parse(request.until + 'T00:00:00Z') + 86400000).toISOString() } : {}),
+          ...(params.pageToken ? { pageToken: params.pageToken } : {}) }, request.signal);
+        const nextCursor = string(data.nextPageToken) || undefined;
+        reportCoverage(request, 'YouTube 关键词视频搜索单页', { completeness: 'partial', truncated: Boolean(nextCursor), ...(nextCursor ? { nextCursor } : {}), limitations: ['按关键词返回的视频元数据；搜索结果不能证明视频库或目标时期已完整枚举，续页将 nextCursor 作为 params.pageToken'] });
         return rows(data.items, 'YouTube 搜索').flatMap(item => { const snippet = object(item.snippet, 'YouTube 视频'), video = string(object(item.id, 'YouTube 视频 ID').videoId);
           return hit('youtube', { title: string(snippet.title), url: `https://www.youtube.com/watch?v=${video}`, snippet: string(snippet.description), publishedAt: date(snippet.publishedAt), metadata: { videoId: video, channelId: snippet.channelId, contentKind: 'metadata' } }); }).slice(0, request.limit);
       },
@@ -340,7 +346,7 @@ export function createActionSources(config: Config): Source[] {
         const video = youtubeId(url), data = await youtubeApi(youtube, 'videos', { part: 'snippet,contentDetails,statistics', id: video }, signal);
         const item = rows(data.items, 'YouTube 视频')[0]; if (!item) throw new Error('YouTube 未返回该视频的元数据');
         const snippet = object(item.snippet, 'YouTube 视频');
-        return document('youtube', `https://www.youtube.com/watch?v=${video}`, string(snippet.title), JSON.stringify(item, null, 2), { contentKind: 'metadata', publishedAt: date(snippet.publishedAt) });
+        return document('youtube', `https://www.youtube.com/watch?v=${video}`, string(snippet.title), JSON.stringify(item, null, 2), { contentKind: 'metadata', publishedAt: date(snippet.publishedAt), metadata: { contentType: 'video-metadata' } });
       } },
     { capability: neteaseCapability,
       comments: request => neteaseComments(netease, request),

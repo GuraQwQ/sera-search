@@ -11,7 +11,7 @@ sera connectors --sources deps-dev --json
 sera search zod --sources deps-dev --operation dependencies --params '{"system":"npm","version":"4.6.7"}' --json
 ```
 
-`connectors` 与 MCP `sera_connectors` 导出检索连接器声明，仅含 `search` 动作定义；专用评论与图片动作看 `channels`。`channels.operations[].inputSchema` 是实际动作参数契约，`entrypoint` 指定调用入口。声明不含账户凭据。支持自定义来源 ID，新增标准来源无需修改 CLI、MCP 或证据格式。
+`connectors` 与 MCP `sera_connectors` 导出检索连接器声明，仅含 `search` 动作定义；专用读取、评论与图片动作看 `channels`。`channels.operations[].inputSchema` 是实际动作参数契约，`entrypoint` 指定调用入口。声明不含账户凭据。支持自定义来源 ID，新增标准来源无需修改 CLI、MCP 或证据格式。
 
 ## 提供者、平台与动作
 
@@ -19,7 +19,7 @@ sera search zod --sources deps-dev --operation dependencies --params '{"system":
 
 这种关联表示提供者处理同平台材料，不证明主体相同或来源独立。自动选路需要明确材料或动作才考虑第三方关联源。缺少必填参数的动作列入 `search.plan.pendingActions`，其中 `source`、`operation`、`entrypoint`、`required` 说明下一步；该动作不发送请求。
 
-渠道的 `entrypoint:"comments"` 应交给 CLI `comments URL` 或 MCP `sera_comments`，`entrypoint:"images"` 使用 `image-search`／`reverse-image` 或 `sera_images`，`search` 使用 `search`／`research`。动作名不能替代入口判断，同名动作以各来源的 Schema 为准。`live-chat`／`live-danmaku`、`price-history`／`game-price-history` 可匹配相同材料类别，实际协议与参数仍由提供者定义。
+渠道的 `entrypoint:"read"` 使用 CLI `read URL --operation 动作 --params JSON` 或 MCP `sera_read`，URL 作为独立字段，动作 Schema 描述 `params`；`entrypoint:"comments"` 使用 `comments URL` 或 `sera_comments`，`entrypoint:"images"` 使用 `image-search`／`reverse-image` 或 `sera_images`，`search` 使用 `search`／`research`。动作名不能替代入口判断，同名动作以各来源的 Schema 为准。`live-chat`／`live-danmaku`、`price-history`／`game-price-history` 可匹配相同材料类别，实际协议与参数仍由提供者定义。
 
 ## 配置与认证
 
@@ -154,6 +154,7 @@ Exa、Tavily、Brave、SerpAPI 等免费与已购余额共用接口的来源，�
 
 | 领域 | 来源与主要动作 |
 |---|---|
+| 实体与版本 | `wikidata` 名称检索／实体声明、外部 ID 与修订；`github` 仓库／代码／issue／发布说明；`vndb` 作品／发行版本；`steam` 商店／公告／公开游戏评价 |
 | 网页与软件历史 | `common-crawl` 批次 URL 索引／WARC 回读；`gh-archive` 单小时事件；`wikimedia-analytics` 阅读量；`ecosystems` 包与版本；`deps-dev` 包、版本与依赖图 |
 | 网络测量 | `ripestat` 概要／路由历史；`ooni` 公开测量；`urlscan` 已有公开扫描 |
 | 科学数据 | `rcsb-pdb` 结构目录／序列匹配；`uniprot` 蛋白；`chembl` 分子／靶点／活性；`pubchem` 化合物；`materials-project` 材料；`nasa-exoplanets` 行星；`hepdata` 实验数据；`gbif` 分类／出现记录；`inaturalist` 分类／观察；`earthdata-cmr` 集合／粒度元数据 |
