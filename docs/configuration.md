@@ -131,6 +131,8 @@ node .\dist\cli.js logout exa --home ./.sera
 
 `login --from-env` 与 MCP `sera_login.fromEnv` 更新 Key 时保留已有有效记录中的 `clientId` 等辅助字段，适合轮换 Twitch Token。显式凭据 JSON（CLI `--stdin` 或 MCP `credentials`）完整替换该条凭据，需包含本次要保存的所有字段。
 
+同一服务进程中的凭据更新按单个文件排队，旧请求的认证失败只影响它实际使用的记录。取消登录或退出会阻止尚未开始的文件操作；已完成的凭据保存会保留，后续启用步骤可重试。
+
 登录记录是本地 JSON，包含 API Key 或 API 账号，需保管数据目录。读取旧配置时会先备份，再迁移其中的凭据；`migrations/` 备份也可能包含旧凭据。迁移可重复执行，已登记的凭据优先。
 
 Discord 在配置中填写 `guildId`，可选 `channelId`；Instagram 填写专业账号 `accountId`。Twitch 的 `clientId` 可随 Token 登记。MusicBrainz 等有站点调用要求的来源可设置 `userAgent`。网易云使用用户已经部署的 [api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)服务，配置 `netease.baseUrl` 并启用该来源；SERA 负责调用接口。

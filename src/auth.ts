@@ -12,9 +12,11 @@ function validate(source: SourceName, platform?: string) {
   if (platform) z.string().regex(platformIdPattern).parse(platform);
 }
 
-async function enable(config: Config, source: SourceName) {
+async function enable(config: Config, source: SourceName, signal: AbortSignal) {
+  signal.throwIfAborted();
   if (!config.configFile) return;
   await mutateJsonFile(config.configFile, input => {
+    signal.throwIfAborted();
     const key = source === 'agent-reach' ? 'agentReach' : source;
     const custom = !sourceNames.includes(source as typeof sourceNames[number]) || structuredSourceNames.includes(source as typeof structuredSourceNames[number])
       || config.connectors?.some(item => item.id === source) || Boolean(input.sources && typeof input.sources === 'object' && Object.hasOwn(input.sources, source));
@@ -26,14 +28,15 @@ async function enable(config: Config, source: SourceName) {
 }
 
 export async function login(config: Config, source: SourceName, credentials?: SavedCredentials, platform?: string, signal = AbortSignal.timeout(platform ? 300000 : config.timeoutMs), options: { sessionOnly?: boolean; preserveCredentials?: boolean } = {}) {
+  signal.throwIfAborted();
   validate(source, platform);
   if (platform) {
     if (credentials && Object.keys(credentials).length) throw new Error('该平台通过已配置后端的官方登录页面验证；API 账号请使用对应 API 来源');
     const provider = new Engine(config).sources.find(item => item.capability.name === source);
     if (!provider?.login) throw new Error('此来源没有平台登录入口');
     await provider.login(platform, signal, options);
-    const result = await saveCredential(config.home, source, {}, platform);
-    await enable(config, source);
+    const result = await saveCredential(config.home, source, {}, platform, signal);
+    await enable(config, source, signal);
     return { ...result, status: '已登录' };
   }
   if (!(apiSources as readonly string[]).includes(source) && !config.connectors?.some(item => item.id === source) && !config.sources?.[source]) {
@@ -45,20 +48,21 @@ export async function login(config: Config, source: SourceName, credentials?: Sa
     const previous = (await loadCredentials(config.home))[source];
     credentials = credentialsSchema.parse({ ...sourceConfig(config, source), ...(previous?.status === 'active' ? previous.credentials : {}), ...credentials });
   }
-  const result = await saveCredential(config.home, source, credentials);
-  await enable(config, source);
+  const result = await saveCredential(config.home, source, credentials, undefined, signal);
+  await enable(config, source, signal);
   return result;
 }
 
 export async function logout(config: Config, source: SourceName, platform?: string, signal = AbortSignal.timeout(config.timeoutMs)) {
+  signal.throwIfAborted();
   validate(source, platform);
   let backend: string | undefined;
   if (platform) {
     const provider = new Engine(config).sources.find(item => item.capability.name === source);
     try { if (provider?.logout) await provider.logout(platform, signal); }
-    catch { backend = '本地登录记录已清除；平台会话需要在对应后端或官网退出'; }
+    catch { signal.throwIfAborted(); backend = '本地登录记录已清除；平台会话需要在对应后端或官网退出'; }
   }
-  return { ...(await removeCredential(config.home, source, platform)), ...(backend ? { backend } : {}) };
+  return { ...(await removeCredential(config.home, source, platform, signal)), ...(backend ? { backend } : {}) };
 }
 
 export async function authStatus(config: Config, source?: SourceName, platform?: string) {
