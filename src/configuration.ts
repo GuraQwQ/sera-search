@@ -18,7 +18,7 @@ export const configurationInputSchema = z.strictObject({
 
 export async function configureSources(config: Config, request: unknown = {}) {
   const input = configurationInputSchema.parse(request);
-  const location = { home: config.home, file: config.configFile, catalog: config.catalogFile, group: config.group };
+  const location = { home: config.home, file: config.configFile, catalog: config.catalogOverride, group: config.group };
   const file = config.configFile;
   let current: Config;
   const changed = input.updates !== undefined || input.backends !== undefined || input.connectorFiles !== undefined || input.connectors !== undefined;

@@ -84,6 +84,7 @@ export interface Config extends Partial<Record<SpecialistSourceName, ApiConfig>>
   iptv?: ApiConfig;
   catalog?: SiteCatalog;
   catalogFile?: string;
+  catalogOverride?: string;
   credentials?: Record<string, AuthRecord>;
   configFile?: string;
   group?: CatalogGroup;

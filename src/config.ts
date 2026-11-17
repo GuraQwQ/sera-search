@@ -74,6 +74,7 @@ function baseConfig(input: unknown, options: ConfigLocation): Config {
   if (!parsed.success) throw new Error(`配置字段有误：${parsed.error.issues.map(issue => issue.path.join('.') + ' ' + issue.message).join('；')}`);
   return { ...parsed.data, home: resolve(options.home ?? process.env.SERA_HOME ?? parsed.data.home ?? location.home), configFile: location.file,
     group: z.enum(catalogGroups).parse(options.group ?? 'default'),
+    ...(options.catalog ? { catalogOverride: resolve(options.catalog) } : {}),
     catalogFile: options.catalog ? resolve(options.catalog) : options.group === 'galgame' ? fileURLToPath(new URL('../catalogs/galgame.json', import.meta.url)) : parsed.data.catalogFile ? resolve(dirname(location.file), parsed.data.catalogFile) : fileURLToPath(new URL('../catalogs/sites.json', import.meta.url)) };
 }
 

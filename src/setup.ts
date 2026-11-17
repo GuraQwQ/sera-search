@@ -51,7 +51,7 @@ export async function configureSetup(initial: Config, options: SetupOptions = {}
   const credentials: SetupItem[] = [], platforms: SetupItem[] = [], issues: SetupItem[] = [];
   const commands: Awaited<ReturnType<typeof discoverSetupCommands>> = [];
   const selected = options.sources ? new Set(options.sources.map(name => sourceNameSchema.parse(name))) : undefined;
-  const refresh = async () => config = await loadConfig({ home: initial.home, file: initial.configFile, group: initial.group, catalog: initial.catalogFile });
+  const refresh = async () => config = await loadConfig({ home: initial.home, file: initial.configFile, group: initial.group, catalog: initial.catalogOverride });
   const ask = async (question: string) => { signal.throwIfAborted(); const answer = await options.ask?.(question); signal.throwIfAborted(); return answer?.trim() ?? ''; };
   const accepts = async (question: string, fallback = true) => options.ask ? /^(?:y|yes|是)$/i.test(await ask(question) || (fallback ? 'y' : 'n')) : fallback;
   const progress = (message: string) => options.progress?.(message);

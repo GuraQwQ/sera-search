@@ -92,6 +92,8 @@ MCP 提供 18 个工具：`sera_setup`、`sera_config`、`sera_connectors`、`se
 
 平台会话验证可传 `{"source":"opencli","platform":"zhihu","sessionOnly":true}`。`sessionOnly` 仅适用于平台；默认 `false`，可按后端流程打开官方登录页，需用户完成扫码或验证后才算登录。每次工具调用重新加载配置与登录记录，同一连接后续查询即可采用已保存设置；配置读取不等同于平台会话已通过验证。
 
+主配置中的 `catalogFile` 会随工具调用重新加载；启动时显式传入的 `--catalog` 则固定用于该服务连接。
+
 `sera_channels` 返回每个动作的参数 Schema，`entrypoint` 为 `search`、`read`、`comments` 或 `images`，分别使用对应工具。`sera_read`／`sera_read_many` 支持 `operation`、`params`、`contentTypes`：URL 独立传递，动作 Schema 描述 `params`。例如读取已知公开视频的实际字幕：
 
 ```json
