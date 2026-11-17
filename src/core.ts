@@ -10,7 +10,8 @@ import type { Channel, Config, Source, SourceName, SearchOptions, SearchReport, 
 import { canonicalUrl, retrievalKey, publisher, textPage, focusText, documentObservations, EvidenceStore } from './evidence.js';
 import { errorMessage } from './config.js';
 import { createHttpSources } from './providers/http.js';
-import { createPlatformSources } from './providers/platform.js';
+import { createPlatformSources, siteForUrl } from './providers/platform.js';
+import { withoutAuthentication } from './providers/shared.js';
 import { authKey, invalidateCredential, notLoggedIn, apiSources } from './credentials.js';
 import { createWebSources } from './providers/web-apis.js';
 import { createAcademicSources } from './providers/academic.js';
@@ -131,8 +132,12 @@ export class Engine {
       source.capability.platforms = [...new Set(this.config.connectors?.find(item => item.id === source.capability.name)?.platforms ?? relatedPlatforms[source.capability.name] ?? (webSearchOrder.includes(source.capability.name) || ['web', 'serpapi'].includes(source.capability.name) ? ['web'] : source.capability.platforms ?? [source.capability.name]))];
       if (source.connector) source.connector.platforms = source.capability.platforms;
       if (source.comments) {
-        source.capability.operations = [...(source.capability.operations ?? []).filter(item => item.entrypoint !== 'comments'), { ...describeOperation('comments', '读取指定公开对象的评论单页，按返回游标续读', ['bilibili', 'youtube'].includes(source.capability.name) ? ['video-comment'] : ['comment'], commentsSchema), entrypoint: 'comments' }];
+        const previous = source.capability.operations?.find(item => item.name === 'comments');
+        source.capability.operations = [...(source.capability.operations ?? []).filter(item => item.name !== 'comments' && item.entrypoint !== 'comments'), { ...describeOperation('comments', '读取指定公开对象的评论单页，按返回游标续读', ['bilibili', 'youtube'].includes(source.capability.name) ? ['video-comment'] : ['comment'], commentsSchema), ...(previous?.access ? { access: previous.access } : {}), entrypoint: 'comments' }];
       }
+      const actions = new Set(source.capability.operations?.filter(item => item.entrypoint && item.entrypoint !== 'search').map(item => item.name));
+      const overrides = this.config.connectors?.find(item => item.id === source.capability.name)?.operations;
+      source.capability.operations = source.capability.operations?.filter(item => item.entrypoint && item.entrypoint !== 'search' || !actions.has(item.name)).map(item => ({ ...item, ...(overrides?.[item.name]?.access ? { access: overrides[item.name]!.access } : {}) }));
       if (!sources) { if (source.capability.operations) source.capability.operations = allowedOperations(source.capability.operations); applyPolicy(config, source); }
       if (source.capability.operations?.length) source.capability.contentTypes = [...new Set([...(source.capability.contentTypes ?? []), ...source.capability.operations.flatMap(item => item.contentTypes)])];
     }
@@ -183,6 +188,22 @@ export class Engine {
   private accessFailure(source: Source, operation?: string): SourceRun | undefined {
     const state = source.capability.access ? accessState(this.config, source, operation) : undefined;
     return state?.code ? { source: source.capability.name, status: 'unavailable', code: state.code, message: state.reason, elapsedMs: 0, returned: 0 } : undefined;
+  }
+
+  private invokeAction<T>(source: Source, operation: string | undefined, run: () => Promise<T>): Promise<T> {
+    return accessState(this.config, source, operation).policy.authentication === 'none'
+      ? withoutAuthentication(sourceConfig(this.config, source.capability.name).apiKey, source.connector?.auth, run) : run();
+  }
+
+  private async readOperation(source: Source, url: string, input: ReadOptions, signal: AbortSignal) {
+    if (!input.operation) return source.capability.operations?.filter(item => item.entrypoint === 'read' && materialMatches(item.contentTypes, input.contentTypes ?? [])).sort((a, b) => a.contentTypes.length - b.contentTypes.length)[0]?.name;
+    let declaration = source.capability.operations?.find(item => item.name === input.operation);
+    if (!declaration && source.channels && (source.capability.backend || ['agent-reach', 'opencli'].includes(source.capability.name))) {
+      const channels = await source.channels(signal);
+      declaration = channels.filter(channel => channel.platform === siteForUrl(url)).flatMap(channel => channel.operations ?? []).find(item => item.name === input.operation);
+    }
+    if (declaration?.entrypoint !== 'read') throw Object.assign(new Error('此动作不能通过 read 执行，请查看 channels 的 entrypoint'), { code: 'UNSUPPORTED_OPERATION' });
+    return input.operation;
   }
 
   private matchesMaterial(document: Document, requested?: string[]) {
@@ -357,22 +378,27 @@ export class Engine {
   async images(options: Omit<ImageRequest, 'signal'> & { sources?: SourceName[]; signal?: AbortSignal }): Promise<SearchReport> {
     const input = imagesSchema.parse(options);
     const names = input.sources ?? (input.imageUrl ? ['serpapi', 'trace-moe', 'saucenao'] as SourceName[] : ['brave', 'serpapi', 'baidu-images', 'sogou-images'] as SourceName[]);
-    if (!input.sources) names.sort((a, b) => { const first = this.sources.find(source => source.capability.name === a), second = this.sources.find(source => source.capability.name === b); return (first ? accessState(this.config, first).priority : 100) - (second ? accessState(this.config, second).priority : 100); });
+    const operationFor = (name: SourceName) => {
+      const engine = sourceConfig(this.config, name).engine;
+      return input.operation ?? (name === 'serpapi' ? input.imageUrl ? 'google_lens' : engine === 'bing' ? 'bing_images' : engine === 'google' ? 'google_images' : engine ?? 'google_images'
+        : ['trace-moe', 'saucenao'].includes(name) ? 'reverse' : 'keyword');
+    };
+    if (!input.sources) names.sort((a, b) => { const first = this.sources.find(source => source.capability.name === a), second = this.sources.find(source => source.capability.name === b); return (first ? accessState(this.config, first, operationFor(a)).priority : 100) - (second ? accessState(this.config, second, operationFor(b)).priority : 100); });
     const run = async (name: SourceName) => {
       const source = this.sources.find(item => item.capability.name === name), started = Date.now(), signal = this.signal(options.signal), requests: NetworkRequest[] = [];
       if (!source?.images || !source.capability.configured) return { hits: [], run: this.unavailable(name, source) };
-      const restricted = this.accessFailure(source, input.operation); if (restricted) return { hits: [], run: restricted };
+      const operation = operationFor(name), restricted = this.accessFailure(source, operation); if (restricted) return { hits: [], run: restricted };
       try {
         if (input.platform && !source.capability.platforms?.includes(input.platform)) throw Object.assign(new Error('所选来源不支持此平台，请查看 channels'), { code: 'UNSUPPORTED_PLATFORM' });
         if (input.operation && !source.capability.operations?.some(item => item.name === input.operation && item.entrypoint === 'images')) throw Object.assign(new Error('此动作不能通过 images 执行，请查看 channels 的 entrypoint'), { code: 'UNSUPPORTED_OPERATION' });
-        const hits = await httpTrace.run(requests, () => source.images!({ ...input, signal })); return { hits, run: { source: name, status: hits.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: hits.length, network: networkReport(requests, this.config) } as SourceRun };
+        const hits = await httpTrace.run(requests, () => this.invokeAction(source, operation, () => source.images!({ ...input, operation, signal }))); return { hits, run: { source: name, status: hits.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: hits.length, network: networkReport(requests, this.config) } as SourceRun };
       }
       catch (error) { return { hits: [], run: { ...await this.failure(name, error, started, signal), network: networkReport(requests, this.config) } }; }
     };
     const results = [];
     if (input.sources) {
       for (let start = 0; start < names.length; start += 3) { if (options.signal?.aborted) break; results.push(...await Promise.all(names.slice(start, start + 3).map(run))); }
-    } else for (const name of names) { if (options.signal?.aborted) break; const source = this.sources.find(item => item.capability.name === name); if (source?.capability.access && !accessState(this.config, source, input.operation).automatic || input.platform && !source?.capability.platforms?.includes(input.platform) || input.operation && !source?.capability.operations?.some(item => item.name === input.operation && item.entrypoint === 'images')) continue; results.push(await run(name)); if (mergeHits(results.flatMap(item => item.hits)).length >= input.limit) break; }
+    } else for (const name of names) { if (options.signal?.aborted) break; const source = this.sources.find(item => item.capability.name === name); if (source?.capability.access && !accessState(this.config, source, operationFor(name)).automatic || input.platform && !source?.capability.platforms?.includes(input.platform) || input.operation && !source?.capability.operations?.some(item => item.name === input.operation && item.entrypoint === 'images')) continue; results.push(await run(name)); if (mergeHits(results.flatMap(item => item.hits)).length >= input.limit) break; }
     const hits = mergeHits(results.flatMap(item => item.hits)), runs = results.map(item => item.run), good = runs.some(run => ['ok', 'empty'].includes(run.status));
     return { query: input.query ?? input.imageUrl!, hits, runs, status: !good ? 'error' : runs.some(run => !['ok', 'empty'].includes(run.status)) ? 'partial' : hits.length ? 'ok' : 'empty' };
   }
@@ -386,7 +412,7 @@ export class Engine {
       if (!source?.comments || !source.capability.configured) { runs.push(this.unavailable(name, source)); continue; }
       const restricted = this.accessFailure(source, 'comments'); if (restricted) { runs.push(restricted); continue; }
       try {
-        const page = await httpTrace.run(requests, () => source.comments!({ ...input, url, signal }));
+        const page = await httpTrace.run(requests, () => this.invokeAction(source, 'comments', () => source.comments!({ ...input, url, signal })));
         runs.push({ source: name, status: page.comments.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: page.comments.length, network: networkReport(requests, this.config) });
         if (!page.comments.length) return { status: 'empty', page, runs };
         const result: CommentReport = { status: 'ok', page, runs };
@@ -423,6 +449,7 @@ export class Engine {
         const cached = await this.store.find(url, eligible, input.maxAgeMs, evidence => evidence.metadata?.bodyAvailable !== false && this.matchesRead(evidence, input)
           && (evidence.source !== 'steam' || steamDocumentMatches(url, evidence)), input.locator);
         if (cached && cached.source !== 'external') {
+          if (input.operation) await this.readOperation(this.sources.find(source => source.capability.name === cached.source)!, url, input, this.signal(options.signal, input.timeoutMs));
           const { content, ...metadata } = cached;
           return { status: cached.metadata?.partial ? 'partial' : 'ok', evidence: metadata, ...view(content), cacheHit: true, cacheAgeMs: Date.now() - Date.parse(cached.retrievedAt),
             runs: [{ source: cached.source, status: 'ok', elapsedMs: 0, returned: 1, cacheHit: true, network: networkReport([], this.config) }], ...(cacheWarnings.length ? { cacheWarnings } : {}) };
@@ -437,12 +464,11 @@ export class Engine {
         if (input.sources) runs.push(this.unavailable(name, source));
         continue;
       }
-      const operation = input.operation ?? source.capability.operations?.filter(item => item.entrypoint === 'read' && materialMatches(item.contentTypes, input.contentTypes ?? [])).sort((a, b) => a.contentTypes.length - b.contentTypes.length)[0]?.name;
-      const restricted = this.accessFailure(source, operation ?? 'read'); if (restricted) { runs.push(restricted); continue; }
       const started = Date.now(), signal = this.signal(options.signal, input.timeoutMs), requests: NetworkRequest[] = [];
       try {
         signal.throwIfAborted();
-        if (input.operation && !source.channels && !source.capability.operations?.some(item => item.name === input.operation && item.entrypoint === 'read')) throw Object.assign(new Error('此动作不能通过 read 执行，请查看 channels 的 entrypoint'), { code: 'UNSUPPORTED_OPERATION' });
+        const operation = await httpTrace.run(requests, () => this.readOperation(source, url, input, signal));
+        const restricted = this.accessFailure(source, operation ?? 'read'); if (restricted) { runs.push({ ...restricted, network: networkReport(requests, this.config) }); continue; }
         const observed = await httpTrace.run(requests, () => source.read!(url, signal, { ...input, operation }));
         const document: Document = { ...observed, metadata: { ...observed.metadata, ...(input.operation || Object.keys(input.params ?? {}).length ? { readRequest: { operation: input.operation, params: input.params ?? {} } } : {}) } };
         if (input.locator && (document.locator?.kind !== input.locator.kind || document.locator?.id !== input.locator.id)) throw Object.assign(new Error('读取结果未定位到请求的片段或事件'), { code: 'CONTENT_MISMATCH' });
@@ -478,7 +504,7 @@ export class Engine {
         }
       } catch (error) {
         runs.push({ ...await this.failure(name, error, started, signal), network: networkReport(requests, this.config) });
-        if (options.signal?.aborted || (error as { terminal?: boolean }).terminal) break;
+        if (options.signal?.aborted) break;
       }
     }
     const nextSteps = [...new Set(runs.map(run => run.retryAt ? `此入口在 ${run.retryAt} 后重试；先补查其他允许的来源。`
@@ -580,15 +606,16 @@ export class Engine {
     if (input.refresh && focus) focus.status = 'pending';
     const subject = state.subjects.find(item => item.id === focus?.subjectId);
     const criterion = state.criteria.find(item => item.id === focus?.criterionId);
-    const seed = subject?.id === 'task' ? input.query : subject?.name ?? input.query;
-    const shortSeed = seed.length > 64 ? discoveryTerms(seed).join(' ') || seed : seed;
-    const focusedQuery = [shortSeed, criterion?.keywords?.join(' ') || criterion?.description].filter(Boolean).join(' ').slice(0, 4096);
+    const structuredSeed = Boolean(directTarget(input.query) || input.at || input.operation || input.githubType || Object.keys(input.params ?? {}).length || Object.values(input.sourceOptions ?? {}).some(settings => settings?.operation || Object.keys(settings?.params ?? {}).length) || input.sources?.includes('wayback'));
+    const seed = structuredSeed || subject?.id === 'task' ? input.query : subject?.name ?? input.query;
+    const shortSeed = structuredSeed || directTarget(seed) ? seed : seed.length > 64 ? discoveryTerms(seed).join(' ') || seed : seed;
+    const focusedQuery = structuredSeed ? shortSeed : [shortSeed, criterion?.keywords?.join(' ') || criterion?.description].filter(Boolean).join(' ').slice(0, 4096);
     const previous = state.history.at(-1);
     const stagnant = previous && previous.sources.length > 0 && (previous.newItems ?? previous.newUrls) + previous.newEvidence + previous.resolved === 0;
-    let query = input.discoveryQuery ?? (input.state && state.nextAction === 'change-query' && state.nextQuery && initial.verified.size === state.resolvedCount
+    let query = input.discoveryQuery ?? (structuredSeed ? shortSeed : input.state && state.nextAction === 'change-query' && state.nextQuery && initial.verified.size === state.resolvedCount
       ? state.nextQuery : input.state && focus ? focusedQuery : input.query);
-    if (stagnant && state.nextAction === 'change-query' && previous.query === query && input.discoveryQuery === undefined) query = subject?.aliases?.[0] ?? input.aliases?.[0] ?? shortSeed;
-    const route = taskRoute(taskRoute(input.query).directUrl ?? query, criterion?.intent ?? input.intent);
+    if (!structuredSeed && stagnant && state.nextAction === 'change-query' && previous.query === query && input.discoveryQuery === undefined) query = subject?.aliases?.[0] ?? input.aliases?.[0] ?? shortSeed;
+    const route = taskRoute(input.discoveryQuery ?? taskRoute(input.query).directUrl ?? query, criterion?.intent ?? input.intent);
     const preferred = preferredSources(route.intent, query, requestedMaterials).filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search));
     const used = new Set(state.history.filter(round => round.query === query && (round.newItems ?? round.newUrls) + round.newEvidence === 0).flatMap(round => round.sources));
     const suggested = state.nextAction === 'change-source' ? state.nextSources?.filter(name => preferred.includes(name)) ?? [] : [];

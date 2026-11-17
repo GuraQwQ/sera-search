@@ -184,11 +184,11 @@ function document(rows: unknown[], source: SourceName, url: string, platform: st
   return { source, url: folded.length === 1 ? checkedUrl(first.url) ?? url : url, title: text(first.title ?? first.question_title) || url, content: body.join('\n\n'), contentKind, ...(publishedAt ? { publishedAt } : {}), metadata: { platform, action, items: folded.length, ...(backend ? { backend } : {}), ...(scope ? { contentScope: scope } : {}), ...(typeof completeness === 'boolean' ? { completenessVerified: completeness } : {}), ...(publicationTimeRaw !== undefined ? { publicationTimeRaw } : {}) } };
 }
 
-function siteForUrl(url: string): string {
+export function siteForUrl(url: string): string {
   const host = new URL(url).hostname.toLowerCase();
   const domains: Record<string, string[]> = {
     weixin: ['mp.weixin.qq.com'], zhihu: ['zhihu.com'], xiaohongshu: ['xiaohongshu.com', 'xhslink.com'],
-    bilibili: ['bilibili.com', 'b23.tv'], youtube: ['youtube.com', 'youtu.be'], reddit: ['reddit.com', 'redd.it'],
+    bilibili: ['bilibili.com', 'b23.tv'], youtube: ['youtube.com', 'youtu.be'], twitch: ['twitch.tv'], reddit: ['reddit.com', 'redd.it'],
     twitter: ['x.com', 'twitter.com'], douyin: ['douyin.com'], v2ex: ['v2ex.com'], github: ['github.com'],
   };
   return Object.entries(domains).find(([, list]) => list.some(domain => host === domain || host.endsWith(`.${domain}`)))?.[0] ?? 'web';

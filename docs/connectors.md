@@ -37,7 +37,9 @@ sera search zod --sources deps-dev --operation dependencies --params '{"system":
 }
 ```
 
-`connectorFiles` 相对 `config.json` 所在目录解析，每个文件可以包含一份声明或声明数组；也可以将声明放进 `connectors`。重复 ID 使用最后加载的声明。对已有内置来源，同 ID 声明合并动作，显式配置 `request`／`read` 可以替换对应的内置处理。
+`connectorFiles` 相对 `config.json` 所在目录解析，每个文件可以包含一份声明或声明数组；也可以将声明放进 `connectors`。重复 ID 使用最后加载的声明。对已有内置来源，同 ID 声明合并动作，显式配置 `request`／`read` 可以替换对应的内置处理；只提供读取的来源也支持 `read` 覆盖。
+
+动作的 `access` 覆盖同样适用于评论和图片入口。明确声明 `authentication:"none"` 时，请求按匿名方式发送；`paid`／`trial` 动作在调用前排除。省略图片动作时，先按图片 URL 与来源配置确定实际动作，再检查对应的认证和费用条件。
 
 `sources[id]` 支持 `enabled`、`baseUrl`、`userAgent`、`freeTierConfirmed` 等运行设置；旧来源顶层配置仍可使用，`sources[id]` 同字段优先。凭据通过 `login` 保存，实际请求以有效凭据记录优先：
 

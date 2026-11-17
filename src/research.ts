@@ -36,8 +36,33 @@ export function prepareResearch(input: ResearchOptions): ResearchState {
     version: 2, subjects: input.subjects ?? (input.targetCount ? [] : [{ id: 'task', name: input.query.slice(0, 256) }]),
     criteria: [], assessments: [], evidenceIds: [], discoveredUrls: [], examinedUrls: [], candidates: [], accessFailures: [], history: [], resolvedCount: 0,
   };
+  const previousSubjects = new Map(state.subjects.map(item => [item.id, item])), previousCriteria = new Map(state.criteria.map(item => [item.id, item]));
   if (input.subjects) state.subjects = [...new Map([...state.subjects, ...input.subjects].map(item => [item.id, item])).values()];
   if (input.criteria) state.criteria = [...new Map([...state.criteria, ...input.criteria].map(item => [item.id, item])).values()];
+  const sorted = (values: string[] = []) => [...new Set(values)].sort();
+  const subjectDefinition = (item: ResearchState['subjects'][number]) => {
+    const value = subjectSchema.parse(item);
+    return JSON.stringify([value.name, sorted(value.aliases), sorted(value.urls?.map(canonicalUrl))]);
+  };
+  const criterionDefinition = (item: ResearchState['criteria'][number]) => {
+    const value = criterionSchema.parse(item);
+    return JSON.stringify([value.description, value.kind, value.intent, Object.entries(value.scope ?? {}).sort(([a], [b]) => a.localeCompare(b)), sorted(value.keywords)]);
+  };
+  const changedSubjects = new Set(state.subjects.filter(item => previousSubjects.has(item.id) && subjectDefinition(item) !== subjectDefinition(previousSubjects.get(item.id)!)).map(item => item.id));
+  const changedCriteria = new Set(state.criteria.filter(item => previousCriteria.has(item.id) && criterionDefinition(item) !== criterionDefinition(previousCriteria.get(item.id)!)).map(item => item.id));
+  if (changedSubjects.size || changedCriteria.size) {
+    const affected = (item: Pick<ResearchAssessment, 'subjectId' | 'criterionId'>) => changedSubjects.has(item.subjectId) || changedCriteria.has(item.criterionId);
+    const candidates = state.candidates.filter(affected), evidence = new Set([...state.evidenceIds, ...candidates.map(item => item.evidenceId)]);
+    const urls = new Set([...candidates.map(item => item.url), ...state.subjects.filter(item => changedSubjects.has(item.id)).flatMap(item => [...(item.urls ?? []), ...(previousSubjects.get(item.id)?.urls ?? [])])].map(canonicalUrl));
+    for (const assessment of state.assessments.filter(affected)) {
+      for (const id of assessment.reviewedEvidenceIds) evidence.add(id);
+      assessment.status = 'pending'; assessment.reviewedEvidenceIds = [];
+    }
+    state.evidenceIds = [...evidence]; state.candidates = state.candidates.filter(item => !affected(item));
+    state.examinedUrls = state.examinedUrls.filter(url => !urls.has(canonicalUrl(url)));
+    if (state.examinedItems) state.examinedItems = state.examinedItems.filter(key => !urls.has(key.split('\n')[0]!));
+    state.nextAction = 'continue'; delete state.nextQuery; delete state.nextSources;
+  }
   for (const description of input.goals ?? []) if (!state.criteria.some(item => item.description === description)) {
     state.criteria.push({ id: stableId('criterion', description), description, kind: 'required' });
   }

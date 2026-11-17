@@ -182,7 +182,8 @@ export function createStructuredSource(config: Config, definition: ConnectorDefi
 }
 
 export function adaptStructuredSource(config: Config, original: Source): Source {
-  if (original.connector || !original.search) return original;
+  const override = config.connectors?.find(item => item.id === original.capability.name);
+  if (original.connector || !original.search && !override?.read) return original;
   const name = original.capability.name, access = policyFor(original);
   const bases: Record<string, string> = { exa: 'https://api.exa.ai/', tavily: 'https://api.tavily.com/', brave: 'https://api.search.brave.com/', github: 'https://api.github.com/',
     zhipu: 'https://open.bigmodel.cn/api/paas/v4/', doubao: 'https://open.feedcoopapi.com/', serpapi: 'https://serpapi.com/', crossref: 'https://api.crossref.org/', openalex: 'https://api.openalex.org/', pubmed: 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/',
@@ -191,9 +192,9 @@ export function adaptStructuredSource(config: Config, original: Source): Source 
     bilibili: 'https://api.bilibili.com/', v2ex: 'https://www.v2ex.com/api/', youtube: 'https://www.googleapis.com/youtube/v3/', twitch: 'https://api.twitch.tv/helix/', discord: 'https://discord.com/api/', instagram: 'https://graph.facebook.com/',
     steam: 'https://store.steampowered.com/', nicovideo: 'https://snapshot.search.nicovideo.jp/', wayback: 'https://web.archive.org/', archive: 'https://archive.org/', linuxdo: 'https://linux.do/', heybox: 'https://www.xiaoheihe.cn/' };
   const site = specialistSites[name as keyof typeof specialistSites];
-  const base = sourceConfig(config, name).baseUrl ?? bases[name] ?? (site?.domains[0] ? `https://${site.domains[0]}/` : undefined);
+  const base = sourceConfig(config, name).baseUrl ?? override?.base_url ?? bases[name] ?? (site?.domains[0] ? `https://${site.domains[0]}/` : undefined);
   if (!base) return original;
-  const descriptions = original.capability.operations?.length ? original.capability.operations.filter(item => !item.entrypoint || item.entrypoint === 'search') : [describeOperation('search', original.capability.requirement ?? '检索公开记录', original.capability.contentTypes ?? ['record'], z.strictObject({}))];
+  const descriptions = !original.search ? [] : original.capability.operations?.length ? original.capability.operations.filter(item => !item.entrypoint || item.entrypoint === 'search') : [describeOperation('search', original.capability.requirement ?? '检索公开记录', original.capability.contentTypes ?? ['record'], z.strictObject({}))];
   const operations = Object.fromEntries(descriptions.map(operation => [operation.name, { description: operation.description, content_types: operation.contentTypes, input_schema: operation.inputSchema, ...(operation.access ? { access: operation.access } : {}) }]));
   const auth: NonNullable<ConnectorDefinition['auth']> = access.authentication === 'none' || access.authentication === 'session' ? { type: 'none' }
     : name === 'tavily' ? { type: 'api-key', body: 'api_key' } : ['serpapi', 'openalex', 'pubmed', 'lastfm'].includes(name) ? { type: 'api-key', query: 'api_key' }
@@ -203,8 +204,8 @@ export function adaptStructuredSource(config: Config, original: Source): Source 
     label: original.capability.requirement ?? name, access, operations, limitations: original.capability.limitations, auth };
   const source = createStructuredSource(config, definition, { search: Object.fromEntries(descriptions.map(operation => [operation.name, (request: SearchRequest, params: Record<string, unknown>) => original.search!({ ...request, params })])),
     ...(original.read ? { read: (url: string, signal: AbortSignal, options?: ReadOptions) => original.read!(url, signal, options) } : {}) });
-  const accessOverride = config.connectors?.some(item => item.id === name) && !source.capability.requiresLogin;
-  source.capability = { ...source.capability, ...original.capability, ...(accessOverride ? { requiresLogin: source.capability.requiresLogin, loggedIn: source.capability.loggedIn } : {}), configured: (original.capability.configured || Boolean(accessOverride)) && sourceConfig(config, name).enabled !== false, operations: [...(source.capability.operations ?? []), ...(original.capability.operations ?? []).filter(item => item.entrypoint && item.entrypoint !== 'search')], access: source.capability.access };
+  const accessOverride = Boolean(override?.read) || Boolean(override && !source.capability.requiresLogin);
+  source.capability = { ...source.capability, ...original.capability, search: source.capability.search, read: source.capability.read, ...(accessOverride ? { requiresLogin: source.capability.requiresLogin, loggedIn: source.capability.loggedIn } : {}), configured: (original.capability.configured || accessOverride) && sourceConfig(config, name).enabled !== false, operations: [...(source.capability.operations ?? []), ...(original.capability.operations ?? []).filter(item => item.entrypoint && item.entrypoint !== 'search')], access: source.capability.access };
   for (const key of ['channels', 'login', 'logout', 'comments', 'images'] as const) if (original[key]) Object.assign(source, { [key]: original[key] });
   return source;
 }

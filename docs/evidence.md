@@ -25,6 +25,8 @@ node dist/cli.js research "某作品" --goal "发行日期" --goal "中文支持
 
 `research` 使用 `version:2` 状态，分别保存 `subjects`、`criteria` 与 `assessments`；`goals` 是建立必需判据的简便入口。CLI 从首轮传 `--state ./research-state.json`，创建或原子更新状态；Agent 核验后填写单元的 `status`、`outcome`、`conclusion`、`scope` 和 `citations` 原文坐标，MCP 下一轮传回同一 `state`。已有证据可为另一个判据重新定位，不因页面已经取证而跳过核验。完成判断会复核本轮读取来源、材料、动作参数及时间范围；条件改变后，不适用的旧结论和引用保留并回到待核验，继续取得对应材料。
 
+同 ID 的对象或判据定义改变时，只重新打开相关核验单元，保留结论、引用和证据，并允许重新审阅；提交相同定义继续复用。URL、对象标识符和结构化动作续查保留查询种子，`discoveryQuery` 可显式替换本轮发现查询。
+
 后续先复用材料，再围绕当前对象与判据补证；新增 URL、证据与通过检查的核验单元见 `comparison.progress`。零进展时调整默认来源顺序或建议查询，`discoveryQuery` 可显式指定本轮查询；已知 URL 不计入新增命中预算。`accessFailures[].retryAt` 在跨轮保持限流等待，`refresh` 仍遵守。`candidates` 是待审阅关联，`reviewedEvidenceIds` 记录已审阅而不足以支持当前判据的材料。
 
 `coverage` 检查对象与判据、原文引用、坐标、适用范围和 `targetCount`。必需条件不满足时排除对象，偏好单独记录；工具通过检查的引用仍需 Agent 核验语义。`comparison.groups` 按判据、范围和单位分组，显式 `measurement.normalization` 保留原值与换算依据。CLI 自动迁移旧状态并保留原子备份，MCP 使用 `sera_migrate_state`。状态文件保存失败时仍交付研究结果及返回状态，`stateWarnings` 说明原因；修复后可以继续。首轮输入、编辑状态与下一轮调用见[取证与续查](../skills/sera-search/references/workflows.md)。

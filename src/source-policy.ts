@@ -34,14 +34,21 @@ const policies: Record<string, AccessPolicy> = {
   discord: { authentication: 'api-key', billing: 'free', evidence: 'https://docs.discord.com/developers/topics/rate-limits' },
 };
 
+function operationPolicy(source: Source, operation?: string): AccessPolicy | undefined {
+  return (operation === 'read' ? source.connector?.read?.access : undefined) ?? source.capability.operations?.find(item => item.name === operation)?.access
+    ?? (operation && operation !== 'read' ? source.connector?.operations[operation]?.access : undefined);
+}
+
 export function policyFor(source: Source, operation?: string): AccessPolicy {
-  return (operation === 'read' ? source.connector?.read?.access : undefined) ?? source.capability.operations?.find(item => item.name === operation)?.access ?? source.capability.access ?? policies[source.capability.name]
+  return operationPolicy(source, operation) ?? source.capability.access ?? policies[source.capability.name]
     ?? { authentication: source.capability.requiresLogin ? 'api-key' : 'none', billing: 'free' };
 }
 
 export function accessState(config: Config, source: Source, operation?: string, declaredPolicy?: AccessPolicy) {
-  const declared = declaredPolicy ?? policyFor(source, operation), settings = sourceConfig(config, source.capability.name);
-  const policy: AccessPolicy = source.capability.name === 'openalex' && ['free-quota', 'mixed'].includes(declared.billing)
+  const override = config.connectors?.find(item => item.id === source.capability.name);
+  const configured = operation === 'read' ? override?.read?.access : operation ? override?.operations[operation]?.access : undefined;
+  const declared = declaredPolicy ?? configured ?? operationPolicy(source, operation) ?? override?.access ?? policyFor(source, operation), settings = sourceConfig(config, source.capability.name);
+  const policy: AccessPolicy = source.capability.name === 'openalex' && declared.authentication !== 'none' && ['free-quota', 'mixed'].includes(declared.billing)
     ? { ...declared, authentication: settings.apiKey ? 'api-key' : 'optional', billing: settings.apiKey ? 'mixed' : 'free-quota', quota: settings.apiKey ? '免费每日预算耗尽后会消耗已购余额；调用前需确认账户仅使用免费档' : '匿名免费每日预算；额度耗尽后等待重置', evidence: 'https://help.openalex.org/access/pricing/' }
     : declared;
   const credentialReady = policy.authentication === 'api-key' ? Boolean(settings.apiKey) : policy.authentication === 'session' ? source.capability.configured && source.capability.loggedIn !== false : true;
