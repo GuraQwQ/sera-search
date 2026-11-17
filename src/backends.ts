@@ -14,9 +14,12 @@ const failure = (code: string, message: string) => Object.assign(new Error(messa
 // MCP 服务复用连接，让浏览器会话跨工具调用存活；配置改变时替换对应连接。
 export class BackendPool {
   private connections = new Map<BackendName, { key: string; client: Client; ready: Promise<void>; controller: AbortController }>();
+  private retiring = new Set<Promise<void>>();
+  private closed = false;
 
-  private async connect(config: Config, source: BackendName, signal: AbortSignal) {
+  private async connect(config: Config, source: BackendName, signal: AbortSignal): Promise<Client> {
     signal.throwIfAborted();
+    if (this.closed) throw failure('BACKEND_CLOSED', '后端连接池已关闭');
     const command = config[source];
     if (!command || command.enabled === false) throw failure('NEED_SETUP', `请先 install --components ${source}，或配置其 MCP 命令`);
     const key = JSON.stringify([config.home, command, source === 'ghgrab' ? config.github.apiKey : undefined]);
@@ -24,8 +27,11 @@ export class BackendPool {
     if (connection && connection.key !== key) {
       this.connections.delete(source);
       connection.controller.abort();
-      await connection.client.close();
-      connection = undefined;
+      const closing = connection.client.close();
+      this.retiring.add(closing);
+      try { await closing; } finally { this.retiring.delete(closing); }
+      // 关闭旧连接后重新检查，复用并发调用已登记的新连接。
+      return this.connect(config, source, signal);
     }
     if (!connection) {
       const client = new Client({ name: 'sera-backend', version: '1.0.0' });
@@ -117,10 +123,11 @@ export class BackendPool {
   }
 
   async close() {
+    this.closed = true;
     const connections = [...this.connections.values()];
     this.connections.clear();
     for (const connection of connections) connection.controller.abort();
-    await Promise.allSettled(connections.map(connection => connection.client.close()));
+    await Promise.allSettled([...this.retiring, ...connections.map(connection => connection.client.close())]);
   }
 }
 
