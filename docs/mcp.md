@@ -58,7 +58,7 @@ node dist/cli.js install --home ./.sera --mcp-client antigravity --mcp-config F:
 }
 ```
 
-MCP 提供 18 个工具：`sera_setup`、`sera_config`、`sera_connectors`、`sera_capabilities`、`sera_channels`、`sera_search`、`sera_comments`、`sera_images`、`sera_research`、`sera_migrate_state`、`sera_read`、`sera_read_many`、`sera_evidence`、`sera_record`、`sera_login`、`sera_logout`、`sera_auth` 和 `sera_backend`。检索参数对应 CLI 的来源、平台、每源数量、域名及日期条件；`sera_comments` 使用 `url/cursor/parentId/order`，`sera_images` 使用 `query` 或 `imageUrl`，完整字段以工具 Schema 为准。
+MCP 提供 18 个工具：`sera_setup`、`sera_config`、`sera_connectors`、`sera_capabilities`、`sera_channels`、`sera_search`、`sera_comments`、`sera_images`、`sera_research`、`sera_migrate_state`、`sera_read`、`sera_read_many`、`sera_evidence`、`sera_record`、`sera_login`、`sera_logout`、`sera_auth` 和 `sera_backend`。检索参数对应 CLI 的来源、平台、每源数量、域名及日期条件；`sera_comments` 使用 `url/cursor/parentId/order`，`sera_images` 使用 `operation` 与 `query` 或 `imageUrl`，完整字段以工具 Schema 为准。
 
 ## 配置与会话
 
@@ -88,17 +88,17 @@ MCP 提供 18 个工具：`sera_setup`、`sera_config`、`sera_connectors`、`se
 
 平台会话验证可传 `{"source":"opencli","platform":"zhihu","sessionOnly":true}`。`sessionOnly` 仅适用于平台；默认 `false`，可按后端流程打开官方登录页，需用户完成扫码或验证后才算登录。每次工具调用重新加载配置与登录记录，同一连接后续查询即可采用已保存设置；配置读取不等同于平台会话已通过验证。
 
-`sera_channels` 返回每个动作的参数 Schema；`sera_search`／`sera_research` 使用 `operation`、`params`、`contentTypes` 和按源区分的 `sourceOptions`。片段定位用 `locator`，实际范围见 `runs[].coverage`，调用计划见 `plan`。接口例子与来源边界见[垂直来源](specialist-sources.md)。
+`sera_channels` 返回每个动作的参数 Schema，`entrypoint` 为 `search`、`comments` 或 `images`；后两者分别交给 `sera_comments` 与 `sera_images`。`sera_search`／`sera_research` 使用 `operation`、`params`、`contentTypes` 和按源区分的 `sourceOptions`。智谱、豆包、SerpAPI 的 `platform` 均为 `web`，检索引擎或行业用 `operation`。片段定位用 `locator`，实际范围见 `runs[].coverage`，调用计划见 `plan`。接口例子与来源边界见[垂直来源](specialist-sources.md)。
 
 ## 结构化连接器
 
-`sera_connectors` 按需返回协议、动作、输入 Schema、字段映射、认证方式、费用、限速和限制，不返回账号凭据。例如查看 Modrinth 与 Scryfall：
+`sera_connectors` 按需返回协议、`search` 动作定义、输入 Schema、字段映射、认证方式、费用、限速和限制，不返回账号凭据；专用评论和图片动作通过 `sera_channels` 发现。例如查看 Modrinth 与 Scryfall：
 
 ```json
 {"sources":["modrinth","scryfall"]}
 ```
 
-同一配置目录下的 `sources`、`connectorFiles` 和 `connectors` 也对 MCP 生效。来源 ID 可由配置动态增加；先用 `sera_connectors`／`sera_channels` 发现动作，再用 `sera_search` 的 `operation`、`params` 或 `sourceOptions` 调用。配置格式及专用协议边界见[连接器指南](connectors.md)。
+同一配置目录下的 `sources`、`connectorFiles` 和 `connectors` 也对 MCP 生效。来源 ID 可由配置动态增加；先发现动作和 `entrypoint`，再用相应工具调用，检索动作接受 `operation`、`params` 或 `sourceOptions`。配置格式及专用协议边界见[连接器指南](connectors.md)。
 
 自动选路优先匿名免费、认证免费，再考虑周期免费配额；认证加配额的来源降权。付费必需动作和一次性试用排除；混合计费或计费未确认的入口需要在核对账号免费档后设置 `sources.<来源>.freeTierConfirmed: true`。已知免费 Key 来源按其声明使用，实际配额和服务端账单仍需分别核对。
 

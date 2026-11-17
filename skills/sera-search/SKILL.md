@@ -7,6 +7,8 @@ description: 使用 SERA CLI 或 MCP 跨来源发现资料、读取原文，并�
 
 优先通过 CLI 与本 Skill 使用 SERA，MCP 按需启用，共用同一 `SERA_HOME`／`--home`。先看任务相关来源的 `capabilities`；设置不明时用 `config --sources`，平台或动作不明时用 `channels`；结构化定义用 `connectors`，来源 ID 可由配置动态增加。实际网络、权限与额度由调用结果确认。按 `contentTypes` 选材料，按动作 Schema 提供 `operation`／`params`；多来源参数不同用 `sourceOptions`。字幕、弹幕、公开评审、模型与数据集等入口见[垂直来源](../../docs/specialist-sources.md)。
 
+`source` 是提供者、`platform` 是目标平台、`operation` 是动作。按 `channels --platform 平台` 发现 YouTube、Twitch 或 B站等同平台的多个入口，再按公开作品任务所需材料、预算和缺口选择。第三方关联不证明主体相同或数据独立；未指定材料或动作时不会自动逐一查询。缺少必填参数看 `search.plan.pendingActions`，按 `source/operation/entrypoint/required` 补齐；`entrypoint` 区分 `search`、`comments`、`images`，使用对应 CLI／MCP 入口，不能用视频搜索替代评论。
+
 首次配置先选 `--home`；源码可用 `./.sera`。真实终端 `install` 默认向导；Agent 非交互可用 `install --yes --sources 来源列表 --json` 补齐已有入口和环境凭据，按需保留待办。下载组件用 `--components`，已有平台记录自动复核，新平台用显式 `--platform 后端:平台` 或交互选择，免费档用独立 `--confirm-free-tier`；`--yes` 不代替费用确认或发起网页登录。详情见[登录与配置](references/auth.md)。
 
 CLI 用 `config --input` 校验更新设置、`login --from-env` 引用已有 Key，`login --platform 平台 --session-only` 仅验证已有会话。MCP 对应 `sera_setup`、`sera_config` 与 `sera_login`；`fromEnv` 读取服务器进程环境，平台传 `sessionOnly:true` 仅验证已有会话。需要网页验证时由用户完成官方流程。可选 MCP 通过 `install --mcp-client 客户端ID` 注册已有客户端，目录和工具契约见[Agent 接入](../../docs/mcp.md)。
@@ -19,6 +21,8 @@ CLI 用 `config --input` 校验更新设置、`login --from-env` 引用已有 Ke
 |---|---|
 | 尚未取得来源 | `search`；`terms` 为发现用词，`aliases` 补充实体别名 |
 | 已有 URL 或明确对象 ID | `read`／`read-many`；已有证据用 `evidence` 定位、续读 |
+| 已知视频、歌曲或授权媒体的评论 | 按渠道 `entrypoint:comments` 调用 `comments URL`／`sera_comments`，保留分页与覆盖 |
+| 关键词图片或反向识图 | 按 `entrypoint:images` 调用 `image-search`／`reverse-image` 或 `sera_images`，`operation` 选择图片动作 |
 | 多对象或多条件调查 | `research`；完整任务放 `query`，本轮查询放 `discoveryQuery`，对象与判据分别用 `subjects`／`criteria` |
 | 宿主工具已经取得材料 | `record`／`sera_record`，保留原始 URL、内容、实际方法与观察时间 |
 | 需要仓库、浏览器、账号或地理后端的完整动作 | `backend` 先发现当前 Schema，再调用相应工具 |

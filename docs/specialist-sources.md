@@ -2,7 +2,18 @@
 
 结构化来源统一配置、免费与认证排序、科学／公共数据及 QQ／微信动作见[结构化数据连接器](connectors.md)。
 
-先用 `capabilities --sources 来源` 查看访问条件，再用 `channels --sources 来源 --json` 取得 `operations[].inputSchema`。`search` 和 `research` 共用 `operation`、`params`、`contentTypes`、`since`、`until`；操作参数会在实际请求前校验。日期可以表示发言、投稿、登记或出版时间，具体含义见动作说明。
+`source` 是提供者，`platform` 是目标平台，`operation` 是具体动作。先用 `channels --platform 平台 --json` 发现处理该平台材料的来源，再按 `capabilities` 核对访问条件，按 `operations[].inputSchema` 和 `entrypoint` 选择调用入口。`search` 和 `research` 共用 `operation`、`params`、`contentTypes`、`since`、`until`；日期可以表示投稿、事件、登记或出版时间，具体含义见动作说明。
+
+## 平台与材料
+
+| 目标平台 | 提供者来源 | 实际材料 |
+|---|---|---|
+| `bilibili` | `bilibili`、`aicu`、`danmakus` 及其他已接入渠道 | 原生视频候选与元数据；第三方已收录评论、弹幕、场次，各动作范围不同 |
+| `youtube` | `youtube`、`filmot`、`holodex` | 视频与评论、已索引字幕、频道与直播／切片元数据分别调用 |
+| `twitch` | `twitch`、`chatarchive` | Helix 元数据；ChatArchive 已收录场次与免费聊天回放页 |
+| `qq`／`wechat` | 同平台的头像、公开资源或公众号连接器 | 仅返回所选动作当前可取得的对象与字段 |
+
+平台关联表示来源处理同平台的不同材料，不证明主体相同，也不使重复采集成为独立证据。按公开作品研究所需材料、预算与缺口选择动作；只有平台名时，第三方关联源不会自动逐一查询。
 
 ## 已接入来源
 
@@ -12,6 +23,8 @@
 | `danmakus` | `channels`、`lives`、`live-events` | 主播、已录制场次和异步弹幕查询；Token 可选，排队任务可用 `taskId` 续读 |
 | `filmot` | `subtitles` | 跨视频字幕片段及起止秒数；读取取得匹配字幕，需要 API Key；免费账户档与 credits 状态确认后参与调用 |
 | `holodex` | `videos`、`channels`、`channel` | 频道、直播、切片及联动关系；要求 `X-APIKEY`，结果为元数据 |
+| `chatarchive` | `streams`、`replay` | Twitch 已收录场次和指定场次免费聊天回放；`replay` 关键词只筛当前页，不是全历史关键词搜索 |
+| `bilibili` | `videos`；独立评论入口 | `videos` 按关键词发现公开视频，`params.page` 选择结果页；读取为视频元数据，当前没有用户搜索动作 |
 | `semantic-scholar` | `papers` | 论文检索、摘要、引用计数和开放全文入口；可登记 Key，匿名额度可能限流 |
 | `openreview` | `papers`、`forum` | 论文与公开评审、回复、讨论；读取保留 note、forum 和回复关系，受实际可见范围影响 |
 | `huggingface` | `models`、`datasets`、`spaces` | 模型与数据集仓库、卡片字段、提交 SHA 与文件清单；Token 可选 |
@@ -39,25 +52,35 @@
 
 ## 多来源交叉核验
 
-不同来源的参数名与动作可以不同，使用 `sourceOptions` 分别指定；公共时间范围放在顶层。下面是结构模板，将对象标识替换为本次调查实际确认的值后，通过 `search --input 文件` 或 MCP 传入：
+不同来源的参数名与动作可以不同，使用 `sourceOptions` 分别指定。例如研究公开作品的演唱材料时，将下面的请求交给 `search --input 文件` 或 MCP，分别发现字幕片段和视频记录：
 
 ```json
 {
-  "query": "需要检索的话题",
-  "sources": ["aicu", "danmakus"],
-  "contentTypes": ["live-danmaku"],
+  "query": "Bad Apple",
+  "sources": ["filmot", "holodex"],
+  "platform": "youtube",
+  "contentTypes": ["subtitle", "video-metadata"],
   "strategy": "cross-check",
   "maxSources": 2,
-  "since": "2026-10-01",
-  "until": "2026-10-07",
+  "limit": 3,
   "sourceOptions": {
-    "aicu": { "operation": "room-danmaku", "params": { "uid": "主播UID" } },
-    "danmakus": { "operation": "live-events", "params": { "channelUid": "主播UID" } }
+    "filmot": { "operation": "subtitles", "params": { "title": "Bad Apple" } },
+    "holodex": { "operation": "videos", "params": { "types": ["stream", "clip"] } }
   }
 }
 ```
 
-Aicu 和 Danmakus 的收录时间、房间和漏采范围不同；交叉核验只对共同覆盖区间进行。核对原始场次、发言时间、正文和事件标识；同一原始记录的两次采集不自动变成两条独立证据。维护方公告 Danmakus 在 2026-01-24 丢失旧历史弹幕，Aicu 也明确更新不规则、记录不完整。
+Filmot 命中字幕，Holodex 返回元数据；发现同一视频后继续核对作品、视频 ID 和实际片段。Holodex 名称匹配及日期过滤只作用于当前返回页，Danmakus `lives` 的日期也只过滤本页。Aicu `room-danmaku` 的 `params.uid` 与 Danmakus `live-events` 的 `params.channelUid` 都是主播 UID；参数按原生动作 Schema 提供。
+
+交叉核验只比较共同覆盖范围；记录原始作品、场次、时间、正文和事件标识。同一原始记录的两次采集不自动变成两条独立证据。维护方公告 Danmakus 在 2026-01-24 丢失旧历史弹幕，Aicu 也明确更新不规则、记录不完整；无命中不能推出目标材料不存在。
+
+## 待补动作与正确入口
+
+缺少动作必填参数时，`search.plan.pendingActions` 列出 `source`、`operation`、`entrypoint` 和 `required`，该动作不发出请求。先按任务确认所需参数，再选择执行；待补项不是一次空结果。
+
+`entrypoint:"comments"` 对应 CLI `comments URL` 或 MCP `sera_comments`，用于指定视频、歌曲或授权媒体的评论页；不能把该动作作为 `search --operation comments` 执行。Aicu 的同名原生动作属于另一份检索契约，应以渠道返回的 `entrypoint` 和 Schema 区分。
+
+`entrypoint:"images"` 对应 `image-search`／`reverse-image` 或 MCP `sera_images`；传 `operation` 选择图片动作，输入为 `query` 或 `imageUrl`。连接器导出仅包含 `search` 定义，完整专用动作以 `channels` 为准。
 
 ## 片段、覆盖和调用预算
 
@@ -67,5 +90,6 @@ Aicu 和 Danmakus 的收录时间、房间和漏采范围不同；交叉核验�
 - 研究 `coverage.complete` 检查对象、判据、原文引用及任务数量，不能证明来源完整收录目标时间段。
 - 默认 `fallback` 分阶段调用，足量新记录后停止；`cross-check` 查询互补来源，自动选源默认最多三个，`maxSources` 可调整。显式 `sources` 保留请求顺序并最多三路并发，来源数量仍受 `maxSources` 限制。`plan` 报告选择与停止原因。
 - 自动材料识别帮助选择字幕、弹幕、公开评审、模型、数据集、专利和天气等动作。已知 URL／对象 ID 继续直接读取；UID、日期、坐标或版本参数通过动作 Schema 明确提供。
+- `live-chat`／`live-danmaku`、`price-history`／`game-price-history` 可用于匹配对应材料，但提供者参数与收录范围仍各自核对。游戏史价会考虑 ITAD 的历史低价和价格事件动作，所需游戏 ID 按待补项提供。
 
 原生 API、站点索引、本地记录三种获取方式在能力中可区分。付费 Key、身份权限、上游改版和网络会影响实际结果。Aicu／Danmakus 使用当前前端接口，需要在上游调整后复核。

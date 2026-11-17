@@ -63,7 +63,7 @@ const help = `SERA — Search, Extract, Research for Agents
 
 检索与读取：
   --sources <列表>     逗号分隔的来源；read 按所列顺序尝试
-  --platform <平台>    站内查询；install 使用 后端:平台，多个用逗号分隔
+  --platform <平台>    目标平台；install 使用 后端:平台，多个用逗号分隔
   --limit <数量>       每个来源的结果数量，默认 5，最大 20
   --github-type <类型> repositories、code 或 issues
   --domain <域名>      可重复，按提供者支持的域名过滤检索
@@ -279,8 +279,8 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       case 'channels': result = await engine.channels({ sources: selected, platform: values.platform, signal: controller.signal }); break;
       case 'search': result = await engine.search(search); break;
       case 'comments': result = await engine.comments({ url: text, sources: selected, limit: integer(values.limit, 20), cursor: values.cursor, parentId: values.parent, order: values.order, signal: controller.signal }); break;
-      case 'image-search': result = await engine.images({ query: text, sources: selected, platform: values.platform, limit: integer(values.limit, 5), signal: controller.signal }); break;
-      case 'reverse-image': result = await engine.images({ imageUrl: text, sources: selected, platform: values.platform, limit: integer(values.limit, 5), signal: controller.signal }); break;
+      case 'image-search': result = await engine.images({ query: text, sources: selected, platform: values.platform, operation: values.operation, limit: integer(values.limit, 5), signal: controller.signal }); break;
+      case 'reverse-image': result = await engine.images({ imageUrl: text, sources: selected, platform: values.platform, operation: values.operation, limit: integer(values.limit, 5), signal: controller.signal }); break;
       case 'research': {
         const task = values.input ? JSON.parse(await readFile(values.input, 'utf8')) : {};
         let state = task.state, migrationWarnings: string[] = [];

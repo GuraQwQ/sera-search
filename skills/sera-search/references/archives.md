@@ -4,11 +4,11 @@
 
 ## Wayback
 
-`--sources wayback` 的默认 `availability` 查询 URL 或域名附近的可用快照；`--at YYYYMMDD` 或 `YYYYMMDDhhmmss` 指定目标时间。返回的最近快照可能在目标时间之前或之后，按 `captureAt` 再确认它是否满足问题的时间条件。
+`--sources wayback --platform wayback` 选择提供者和目标档案平台，`--operation availability` 查询 URL 或域名附近的可用快照，`--operation cdx` 查询捕获索引；未指定动作时采用配置的 `engine`，默认 `availability`。`--at YYYYMMDD` 或 `YYYYMMDDhhmmss` 指定目标时间。返回的最近快照可能在目标时间之前或之后，按 `captureAt` 再确认它是否满足问题的时间条件。
 
 ```bash
 sera search "https://example.org/" --sources wayback --at 20200101 --json
-sera search "example.org/*" --sources wayback --platform cdx --since 2019-01-01 --at 20201231 --limit 10 --json
+sera search "example.org/*" --sources wayback --platform wayback --operation cdx --since 2019-01-01 --at 20201231 --limit 10 --json
 sera read "https://web.archive.org/web/捕获时间/原始URL" --sources wayback --json
 ```
 
@@ -38,11 +38,11 @@ sera read "https://en.wikipedia.org/w/index.php?oldid=修订ID" --sources wiki -
 
 ## Internet Archive 馆藏
 
-`--sources archive` 查询馆藏标题、作者、描述等目录字段；`--platform` 可选择 `texts`、`audio`、`movies`、`software` 等媒体类型。
+`--sources archive --platform archive` 查询馆藏标题、作者、描述等目录字段；`--operation` 选择 `all`、`texts`、`audio`、`movies`、`software`。未指定动作时采用配置的 `engine`，默认 `all`。
 
 ```bash
 sera search "opensource_movies" --sources archive --json
-sera search "open source" --sources archive --platform software --limit 5 --json
+sera search "open source" --sources archive --platform archive --operation software --limit 5 --json
 sera read "https://archive.org/details/opensource_movies" --sources archive --json
 ```
 

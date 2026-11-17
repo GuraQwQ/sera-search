@@ -11,7 +11,15 @@ sera connectors --sources deps-dev --json
 sera search zod --sources deps-dev --operation dependencies --params '{"system":"npm","version":"4.6.7"}' --json
 ```
 
-`connectors` 与 MCP `sera_connectors` 导出连接器声明；`channels.operations[].inputSchema` 是实际动作参数契约。声明不含账户凭据。支持自定义来源 ID，新增标准来源无需修改 CLI、MCP 或证据格式。
+`connectors` 与 MCP `sera_connectors` 导出检索连接器声明，仅含 `search` 动作定义；专用评论与图片动作看 `channels`。`channels.operations[].inputSchema` 是实际动作参数契约，`entrypoint` 指定调用入口。声明不含账户凭据。支持自定义来源 ID，新增标准来源无需修改 CLI、MCP 或证据格式。
+
+## 提供者、平台与动作
+
+连接器 `id` 是提供者来源，`platforms` 声明处理的目标平台，`operations` 描述具体材料与动作。例如 `filmot`／`holodex` 关联 `youtube`，`chatarchive` 关联 `twitch`，`aicu`／`danmakus` 关联 `bilibili`；QQ 和微信连接器也按目标平台发现。使用 `channels --platform 平台` 查看所有相关入口，再按 `contentTypes`、参数 Schema 与覆盖限制选动作。
+
+这种关联表示提供者处理同平台材料，不证明主体相同或来源独立。自动选路需要明确材料或动作才考虑第三方关联源。缺少必填参数的动作列入 `search.plan.pendingActions`，其中 `source`、`operation`、`entrypoint`、`required` 说明下一步；该动作不发送请求。
+
+渠道的 `entrypoint:"comments"` 应交给 CLI `comments URL` 或 MCP `sera_comments`，`entrypoint:"images"` 使用 `image-search`／`reverse-image` 或 `sera_images`，`search` 使用 `search`／`research`。动作名不能替代入口判断，同名动作以各来源的 Schema 为准。`live-chat`／`live-danmaku`、`price-history`／`game-price-history` 可匹配相同材料类别，实际协议与参数仍由提供者定义。
 
 ## 配置与认证
 
@@ -46,6 +54,7 @@ sera login materials-project --from-env MATERIALS_PROJECT_API_KEY
 ```json
 {
   "id": "community-books",
+  "platforms": ["open-library"],
   "type": "rest",
   "base_url": "https://openlibrary.org/",
   "label": "公开书目",
@@ -153,6 +162,8 @@ Exa、Tavily、Brave、SerpAPI 等免费与已购余额共用接口的来源，�
 | QQ 与微信 | `qq-avatar`、`qq-group-avatar` 图片元数据；`qq-public-profile` 可见资料；`qq-portrait-legacy` 实验昵称；`wechat-official-account` 账号发现／资料；`wechat-article-history` 公开文章发现／历史页／自己授权的已发表记录 |
 
 Common Crawl 必须提供抓取批次；GH Archive 必须指定 UTC 小时，并按仓库／事件范围和下载预算筛选。达到预算时保留已取得材料，按覆盖报告缩小范围或继续查询。两者适合有界取证。
+
+ChatArchive 的 `streams` 列举已收录 Twitch 场次，`replay` 读取指定场次的免费聊天回放页，关键词只筛当前页。Filmot 的字幕与 Holodex 的视频／场次元数据属于不同材料。游戏史价匹配包含 ITAD 的历史低价与价格事件，所需游戏 ID 和地区按动作 Schema 补齐；无命中、页内筛选或待补参数都不能推出目标资料不存在。
 
 QQ 头像验证响应图片类型、文件头、字节大小和哈希；默认头像不能证明账号或群存在。公开资料仅返回实际可见字段，旧 portrait 接口解析实际 JSONP 返回并标明实验范围。
 

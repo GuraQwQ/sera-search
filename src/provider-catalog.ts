@@ -1,13 +1,13 @@
 import type { SpecialistSourceName } from './types.js';
 
 export const specialistSites: Record<SpecialistSourceName, { domains: string[]; label: string; contentTypes: string[]; description?: string }> = {
-  aicu: { domains: ['aicu.cc'], label: 'Aicu 历史互动记录', contentTypes: ['video-comment', 'video-danmaku', 'live-chat'] },
-  danmakus: { domains: ['danmakus.com'], label: 'Danmakus 直播记录', contentTypes: ['live-chat', 'live-session'] },
+  aicu: { domains: ['aicu.cc'], label: 'Aicu 历史互动记录', contentTypes: ['comment', 'video-danmaku', 'live-danmaku'] },
+  danmakus: { domains: ['danmakus.com'], label: 'Danmakus 直播记录', contentTypes: ['live-danmaku', 'live-session'] },
   operationhong: { domains: ['operationhong.online'], label: '直播档案馆', contentTypes: ['page'], description: '公开页面发现；实际历史查询范围以站点返回为准' },
   matsuri: { domains: ['matsuri.icu'], label: 'Matsuri ICU', contentTypes: ['page'], description: '公开页面发现；当前服务状态调用时检查' },
   laplace: { domains: ['laplace.live', 'subspace.institute'], label: 'LAPLACE 本地记录', contentTypes: ['live-danmaku', 'live-event'], description: '通过 record 导入已采集记录，originSource 设为 laplace' },
   filmot: { domains: ['filmot.com'], label: 'Filmot 字幕索引', contentTypes: ['subtitle'] },
-  holodex: { domains: ['holodex.net'], label: 'Holodex 直播与切片', contentTypes: ['video', 'live-session', 'channel'] },
+  holodex: { domains: ['holodex.net'], label: 'Holodex 直播与切片', contentTypes: ['video-metadata', 'live-session', 'channel'] },
   'semantic-scholar': { domains: ['semanticscholar.org'], label: 'Semantic Scholar', contentTypes: ['paper'] },
   openreview: { domains: ['openreview.net'], label: 'OpenReview 论文与公开评审', contentTypes: ['paper', 'review'] },
   osv: { domains: ['osv.dev'], label: 'OSV 包版本漏洞', contentTypes: ['advisory'] },
@@ -38,9 +38,22 @@ export const specialistSites: Record<SpecialistSourceName, { domains: string[]; 
 export const legacyContentTypes: Record<string, string[]> = {
   exa: ['page'], tavily: ['page'], brave: ['page'], bing: ['page'], zhipu: ['page'], doubao: ['page'], web: ['page'], sites: ['page'],
   crossref: ['paper'], openalex: ['paper'], pubmed: ['paper'], wiki: ['page'], github: ['code'], ghgrab: ['code'],
-  bilibili: ['video', 'video-comment'], youtube: ['video', 'video-comment'], nicovideo: ['video'], steam: ['game', 'news', 'player-count'],
+  bilibili: ['video'], youtube: ['video'], nicovideo: ['video'], steam: ['game', 'news', 'player-count'],
   wayback: ['web-snapshot'], archive: ['archive-record'], linuxdo: ['post'], heybox: ['post'], v2ex: ['post'],
 };
+
+export const relatedPlatforms: Record<string, string[]> = {
+  aicu: ['bilibili'], danmakus: ['bilibili'], laplace: ['bilibili'], operationhong: ['bilibili'], matsuri: ['bilibili'],
+  filmot: ['youtube'], holodex: ['youtube'], chatarchive: ['twitch'], steamdb: ['steam'], isthereanydeal: ['steam'],
+  'github-advisory': ['github'], 'gh-archive': ['github'],
+  'qq-avatar': ['qq'], 'qq-group-avatar': ['qq'], 'qq-public-profile': ['qq'], 'qq-portrait-legacy': ['qq'],
+  'wechat-official-account': ['wechat'], 'wechat-article-history': ['wechat'],
+};
+
+export function materialMatches(types: string[] | undefined, requested: string[]) {
+  const aliases: Record<string, string> = { 'live-chat': 'live-danmaku', 'game-price-history': 'price-history', weather: 'weather-timeseries', advisory: 'vulnerability' };
+  return requested.some(type => types?.some(value => (aliases[value] ?? value) === (aliases[type] ?? type)));
+}
 
 export const declaredReadHosts: Record<string, string> = {
   'index.commoncrawl.org': 'common-crawl', 'data.commoncrawl.org': 'common-crawl', 'data.gharchive.org': 'gh-archive', 'wikimedia.org': 'wikimedia-analytics',

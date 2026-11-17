@@ -1,12 +1,23 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { z } from 'zod';
 import type { ApiConfig, Config, SearchHit, SearchRequest, Source, SourceName } from '../types.js';
 import { NotLoggedInError } from '../credentials.js';
 import { document, endpoint, hit, json, object, permitted, plain, rows, string } from './shared.js';
 import type { Row } from './shared.js';
+import { describeOperation } from './operations.js';
 
-function capability(name: SourceName, config: ApiConfig, requirement: string, platforms?: string[], requiresLogin = false) {
+const catalogMaterials: Record<string, Record<string, string[]>> = {
+  skills: { search: ['skill'] }, bangumi: { all: ['book', 'anime', 'music', 'game', 'video'], book: ['book'], anime: ['anime'], music: ['music'], game: ['game'], real: ['video'] },
+  anilist: { anime: ['anime'], manga: ['manga'] }, jikan: { anime: ['anime'], manga: ['manga'] }, mangadex: { search: ['manga'] }, vndb: { search: ['novel'] },
+  musicbrainz: { recording: ['music'], artist: ['music'], release: ['music'] }, lastfm: { track: ['music'], artist: ['music'] },
+  listenbrainz: { user: ['listening-statistics'] }, discogs: { all: ['music'], release: ['music'], master: ['music'], artist: ['music'], label: ['music'] },
+};
+function capability(name: SourceName, config: ApiConfig, requirement: string, modes = ['search'], requiresLogin = false) {
+  const ordered = config.engine && modes.includes(config.engine) ? [config.engine, ...modes.filter(mode => mode !== config.engine)] : modes;
+  const operations = ordered.map(mode => describeOperation(mode, `${requirement}：${mode}`, catalogMaterials[name]![mode]!, z.strictObject({})));
   return { name, search: true, read: true, configured: config.enabled !== false && (!requiresLogin || Boolean(config.apiKey)),
-    category: 'catalog' as const, requiresLogin, loggedIn: !requiresLogin || Boolean(config.apiKey), requirement, ...(platforms ? { platforms } : {}) };
+    category: 'catalog' as const, requiresLogin, loggedIn: !requiresLogin || Boolean(config.apiKey), requirement, platforms: [name], operations,
+    contentTypes: [...new Set(operations.flatMap(operation => operation.contentTypes))], accessMethod: 'api' as const };
 }
 
 function api(config: ApiConfig, fallback: string, name: string) {
@@ -22,8 +33,8 @@ function api(config: ApiConfig, fallback: string, name: string) {
 }
 
 function selection(request: SearchRequest, config: ApiConfig, supported: string[], fallback: string): string {
-  const selected = request.platform ?? config.engine ?? fallback;
-  if (!supported.includes(selected)) throw new Error(`该来源支持的平台：${supported.join('、')}`);
+  const selected = request.operation ?? config.engine ?? fallback;
+  if (!supported.includes(selected)) throw Object.assign(new Error(`该来源支持的操作：${supported.join('、')}`), { code: 'UNSUPPORTED_OPERATION' });
   return selected;
 }
 
@@ -54,6 +65,7 @@ function skills(config: ApiConfig): Source {
   return {
     capability: capability('skills', config, '公开技能目录；记录提供 GitHub 归属与安装量'),
     async search(request) {
+      selection(request, config, ['search'], 'search');
       const value = await get('api/search', request.signal, { q: request.query, limit: String(Math.min(100, request.limit)) });
       return results('skills', request, rows(value.skills, 'skills.sh').map(item => ({
         title: string(item.name) || string(item.skillId), url: `https://skills.sh/${skillId(item).split('/').map(encodeURIComponent).join('/')}`,
@@ -157,6 +169,7 @@ function mangadex(config: ApiConfig): Source {
   return {
     capability: capability('mangadex', config, '公开漫画目录；正文需后续读取获准公开章节'),
     async search(request) {
+      selection(request, config, ['search'], 'search');
       const value = await get('manga', request.signal, { title: request.query, limit: String(Math.min(100, request.limit)), 'order[relevance]': 'desc' });
       return results('mangadex', request, rows(value.data, 'MangaDex').map(item => {
         const attributes = object(item.attributes, 'MangaDex 属性'), description = object(attributes.description ?? {}, 'MangaDex 简介');
@@ -177,6 +190,7 @@ function vndb(config: ApiConfig): Source {
   return {
     capability: capability('vndb', config, '公开视觉小说目录'),
     async search(request) {
+      selection(request, config, ['search'], 'search');
       const value = await get('vn', request.signal, {}, { filters: ['search', '=', request.query], fields, sort: 'searchrank', results: Math.min(100, request.limit) });
       return results('vndb', request, rows(value.results, 'VNDB').map(item => ({ title: string(item.title), url: `https://vndb.org/${item.id}`,
         snippet: plain(item.description), publishedAt: published(item.released), metadata: { id: item.id, record: item },
@@ -212,7 +226,7 @@ function musicbrainz(config: ApiConfig): Source {
       return results('musicbrainz', request, rows(value[platform === 'release' ? 'releases' : `${platform}s`], 'MusicBrainz').map(item => ({
         title: string(item.title) || string(item.name), url: `https://musicbrainz.org/${platform}/${item.id}`,
         snippet: string(item.disambiguation) || [string(item.type), string(item.country)].filter(Boolean).join(' · '),
-        publishedAt: published(item['first-release-date'] ?? item.date), metadata: { id: item.id, platform, record: item },
+        publishedAt: published(item['first-release-date'] ?? item.date), metadata: { id: item.id, platform: 'musicbrainz', operation: platform, record: item },
       })));
     },
     async read(url, signal) {
@@ -243,7 +257,7 @@ function lastfm(config: ApiConfig): Source {
       const value = object((await call(`${platform}.search`, { [platform]: request.query, limit: String(Math.min(100, request.limit)) }, request.signal)).results, 'Last.fm');
       const matches = object(value[`${platform}matches`], 'Last.fm 命中')[platform];
       return results('lastfm', request, rows(matches, 'Last.fm').map(item => ({ title: string(item.name), url: string(item.url),
-        snippet: string(item.artist) || `听众 ${item.listeners ?? 0}`, metadata: { id: item.mbid || item.url, platform, record: item },
+        snippet: string(item.artist) || `听众 ${item.listeners ?? 0}`, metadata: { id: item.mbid || item.url, platform: 'lastfm', operation: platform, record: item },
       })));
     },
     async read(url, signal) {
@@ -253,7 +267,7 @@ function lastfm(config: ApiConfig): Source {
         || (parts.length !== 2 && !(parts.length === 4 && parts[2] === '_'))) throw new Error('Last.fm 读取需要艺人或曲目记录链接');
       const platform = parts.length === 4 ? 'track' : 'artist';
       const item = object((await call(`${platform}.getInfo`, { artist: parts[1], ...(platform === 'track' ? { track: parts[3]! } : {}) }, signal))[platform], 'Last.fm 记录');
-      return record('lastfm', string(item.url) || url, string(item.name), item, { id: item.mbid || item.url, platform });
+      return record('lastfm', string(item.url) || url, string(item.name), item, { id: item.mbid || item.url, platform: 'lastfm', operation: platform });
     },
   };
 }
@@ -277,7 +291,7 @@ function listenbrainz(config: ApiConfig): Source {
       if (!recordings.length) return [];
       return results('listenbrainz', request, [{ title: `${user} 的公开播放统计`, url: profile(user),
         snippet: recordings.map(item => `${string(item.artist_name)} — ${string(item.track_name)} (${item.listen_count ?? 0})`).join('；'),
-        metadata: { id: user, platform: 'user', record: payload },
+        metadata: { id: user, platform: 'listenbrainz', operation: 'user', record: payload },
       }]);
     },
     async read(url, signal) {
@@ -304,7 +318,7 @@ function discogs(config: ApiConfig): Source {
       const value = await call('database/search', request.signal, { q: request.query, per_page: String(Math.min(100, request.limit)), ...(platform === 'all' ? {} : { type: platform }) });
       return results('discogs', request, rows(value.results, 'Discogs').map(item => ({
         title: string(item.title), url: new URL(string(item.uri) || `/${item.type}/${item.id}`, 'https://www.discogs.com/').href,
-        snippet: [string(item.country), item.year, ...(Array.isArray(item.genre) ? item.genre : [])].filter(Boolean).join(' · '), metadata: { id: item.id, platform: item.type, record: item },
+        snippet: [string(item.country), item.year, ...(Array.isArray(item.genre) ? item.genre : [])].filter(Boolean).join(' · '), metadata: { id: item.id, platform: 'discogs', operation: platform, recordType: item.type, record: item },
       })));
     },
     async read(url, signal) {

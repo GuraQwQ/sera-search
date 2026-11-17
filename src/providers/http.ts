@@ -1,7 +1,9 @@
 import type { ApiConfig, Config, Document, Source } from '../types.js';
 import type { Row } from './shared.js';
+import { z } from 'zod';
 import { NotLoggedInError, notLoggedIn } from '../credentials.js';
 import { extractMetadata } from './metadata-parser.js';
+import { describeOperation, selectOperation } from './operations.js';
 import { object, rows, string, plain, decoded, htmlText, textResponse, date, epoch, hit, endpoint, response, json, document, apiHeaders, permitted } from './shared.js';
 
 function github(config: ApiConfig): Source {
@@ -128,13 +130,17 @@ export function createHttpSources(config: Config): Source[] {
       return rows(object(data.web, 'Brave').results, 'Brave').flatMap((item) => hit('brave', { title: string(item.title), url: string(item.url), snippet: [string(item.description), ...(Array.isArray(item.extra_snippets) ? item.extra_snippets.filter((v) => typeof v === 'string') : [])].join('\n'), metadata: { pageAge: item.page_age, age: item.age } })).slice(0, request.limit);
     },
   };
+  const bilibiliParams = z.strictObject({ page: z.number().int().min(1).default(1) });
+  const bilibiliOperations = [describeOperation('videos', '按关键词检索视频候选；page 选择结果页', ['video'], bilibiliParams)];
   const bilibili: Source = {
-    capability: { name: 'bilibili', search: true, read: true, configured: config.bilibili.enabled !== false, platforms: ['bilibili'], requirement: '公开搜索和视频元数据，字幕需另选平台后端' },
+    capability: { name: 'bilibili', search: true, read: true, configured: config.bilibili.enabled !== false, platforms: ['bilibili'], operations: bilibiliOperations, contentTypes: ['video'], accessMethod: 'api', requirement: '视频关键词搜索和视频元数据，字幕需另选平台后端' },
     async search(request) {
+      selectOperation(request, bilibiliOperations);
+      const params = bilibiliParams.parse(request.params ?? {});
       if (!permitted(request.domains, 'www.bilibili.com')) return [];
       const url = endpoint(config.bilibili, 'https://api.bilibili.com/', 'x/web-interface/search/all/v2');
       url.searchParams.set('keyword', request.query);
-      url.searchParams.set('page', '1');
+      url.searchParams.set('page', String(params.page));
       const data = await json(url, { headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://www.bilibili.com/' }, signal: request.signal }, 'B站');
       if (data.code !== 0) throw new Error(`B站搜索失败，API code=${String(data.code)}`);
       const groups = rows(object(data.data, 'B站').result, 'B站');

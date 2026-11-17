@@ -127,7 +127,7 @@ export class BackendPool {
 export function createBackendSources(config: Config, pool: BackendPool): Source[] {
   const configured = (source: BackendName) => Boolean(config[source] && config[source]?.enabled !== false);
   return [{
-    capability: { name: 'ghgrab', search: true, read: true, configured: configured('ghgrab'), category: 'code', platforms: ['github', 'gitlab', 'codeberg', 'gitea', 'forgejo'], requirement: '安装 ghgrab；关键词搜索 GitHub，目录与文件读取支持多种 Git forge' },
+    capability: { name: 'ghgrab', search: true, read: true, configured: configured('ghgrab'), category: 'code', platforms: ['github', 'gitlab', 'codeberg', 'gitea', 'forgejo'], searchPlatforms: ['github'], requirement: '安装 ghgrab；关键词搜索 GitHub，目录与文件读取支持多种 Git forge' },
     async channels() {
       return ['github', 'gitlab', 'codeberg', 'gitea', 'forgejo'].map(platform => ({ source: 'ghgrab' as const, platform, search: platform === 'github', read: true, configured: configured('ghgrab'), browser: false }));
     },

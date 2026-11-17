@@ -93,7 +93,7 @@ export interface SiteCatalog { sites: Record<string, { domains: string[]; label:
 export interface Comment { id: string; parentId?: string; rootId?: string; text: string; author?: string; publishedAt?: string; likes?: number; url?: string; replyCount?: number }
 export interface CommentRequest { url: string; limit: number; cursor?: string; parentId?: string; order?: string; signal: AbortSignal }
 export interface CommentPage { url: string; comments: Comment[]; nextCursor?: string; scope: string; truncated?: boolean; metadata?: Record<string, unknown> }
-export interface ImageRequest { query?: string; imageUrl?: string; platform?: string; limit: number; signal: AbortSignal }
+export interface ImageRequest { query?: string; imageUrl?: string; platform?: string; operation?: string; limit: number; signal: AbortSignal }
 export interface CommentReport { status: 'ok' | 'empty' | 'partial' | 'error'; runs: SourceRun[]; page?: CommentPage; evidence?: Omit<Evidence, 'content'>; cacheWarnings?: string[] }
 
 export interface SearchRequest {
@@ -153,6 +153,7 @@ export interface SourceOperation {
   inputSchema: Record<string, unknown>;
   accessMethod: 'api' | 'site-search' | 'local';
   access?: AccessPolicy;
+  entrypoint?: 'search' | 'comments' | 'images';
 }
 
 export interface AccessPolicy {
@@ -184,6 +185,7 @@ export interface Capability {
   configured: boolean;
   requirement?: string;
   platforms?: string[];
+  searchPlatforms?: string[];
   category?: 'web' | 'code' | 'academic' | 'wiki' | 'platform' | 'catalog' | 'images';
   requiresLogin?: boolean;
   loggedIn?: boolean;
@@ -297,7 +299,7 @@ export interface SearchReport {
   hits: AggregatedHit[];
   runs: SourceRun[];
   route?: { intent: Intent; reason: string; directUrl?: string };
-  plan?: { strategy: 'fallback' | 'cross-check'; contentTypes: string[]; selected: SourceName[]; stopReason: 'enough-results' | 'budget' | 'exhausted' | 'cancelled' };
+  plan?: { strategy: 'fallback' | 'cross-check'; contentTypes: string[]; selected: SourceName[]; stopReason: 'enough-results' | 'budget' | 'exhausted' | 'cancelled'; pendingActions?: { source: SourceName; operation: string; entrypoint: NonNullable<SourceOperation['entrypoint']>; required: string[] }[] };
 }
 
 export interface Evidence extends Document {

@@ -11,11 +11,11 @@ const identifier = z.string().trim().min(1).max(512);
 
 function capability(name: SourceName, config: ApiConfig, operations: SourceOperation[], limitations: string[], category: Capability['category'] = 'academic'): Capability {
   return { name, search: true, read: true, configured: config.enabled !== false, category, requiresLogin: false, loggedIn: true,
-    accessMethod: 'api', platforms: operations.map(item => item.name), operations, contentTypes: [...new Set(operations.flatMap(item => item.contentTypes))], limitations };
+    accessMethod: 'api', platforms: [name], operations, contentTypes: [...new Set(operations.flatMap(item => item.contentTypes))], limitations };
 }
 
 function selected(request: SearchRequest, operations: SourceOperation[]): string {
-  return selectOperation({ ...request, operation: request.operation ?? request.platform }, operations);
+  return selectOperation(request, operations);
 }
 
 function accepted(request: SearchRequest, url: string): boolean { return permitted(request.domains, new URL(url).hostname); }

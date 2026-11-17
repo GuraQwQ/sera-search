@@ -1,7 +1,9 @@
 import type { ApiConfig, Config, Comment, CommentPage, CommentRequest, ImageRequest, SearchHit, Source, SourceName } from '../types.js';
+import { z } from 'zod';
 import { NotLoggedInError, notLoggedIn } from '../credentials.js';
 import { object, rows, string, plain, date, epoch, hit, endpoint, response, json, document, permitted, fetchResponse } from './shared.js';
 import type { Row } from './shared.js';
+import { describeOperation, selectOperation } from './operations.js';
 
 const browserHeaders = { 'User-Agent': 'Mozilla/5.0' };
 const id = (value: unknown) => typeof value === 'string' || typeof value === 'number' ? String(value) : '';
@@ -194,29 +196,28 @@ function imageHit(source: SourceName, title: string, pageUrl: unknown, imageUrl:
 }
 
 export async function serpImages(config: ApiConfig, request: ImageRequest): Promise<SearchHit[]> {
+  const configured = config.engine === 'bing' ? 'bing_images' : config.engine === 'google' ? 'google_images' : config.engine;
+  const engine = request.operation ?? (request.imageUrl ? 'google_lens' : configured ?? 'google_images');
+  if (!['google_images', 'bing_images', 'google_lens'].includes(engine)) throw Object.assign(new Error('SerpAPI 图片动作需要 google_images、bing_images 或 google_lens'), { code: 'UNSUPPORTED_OPERATION' });
   requireKey(config);
   const url = endpoint(config, 'https://serpapi.com/', 'search.json');
   url.searchParams.set('api_key', config.apiKey!);
-  let engine = 'google_lens';
-  if (request.imageUrl) url.searchParams.set('url', imageInput(request, 'reverse'));
-  else {
-    const selected = request.platform ?? config.engine ?? 'google';
-    if (!['google', 'bing', 'google_images', 'bing_images'].includes(selected)) throw new Error('关键词图片引擎需要 google 或 bing');
-    engine = selected.startsWith('bing') ? 'bing_images' : 'google_images';
-    url.searchParams.set('q', imageInput(request, 'keyword'));
-  }
+  const reverse = engine === 'google_lens';
+  if (reverse) url.searchParams.set('url', imageInput(request, 'reverse'));
+  else url.searchParams.set('q', imageInput(request, 'keyword'));
   url.searchParams.set('engine', engine);
   const data = await json(url, { signal: request.signal }, 'SerpAPI 图片');
   if (data.error) {
     if (/invalid api key|no valid api key|api key.*(?:invalid|missing)/i.test(string(data.error))) throw new NotLoggedInError();
     throw new Error('SerpAPI 图片请求失败，请核对服务状态和额度');
   }
-  const items = request.imageUrl ? data.visual_matches ?? data.exact_matches ?? [] : data.images_results ?? [];
+  const items = reverse ? data.visual_matches ?? data.exact_matches ?? [] : data.images_results ?? [];
   return rows(items, 'SerpAPI 图片').flatMap(item => imageHit('serpapi', string(item.title), item.link, item.original ?? item.image ?? item.thumbnail, item.thumbnail,
-    { matchType: request.imageUrl ? 'visual' : 'keyword', searchEngine: engine, imageSource: item.source, similarity: item.similarity })).slice(0, request.limit);
+    { matchType: reverse ? 'visual' : 'keyword', searchEngine: engine, imageSource: item.source, similarity: item.similarity })).slice(0, request.limit);
 }
 
 export async function braveImages(config: ApiConfig, request: ImageRequest): Promise<SearchHit[]> {
+  if (request.operation && request.operation !== 'keyword') throw Object.assign(new Error('Brave 图片动作需要 keyword'), { code: 'UNSUPPORTED_OPERATION' });
   requireKey(config);
   const url = endpoint(config, 'https://api.search.brave.com/', 'res/v1/images/search');
   url.searchParams.set('q', imageInput(request, 'keyword')); url.searchParams.set('count', String(request.limit));
@@ -300,18 +301,36 @@ async function sauceImages(config: ApiConfig, request: ImageRequest) {
 }
 
 function capability(name: SourceName, config: ApiConfig, requirement: string, category: 'catalog' | 'images', key = false) {
-  const loggedIn = key && Boolean(config.apiKey);
+  const loggedIn = !key || Boolean(config.apiKey);
+  const reverse = ['trace-moe', 'saucenao'].includes(name), imageOperation = reverse ? 'reverse' : 'keyword';
+  const operations = category === 'catalog' ? [describeOperation(name === 'youtube' ? 'videos' : 'songs',
+    name === 'youtube' ? '按关键词搜索视频元数据' : '按关键词搜索歌曲元数据', [name === 'youtube' ? 'video' : 'music'], z.strictObject({}))]
+    : [{ ...describeOperation(imageOperation, reverse ? '按图片 URL 匹配作品来源' : '按关键词搜索图片', ['image'], reverse
+      ? z.strictObject({ imageUrl: z.string().url(), query: z.string().trim().min(1).optional(), limit: z.number().int().min(1).max(20).default(5) })
+      : z.strictObject({ query: z.string().trim().min(1), limit: z.number().int().min(1).max(20).default(5) })), entrypoint: 'images' as const }];
   return { name, search: category === 'catalog', read: category === 'catalog', images: category === 'images', comments: category === 'catalog',
     configured: config.enabled !== false && (key ? loggedIn : name === 'netease' ? Boolean(config.baseUrl) : true),
-    requiresLogin: key, loggedIn, category, platforms: [name], requirement: key && !loggedIn ? notLoggedIn : requirement };
+    requiresLogin: key, loggedIn, category, platforms: [name], operations, contentTypes: category === 'catalog' ? [name === 'youtube' ? 'video' : 'music'] : ['image'],
+    accessMethod: 'api' as const, requirement: key && !loggedIn ? notLoggedIn : requirement };
 }
 
 export function createActionSources(config: Config): Source[] {
   const youtube = config.youtube ?? {}, netease = config.netease ?? {}, baidu = config['baidu-images'] ?? {}, sogou = config['sogou-images'] ?? {}, trace = config['trace-moe'] ?? {}, sauce = config.saucenao ?? {};
+  const youtubeCapability = capability('youtube', youtube, 'YouTube Data API Key；视频元数据与公开评论分页', 'catalog', true);
+  const neteaseCapability = capability('netease', netease, '需要用户自建 api-enhanced 的 baseUrl；公开歌曲和评论', 'catalog');
+  const imageSource = (name: SourceName, settings: ApiConfig, requirement: string, run: (config: ApiConfig, request: ImageRequest) => Promise<SearchHit[]>, key = false): Source => ({
+    capability: capability(name, settings, requirement, 'images', key),
+    images: request => {
+      const operation = ['trace-moe', 'saucenao'].includes(name) ? 'reverse' : 'keyword';
+      if (request.operation && request.operation !== operation) throw Object.assign(new Error(`图片动作需要 ${operation}`), { code: 'UNSUPPORTED_OPERATION' });
+      return run(settings, request);
+    },
+  });
   return [
-    { capability: capability('youtube', youtube, 'YouTube Data API Key；视频元数据与公开评论分页', 'catalog', true),
+    { capability: youtubeCapability,
       comments: request => youtubeComments(youtube, request),
       async search(request) {
+        selectOperation(request, youtubeCapability.operations!); z.strictObject({}).parse(request.params ?? {});
         if (!permitted(request.domains, 'www.youtube.com')) return [];
         const data = await youtubeApi(youtube, 'search', { part: 'snippet', type: 'video', q: request.query, maxResults: String(request.limit), ...(request.since ? { publishedAfter: request.since + 'T00:00:00Z' } : {}) }, request.signal);
         return rows(data.items, 'YouTube 搜索').flatMap(item => { const snippet = object(item.snippet, 'YouTube 视频'), video = string(object(item.id, 'YouTube 视频 ID').videoId);
@@ -323,9 +342,10 @@ export function createActionSources(config: Config): Source[] {
         const snippet = object(item.snippet, 'YouTube 视频');
         return document('youtube', `https://www.youtube.com/watch?v=${video}`, string(snippet.title), JSON.stringify(item, null, 2), { contentKind: 'metadata', publishedAt: date(snippet.publishedAt) });
       } },
-    { capability: capability('netease', netease, '需要用户自建 api-enhanced 的 baseUrl；公开歌曲和评论', 'catalog'),
+    { capability: neteaseCapability,
       comments: request => neteaseComments(netease, request),
       async search(request) {
+        selectOperation(request, neteaseCapability.operations!); z.strictObject({}).parse(request.params ?? {});
         if (!permitted(request.domains, 'music.163.com')) return [];
         if (request.since) throw Object.assign(new Error('网易云歌曲搜索未提供发布日期过滤'), { code: 'UNSUPPORTED_FILTER' });
         const data = await neteaseApi(netease, 'search', { keywords: request.query, type: '1', limit: String(request.limit) }, request.signal);
@@ -338,9 +358,9 @@ export function createActionSources(config: Config): Source[] {
         if (!item) throw new Error('网易云未返回该歌曲的元数据');
         return document('netease', `https://music.163.com/song?id=${song}`, string(item.name), JSON.stringify(item, null, 2), { contentKind: 'metadata' });
       } },
-    { capability: capability('baidu-images', baidu, '公开关键词图片搜索；使用百度图片站内部接口', 'images'), images: request => baiduImages(baidu, request) },
-    { capability: capability('sogou-images', sogou, '公开关键词图片搜索；使用搜狗图片站内部接口或页面初始数据', 'images'), images: request => sogouImages(sogou, request) },
-    { capability: capability('trace-moe', trace, '公开动画帧匹配；图片 URL 需可由服务访问', 'images'), images: request => traceImages(trace, request) },
-    { capability: capability('saucenao', sauce, 'SauceNAO API Key；插画等作品来源匹配', 'images', true), images: request => sauceImages(sauce, request) },
+    imageSource('baidu-images', baidu, '公开关键词图片搜索；使用百度图片站内部接口', baiduImages),
+    imageSource('sogou-images', sogou, '公开关键词图片搜索；使用搜狗图片站内部接口或页面初始数据', sogouImages),
+    imageSource('trace-moe', trace, '公开动画帧匹配；图片 URL 需可由服务访问', traceImages),
+    imageSource('saucenao', sauce, 'SauceNAO API Key；插画等作品来源匹配', sauceImages, true),
   ];
 }

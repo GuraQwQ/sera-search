@@ -1,6 +1,8 @@
 import type { ApiConfig, Config, SearchRequest, Source } from '../types.js';
+import { z } from 'zod';
 import { date, document, endpoint, hit, htmlText, textResponse, json, object, permitted, plain, response, rows, string } from './shared.js';
 import type { Row } from './shared.js';
+import { describeOperation, selectOperation } from './operations.js';
 
 function captureAt(timestamp: string): string {
   if (!/^\d{14}$/.test(timestamp)) throw new Error('Wayback 返回了无效的捕获时间');
@@ -34,28 +36,31 @@ function unavailable(message: string, code = 'WAYBACK_UNAVAILABLE') {
 
 function wayback(config: ApiConfig): Source {
   const headers = { 'User-Agent': config.userAgent ?? 'SERA archive client', Accept: 'application/json' };
-  const platforms = ['availability', 'cdx'];
+  const names = ['availability', 'cdx'], params = z.strictObject({});
+  const preferred = names.includes(config.engine ?? '') ? config.engine! : 'availability';
+  const operations = [preferred, ...names.filter(name => name !== preferred)].map(name => describeOperation(name,
+    name === 'availability' ? '查目标时间附近的可用快照' : '按月折叠的捕获索引，读取时检查快照访问状态', ['web-snapshot'], params));
   const configured = config.enabled !== false;
   return {
-    capability: { name: 'wayback', search: true, read: true, configured, category: 'catalog', requiresLogin: false, loggedIn: true, platforms,
+    capability: { name: 'wayback', search: true, read: true, configured, category: 'catalog', requiresLogin: false, loggedIn: true, platforms: ['wayback'], operations, contentTypes: ['web-snapshot'], accessMethod: 'api',
       requirement: '公开 URL／域名档案；availability 查最近可用快照，CDX 提供捕获索引' },
     async channels() {
-      return platforms.map(platform => ({ source: 'wayback' as const, platform, search: true, read: true, configured,
-        description: platform === 'availability' ? '查目标时间附近的可用快照' : '按月折叠的捕获索引，读取时检查快照访问状态' }));
+      return [{ source: 'wayback' as const, platform: 'wayback', search: true, read: true, configured, operations, contentTypes: ['web-snapshot'],
+        description: '公开 URL／域名快照与捕获索引' }];
     },
     async search(request) {
-      const platform = request.platform ?? config.engine ?? 'availability';
-      if (!platforms.includes(platform)) throw new Error('Wayback 支持 availability、cdx 平台');
+      const operation = selectOperation({ ...request, operation: request.operation ?? config.engine ?? 'availability' }, operations);
+      params.parse(request.params ?? {});
       if (!permitted(request.domains, 'web.archive.org')) return [];
       const query = request.query.trim();
       let target: URL;
       try { target = new URL(/^https?:\/\//i.test(query) ? query : `https://${query.replace(/^\*\./, '')}`); }
       catch { throw new Error('Wayback 查询需要目标 URL 或域名'); }
       if (!target.hostname.includes('.') || !['http:', 'https:'].includes(target.protocol) || /\s/.test(query)) throw new Error('Wayback 查询需要目标 URL 或域名');
-      if (platform === 'availability' && query.includes('*')) throw new Error('通配 URL 请使用 Wayback cdx 平台');
+      if (operation === 'availability' && query.includes('*')) throw new Error('通配 URL 请使用 Wayback cdx 动作');
       const at = request.at ? targetTime(request.at) : undefined;
       const since = request.since ? targetTime(request.since) : undefined;
-      if (platform === 'availability') {
+      if (operation === 'availability') {
         const url = endpoint(config, 'https://archive.org/', 'wayback/available');
         url.searchParams.set('url', query);
         if (at) url.searchParams.set('timestamp', at);
@@ -68,7 +73,7 @@ function wayback(config: ApiConfig): Source {
         if (found.timestamp !== string(item.timestamp)) throw new Error('Wayback 快照链接与捕获时间不一致');
         if (since && found.timestamp < since.padEnd(14, '0')) return [];
         return hit('wayback', { title: found.originalUrl, url: found.url, snippet: `捕获时间 ${found.captureAt}`,
-          metadata: { ...found, platform, status: item.status, availabilityReported: true, snapshotVerified: false, ...(at ? { requestedTimestamp: at } : {}) } });
+          metadata: { ...found, platform: 'wayback', operation, status: item.status, availabilityReported: true, snapshotVerified: false, ...(at ? { requestedTimestamp: at } : {}) } });
       }
       const url = endpoint(config, 'https://web.archive.org/', 'cdx/search/cdx');
       for (const [key, value] of Object.entries({ url: query, output: 'json', fl: 'timestamp,original,mimetype,statuscode,digest', filter: 'statuscode:200', collapse: 'timestamp:6', limit: String(Math.min(request.limit, 100)) })) url.searchParams.set(key, value);
@@ -85,7 +90,7 @@ function wayback(config: ApiConfig): Source {
         const item: Row = Object.fromEntries(fields.map((field, index) => [String(field), value[index]]));
         const found = snapshot(`https://web.archive.org/web/${string(item.timestamp)}/${string(item.original)}`);
         return hit('wayback', { title: found.originalUrl, url: found.url, snippet: `捕获时间 ${found.captureAt} · ${string(item.mimetype)} · HTTP ${String(item.statuscode)}`,
-          metadata: { ...found, platform, mimetype: item.mimetype, status: item.statuscode, digest: item.digest, snapshotVerified: false, collapse: 'timestamp:6', ...(at ? { requestedTimestamp: at } : {}) } });
+          metadata: { ...found, platform: 'wayback', operation, mimetype: item.mimetype, status: item.statuscode, digest: item.digest, snapshotVerified: false, collapse: 'timestamp:6', ...(at ? { requestedTimestamp: at } : {}) } });
       });
     },
     async read(url, signal) {
@@ -118,21 +123,24 @@ function itemDate(value: unknown): string | undefined { const text = string(valu
 
 function archive(config: ApiConfig): Source {
   const headers = { 'User-Agent': config.userAgent ?? 'SERA archive metadata client', Accept: 'application/json' };
-  const platforms = ['archive', 'all', 'movies', 'audio', 'texts', 'software', 'image', 'web', 'data', 'collection', 'etree', 'other'];
+  const names = ['archive', 'all', 'movies', 'audio', 'texts', 'software', 'image', 'web', 'data', 'collection', 'etree', 'other'], params = z.strictObject({});
+  const preferred = names.includes(config.engine ?? '') ? config.engine! : 'all';
+  const operations = [preferred, ...names.filter(name => name !== preferred)].map(name => describeOperation(name,
+    ['archive', 'all'].includes(name) ? 'Internet Archive 馆藏目录' : `Internet Archive ${name} 馆藏目录`, ['archive-record'], params));
   return {
-    capability: { name: 'archive', search: true, read: true, configured: config.enabled !== false, category: 'catalog', requiresLogin: false, loggedIn: true, platforms,
+    capability: { name: 'archive', search: true, read: true, configured: config.enabled !== false, category: 'catalog', requiresLogin: false, loggedIn: true, platforms: ['archive'], operations, contentTypes: ['archive-record'], accessMethod: 'api',
       requirement: '公开馆藏检索、元数据、文件目录与访问条件；媒体内容需继续核验' },
     async channels() {
-      return platforms.map(platform => ({ source: 'archive' as const, platform, search: true, read: true, configured: config.enabled !== false,
-        description: ['archive', 'all'].includes(platform) ? 'Internet Archive 馆藏目录' : `Internet Archive ${platform} 馆藏目录` }));
+      return [{ source: 'archive' as const, platform: 'archive', search: true, read: true, configured: config.enabled !== false, operations, contentTypes: ['archive-record'],
+        description: 'Internet Archive 馆藏目录' }];
     },
     async search(request: SearchRequest) {
-      const platform = request.platform ?? config.engine ?? 'all';
-      if (!platforms.includes(platform)) throw new Error(`Internet Archive 支持的平台：${platforms.join('、')}`);
+      const operation = selectOperation({ ...request, operation: request.operation ?? config.engine ?? 'all' }, operations);
+      params.parse(request.params ?? {});
       if (!permitted(request.domains, 'archive.org')) return [];
       if (request.at) throw new Error('Internet Archive 馆藏检索不支持历史时间，请使用 Wayback 快照或查询 date 字段');
       const url = endpoint(config, 'https://archive.org/', 'advancedsearch.php');
-      url.searchParams.set('q', `(${request.query})${['archive', 'all'].includes(platform) ? '' : ` AND mediatype:${platform}`}${request.since ? ` AND date:[${request.since}T00:00:00Z TO *]` : ''}`);
+      url.searchParams.set('q', `(${request.query})${['archive', 'all'].includes(operation) ? '' : ` AND mediatype:${operation}`}${request.since ? ` AND date:[${request.since}T00:00:00Z TO *]` : ''}`);
       for (const field of ['identifier', 'title', 'creator', 'date', 'description', 'mediatype', 'collection', 'rights', 'licenseurl', 'access-restricted-item']) url.searchParams.append('fl[]', field);
       for (const [key, value] of Object.entries({ output: 'json', rows: String(Math.min(request.limit, 100)), page: '1' })) url.searchParams.set(key, value);
       const data = await json(url, { headers, signal: request.signal }, 'Internet Archive 搜索');
@@ -145,7 +153,7 @@ function archive(config: ApiConfig): Source {
         if (!id) throw new Error('Internet Archive 搜索结果缺少馆藏标识');
         return hit('archive', { title: metadataText(item.title) || id, url: `https://archive.org/details/${encodeURIComponent(id)}`,
           snippet: [metadataText(item.creator), string(item.mediatype), metadataText(item.description)].filter(Boolean).join(' · '), publishedAt: itemDate(item.date),
-          metadata: { id, platform, record: item, contentScope: 'item-catalog', fullContentVerified: false } });
+          metadata: { id, platform: 'archive', operation, record: item, contentScope: 'item-catalog', fullContentVerified: false } });
       });
     },
     async read(url, signal) {

@@ -36,7 +36,7 @@ function linuxdo(config: ApiConfig): Source {
   };
   return {
     capability: { name: 'linuxdo', search: true, read: true, comments: true, configured: config.enabled !== false, category: 'catalog',
-      requiresLogin: false, loggedIn: Boolean(config.apiKey), platforms: ['posts'], requirement: 'Discourse 原生搜索、主题和楼层；可选 Api-Key / Api-Username，权限以站点响应为准' },
+      requiresLogin: false, loggedIn: Boolean(config.apiKey), platforms: ['linuxdo'], requirement: 'Discourse 原生搜索、主题和楼层；可选 Api-Key / Api-Username，权限以站点响应为准' },
     async search(request) {
       const data = await get('search.json', { q: request.query + (request.since ? ` after:${request.since}` : '') }, request.signal);
       const topics = rows(data.topics, 'LinuxDo 搜索主题');
@@ -135,7 +135,7 @@ function heybox(config: Config): Source {
     ...(rootId ? { rootId, parentId: item.replyid ? numericId(item.replyid, '小黑盒被回复评论') : rootId } : {}) });
   return {
     capability: { name: 'heybox', search: true, read: true, comments: true, configured: api.enabled !== false, category: 'catalog', requiresLogin: false,
-      loggedIn: Boolean(api.apiKey), platforms: ['posts'], requirement: 'Bing 发现真实帖子；官网原生帖子及楼层接口，可选 apiKey 保存完整网站 Cookie，访问范围以站点响应为准' },
+      loggedIn: Boolean(api.apiKey), platforms: ['heybox'], requirement: 'Bing 发现真实帖子；官网原生帖子及楼层接口，可选 apiKey 保存完整网站 Cookie，访问范围以站点响应为准' },
     async search(request) {
       const bing = createDiscoverySources(config).find(source => source.capability.name === 'bing')!;
       return (await bing.search!({ ...request, query: request.query + ' site:xiaoheihe.cn/app/bbs/link/', domains: ['xiaoheihe.cn'] })).filter(item => {

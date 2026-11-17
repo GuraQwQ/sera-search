@@ -6,7 +6,7 @@ import { describeOperation, reportCoverage } from './providers/operations.js';
 import { endpoint, response, plain, date, permitted } from './providers/shared.js';
 import { sourceNameSchema } from './source-schema.js';
 import { accessState, policyFor } from './source-policy.js';
-import { specialistSites } from './provider-catalog.js';
+import { specialistSites, relatedPlatforms } from './provider-catalog.js';
 
 export interface ConnectorOperation {
   description: string;
@@ -22,6 +22,7 @@ export interface ConnectorDefinition {
   type: 'rest' | 'graphql' | 'sdmx' | 'mediawiki' | 'custom';
   base_url: string;
   label?: string;
+  platforms?: string[];
   auth?: { type: 'none' | 'api-key' | 'bearer'; header?: string; query?: string; body?: string; prefix?: string };
   access?: AccessPolicy;
   limits?: { min_interval_ms?: number; max_response_bytes?: number };
@@ -38,7 +39,7 @@ export interface ConnectorHooks {
 const accessSchema = z.object({ authentication: z.enum(['none', 'optional', 'api-key', 'session']), billing: z.enum(['free', 'free-quota', 'mixed', 'paid', 'trial', 'unknown']), quota: z.string().optional(), nonCommercial: z.boolean().optional(), evidence: z.string().url().optional() });
 const requestSchema = z.object({ path: z.string().min(1), method: z.enum(['GET', 'POST']).optional(), query: z.record(z.string(), z.unknown()).optional(), body: z.unknown().optional(), format: z.enum(['json', 'text']).optional() }).refine(value => value.method !== 'GET' || value.body === undefined, 'GET 请求不能配置 body；需要请求正文时使用 POST');
 export const connectorDefinitionSchema = z.object({
-  id: sourceNameSchema, type: z.enum(['rest', 'graphql', 'sdmx', 'mediawiki', 'custom']), base_url: z.string().url().refine(value => ['http:', 'https:'].includes(new URL(value).protocol)), label: z.string().optional(),
+  id: sourceNameSchema, type: z.enum(['rest', 'graphql', 'sdmx', 'mediawiki', 'custom']), base_url: z.string().url().refine(value => ['http:', 'https:'].includes(new URL(value).protocol)), label: z.string().optional(), platforms: z.array(sourceNameSchema).min(1).optional(),
   auth: z.object({ type: z.enum(['none', 'api-key', 'bearer']), header: z.string().optional(), query: z.string().optional(), body: z.string().optional(), prefix: z.string().optional() }).optional(), access: accessSchema.optional(),
   limits: z.object({ min_interval_ms: z.number().int().min(0).max(60000).optional(), max_response_bytes: z.number().int().min(1024).max(64 * 1024 * 1024).optional() }).optional(),
   operations: z.record(sourceNameSchema, z.object({ description: z.string().min(1), content_types: z.array(z.string().min(1)).min(1), input_schema: z.record(z.string(), z.unknown()), request: requestSchema.optional(),
@@ -120,7 +121,7 @@ export function createStructuredSource(config: Config, definition: ConnectorDefi
   const required = definition.auth?.type && definition.auth.type !== 'none' && definition.access?.authentication !== 'optional';
   const source: Source = {
     connector: definition,
-    capability: { name: definition.id, search: allowed.length > 0, read: Boolean(hooks.read || definition.read), configured: settings.enabled !== false && (!required || Boolean(settings.apiKey)), requiresLogin: Boolean(required), loggedIn: !required || Boolean(settings.apiKey), category: 'catalog', accessMethod: 'api', contentTypes: [...new Set(operations.flatMap(item => item.contentTypes))], operations, access: definition.access, requirement: definition.label ?? definition.id, limitations: definition.limitations },
+    capability: { name: definition.id, platforms: definition.platforms ?? relatedPlatforms[definition.id] ?? [definition.id], search: allowed.length > 0, read: Boolean(hooks.read || definition.read), configured: settings.enabled !== false && (!required || Boolean(settings.apiKey)), requiresLogin: Boolean(required), loggedIn: !required || Boolean(settings.apiKey), category: 'catalog', accessMethod: 'api', contentTypes: [...new Set(operations.flatMap(item => item.contentTypes))], operations, access: definition.access, requirement: definition.label ?? definition.id, limitations: definition.limitations },
     async search(request) {
       const name = request.operation ?? allowed[0]?.[0], operation = name && definition.operations[name];
       if (!name && entries.length && !allowed.length) throw Object.assign(new Error('此来源的操作需要付费或只有一次性试用额度'), { code: 'SOURCE_EXCLUDED' });
@@ -182,17 +183,17 @@ export function adaptStructuredSource(config: Config, original: Source): Source 
   const site = specialistSites[name as keyof typeof specialistSites];
   const base = sourceConfig(config, name).baseUrl ?? bases[name] ?? (site?.domains[0] ? `https://${site.domains[0]}/` : undefined);
   if (!base) return original;
-  const descriptions = original.capability.operations?.length ? original.capability.operations : [describeOperation('search', original.capability.requirement ?? '检索公开记录', original.capability.contentTypes ?? ['record'], z.strictObject({}))];
+  const descriptions = original.capability.operations?.length ? original.capability.operations.filter(item => !item.entrypoint || item.entrypoint === 'search') : [describeOperation('search', original.capability.requirement ?? '检索公开记录', original.capability.contentTypes ?? ['record'], z.strictObject({}))];
   const operations = Object.fromEntries(descriptions.map(operation => [operation.name, { description: operation.description, content_types: operation.contentTypes, input_schema: operation.inputSchema, ...(operation.access ? { access: operation.access } : {}) }]));
   const auth: NonNullable<ConnectorDefinition['auth']> = access.authentication === 'none' || access.authentication === 'session' ? { type: 'none' }
     : name === 'tavily' ? { type: 'api-key', body: 'api_key' } : ['serpapi', 'openalex', 'pubmed', 'lastfm'].includes(name) ? { type: 'api-key', query: 'api_key' }
     : ['exa', 'semantic-scholar'].includes(name) ? { type: 'api-key', header: 'x-api-key' } : name === 'brave' ? { type: 'api-key', header: 'X-Subscription-Token' }
     : name === 'holodex' ? { type: 'api-key', header: 'X-APIKEY' } : name === 'filmot' ? { type: 'api-key', header: 'X-API-Key' } : { type: 'bearer' };
-  const definition: ConnectorDefinition = { id: name, type: name === 'anilist' ? 'graphql' : name === 'wiki' ? 'mediawiki' : 'custom', base_url: base,
+  const definition: ConnectorDefinition = { id: name, platforms: original.capability.platforms, type: name === 'anilist' ? 'graphql' : name === 'wiki' ? 'mediawiki' : 'custom', base_url: base,
     label: original.capability.requirement ?? name, access, operations, limitations: original.capability.limitations, auth };
   const source = createStructuredSource(config, definition, { search: Object.fromEntries(descriptions.map(operation => [operation.name, (request: SearchRequest, params: Record<string, unknown>) => original.search!({ ...request, params })])),
     ...(original.read ? { read: (url: string, signal: AbortSignal, options?: ReadOptions) => original.read!(url, signal, options) } : {}) });
-  source.capability = { ...original.capability, configured: original.capability.configured && sourceConfig(config, name).enabled !== false, operations: source.capability.operations, access: source.capability.access };
+  source.capability = { ...source.capability, ...original.capability, configured: original.capability.configured && sourceConfig(config, name).enabled !== false, operations: [...(source.capability.operations ?? []), ...(original.capability.operations ?? []).filter(item => item.entrypoint && item.entrypoint !== 'search')], access: source.capability.access };
   for (const key of ['channels', 'login', 'logout', 'comments', 'images'] as const) if (original[key]) Object.assign(source, { [key]: original[key] });
   return source;
 }

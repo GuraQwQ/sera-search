@@ -4,7 +4,7 @@
 
 安装为可执行包后，下面的 `node dist/cli.js` 可以替换为 `sera`。使用 `--help` 查看实际参数。
 
-垂直资料使用 `--operation`、`--params JSON` 与 `--content-type`，参数由 `channels` 的动作 Schema 给出。`search --input 文件` 可传每源独立的 `sourceOptions`；`--since/--until` 指定范围，`--strategy cross-check --max-sources 数量` 控制交叉核验。来源、分页和片段示例见[垂直来源](specialist-sources.md)。
+`--sources` 选择提供者，`--platform` 选择目标平台，`--operation` 选择动作；`--params JSON` 的字段由 `channels` 的动作 Schema 给出，`--content-type` 选择材料。`search --input 文件` 可传每源独立的 `sourceOptions`；`--since/--until` 指定范围，`--strategy cross-check --max-sources 数量` 控制交叉核验。来源、分页和片段示例见[垂直来源](specialist-sources.md)。
 
 任务开始时先查看相关来源，再直接执行首轮取证；例如网页问题只看 `bing,web`，作品发行考据再加入 `steam,wayback`。多字段任务使用 `research --goal`，已有链接直接 `read`／`read-many`。起步和续查示例见[取证与续查](../skills/sera-search/references/workflows.md)。
 
@@ -15,12 +15,24 @@ node dist/cli.js research "TypeScript 发行记录" --sources bing --read-source
 
 ## 发现连接器与访问条件
 
-`connectors` 导出结构化连接器定义，包含协议、动作、输入 Schema、字段映射、认证、费用和限速；只需相关来源时用 `--sources` 筛选。定义不包含账号凭据，实际可用状态继续查看 `capabilities` 与调用结果。
+`connectors` 导出结构化检索连接器定义，包含协议、检索动作、输入 Schema、字段映射、认证、费用和限速；专用评论和图片动作通过 `channels` 发现。只需相关来源时用 `--sources` 筛选。定义不包含账号凭据，实际可用状态继续查看 `capabilities` 与调用结果。
 
 ```bash
 sera connectors --sources modrinth,scryfall --json
 node dist/cli.js connectors --sources modrinth,scryfall --json
 ```
+
+`channels --platform youtube` 可发现 YouTube、Filmot 与 Holodex 等渠道，`twitch` 可发现 Twitch 与 ChatArchive，`bilibili`、`qq`、`wechat` 也按目标平台关联原生及第三方来源。关联仅说明处理同平台材料；字幕、元数据、场次与评论仍按动作区分。缺少明确材料或动作时，第三方关联源不会自动逐一查询。
+
+```bash
+node dist/cli.js channels --home ./.sera --platform youtube --json
+node dist/cli.js search "Mozart" --home ./.sera --sources musicbrainz --platform musicbrainz --operation artist --json
+node dist/cli.js search "Bad Apple" --home ./.sera --sources bilibili --platform bilibili --operation videos --params '{"page":1}' --json
+```
+
+原生 B站搜索目前仅有 `videos`，`params.page` 选择结果页；当前没有用户搜索动作。未提供动作必填参数时，`search.plan.pendingActions` 返回 `source/operation/entrypoint/required`，该动作不请求。`entrypoint:"comments"` 应使用 `comments URL`／MCP `sera_comments`；把独立评论动作传给 `search` 会拒绝，视频候选不能替代评论。
+
+智谱、豆包与 SerpAPI 的目标平台均为 `web`。智谱用 `--operation search_std`、`search_pro`、`search_pro_sogou` 或 `search_pro_quark`，豆包用 `web`、`finance`、`game`、`health` 或 `gov`，SerpAPI 网页检索用 `google` 或 `bing`；配置 `engine` 作为默认动作。
 
 来源 ID 支持通过配置动态增加；`sources` 保存每源设置，`connectorFiles` 加载外部定义，`connectors` 内联定义。新增来源可沿用 `--sources`、`--operation` 与 `--params` 调用，完整格式见[连接器指南](connectors.md)。
 
@@ -116,7 +128,7 @@ node dist/cli.js search "检索增强生成" --sources opencli --platform zhihu 
 
 # 中文搜索与 Google／Bing 自然搜索
 node dist/cli.js research "国产数据库 文档" --sources zhipu,doubao --read-sources web --read-limit 3 --json
-node dist/cli.js search "TypeScript 文档" --sources serpapi --platform google --json
+node dist/cli.js search "TypeScript 文档" --sources serpapi --platform web --operation google --json
 
 # 学术记录与 Wiki
 node dist/cli.js search "retrieval augmented generation" --sources crossref,openalex,pubmed --json
@@ -141,9 +153,9 @@ node dist/cli.js image-search "动漫背景" --sources brave,baidu-images,sogou-
 node dist/cli.js reverse-image "https://example.org/frame.jpg" --sources serpapi,trace-moe,saucenao --json
 
 # 社交 API 按实际对象和授权范围查询
-node dist/cli.js search "Just Chatting" --sources twitch --platform categories --json
-node dist/cli.js search "检索" --sources discord --platform messages --json
-node dist/cli.js search "illustration" --sources instagram --platform hashtag --json
+node dist/cli.js search "Just Chatting" --sources twitch --platform twitch --operation categories --json
+node dist/cli.js search "检索" --sources discord --platform discord --operation messages --json
+node dist/cli.js search "illustration" --sources instagram --platform instagram --operation hashtag --json
 
 # 历史网页与公开馆藏
 node dist/cli.js search "https://example.org/" --sources wayback --at 20200101 --json
@@ -178,9 +190,11 @@ node dist/cli.js clean --json
 
 `search`／`research` 还支持 `--github-type repositories|code|issues`、重复的 `--domain` 和 `--since`。域名、时间过滤按来源的实际接口映射。用户使用原生搜索语法时，应指定来源，避免将同一表达式直接套给不同引擎。
 
-平台查询通过 `--sources` 与 `--platform` 选择实际动作；游戏 Wiki 和 Galgame 社区还需选择 `--group`。Bing RSS 不支持统一 `--since`，需要日期条件时选择支持的 API，或继续核对原文日期。
+平台查询通过 `--sources` 选提供者、`--platform` 选目标、`--operation` 选动作。作品目录、音乐及社交 API 的细分使用动作，例如 MusicBrainz 的 `artist`、Twitch 的 `clips`；游戏 Wiki 和 Galgame 社区还需选择 `--group`。Bing RSS 不支持统一 `--since`，需要日期条件时选择支持的 API，或继续核对原文日期。
 
 `comments` 支持 `--limit`、`--cursor`、`--parent` 和按来源定义的 `--order`；一次读取一个评论页，返回逐评论 ID、父子关系、正文、`scope` 与下一页游标，最多请求 100 条。图片动作最多请求 20 条，结果保留原图、承载页面和匹配类型等 `metadata`；图片链接、搜索缩略图与来源文章分别核对。
+
+`entrypoint:"images"` 使用 CLI `image-search`／`reverse-image` 或 MCP `sera_images`。SerpAPI 关键词图片选 `--operation google_images`／`bing_images`，图片 URL 输入选 `google_lens`；MCP 对应传 `operation` 与 `query` 或 `imageUrl`。这些动作使用图片入口，不能作为 `search` 动作执行。
 
 未指定 `--sources` 时，`search` 按 `intent` 选择可用来源，空结果、无关候选或错误继续换源，有有效候选后停止。显式来源保持并行聚合。`--intent` 可指定 `official`、`feedback`、`historical`、`game`、`galgame`、`academic`、`code`、`images` 或 `general`；重复 `--alias` 补充别名，初始后端无有效结果时最多重试首个不同别名。`runs[].attempts` 记录实际查询、后端和换路原因。相关性为保守词面判断，跨语言名称或歧义短名需 agent 消歧。
 
@@ -216,7 +230,7 @@ CLI 读取旧 `fields` 状态时先原子备份并迁移，也可以用 `migrate
 
 当前注册 125 个内置来源 ID，配置可增加动态来源；`capabilities --sources` 可缩小查看范围。Agent Reach 的渠道从统一 CLI 的 `channels` 发现；OpenCLI 从实时注册表发现接受 `query` 或 `keyword` 位置参数的只读搜索命令。来源注册与登录记录说明可调用的路径，实际账号权限、额度与结果仍由请求确认。
 
-`sera channels` 返回各平台的 `search`、`read`、`configured` 和搜索入口的 `browser`／`strategy`。这份清单说明 SERA 可匹配的操作，实际登录与返回内容由调用结果确认。OpenCLI 的平台搜索覆盖比原文映射广；只有 `read: true` 的平台可直接通过该适配读取，其余可显式选择网页正文源。
+`sera channels` 返回每个 `source/platform` 的 `search`、`read`、`configured`、`operations` 和入口信息；`operations[].entrypoint` 区分 `search`、`comments`、`images`，`inputSchema` 描述动作参数。平台关系不证明主体相同或数据独立，实际登录、材料和覆盖由调用结果确认。OpenCLI 的平台搜索覆盖比原文映射广；只有 `read: true` 的平台可直接通过该适配读取，其余可显式选择网页正文源。
 
 Agent 的来源选择表位于项目 Skill；[领域指南](../skills/sera-search/references/domains.md)覆盖知识百科、语言与古籍、技术文档、学术医学、软件包、标准法规及公共数据。默认 Wiki 包含中英日 Wikipedia、中文 Wiktionary／Wikisource／Wikivoyage 和 Commons；其他公开 MediaWiki 实例可配置 `wiki.sites`。网页与 Wiki 历史版本、Internet Archive 馆藏见[档案指南](../skills/sera-search/references/archives.md)。
 

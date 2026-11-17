@@ -58,7 +58,9 @@ export function taskRoute(query = '', intent?: Intent) {
 
 export function materialTypes(query: string): string[] {
   if (/^https?:\/\/\S+$/i.test(query.trim())) return [];
-  if (/直播弹幕|直播.*(?:发言|互动记录)|live.?chat/i.test(query)) return ['live-danmaku'];
+  if (/直播.*(?:弹幕|聊天|发言|互动记录)|live.?chat/i.test(query)) return ['live-danmaku'];
+  if (/直播.*(?:场次|记录|回放)|(?:直播间|Twitch).*记录|live.?session/i.test(query)) return ['live-session'];
+  if (/(?:视频|B站|哔哩哔哩|bilibili|YouTube|油管).*评论|评论区|video.?comments/i.test(query)) return ['video-comment'];
   if (/视频弹幕|video.?danmaku/i.test(query)) return ['video-danmaku'];
   if (/(?:UID|用户).*评论|历史评论/i.test(query)) return ['comment'];
   if (/字幕|台词|transcript|subtitle/i.test(query)) return ['subtitle'];
@@ -94,8 +96,11 @@ export function preferredSources(intent: Intent, query = '', types = materialTyp
   if (types.includes('clinical-trial')) return ['clinicaltrials'];
   if (types.includes('vulnerability')) return ['osv', 'github-advisory'];
   if (types.includes('weather-timeseries')) return ['open-meteo'];
-  if (types.includes('price-history')) return ['steamdb'];
+  if (types.includes('price-history')) return ['isthereanydeal', 'steamdb'];
   if (types.includes('patent')) return ['google-patents', 'j-platpat'];
+  if (/B站|哔哩哔哩|\bbilibili\b/i.test(query)) return ['bilibili', ...webSearchOrder];
+  if (/\byoutube\b|油管/i.test(query)) return ['youtube', ...webSearchOrder];
+  if (/\btwitch\b/i.test(query)) return ['twitch', ...webSearchOrder];
   if (['general', 'official', 'feedback', 'code'].includes(intent) && /中转|服务商|替代方案|性价比|选型|套餐对比|service providers?|alternatives?|compare/i.test(query)) {
     const community: SourceName[] = /\p{Script=Han}/u.test(query) ? ['bilibili', 'linuxdo'] : [];
     return /软件|模型|中转|插件|客户端|\bapi\b/i.test(query) ? ['github', ...community, ...webSearchOrder, 'agent-reach', 'opencli']

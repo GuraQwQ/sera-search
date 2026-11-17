@@ -1,13 +1,19 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { z } from 'zod';
 import type { ApiConfig, Config, Source, SourceName, SearchRequest, SearchHit, CommentRequest, CommentPage } from '../types.js';
 import { NotLoggedInError, notLoggedIn } from '../credentials.js';
 import { object, rows, string, date, epoch, hit, endpoint, response, json, document, permitted, fetchResponse } from './shared.js';
 import type { Row } from './shared.js';
+import { describeOperation } from './operations.js';
 
-function capability(name: SourceName, config: ApiConfig, platforms: string[]) {
+function capability(name: SourceName, config: ApiConfig, modes: Record<string, string[]>) {
   const loggedIn = Boolean(config.apiKey && (name !== 'twitch' || config.clientId));
+  const entries = Object.entries(modes);
+  if (config.engine && config.engine in modes) entries.sort(([first], [second]) => Number(second === config.engine) - Number(first === config.engine));
+  const operations = entries.map(([mode, types]) => describeOperation(mode, `${name} ${mode} 公开或授权记录`, types, z.strictObject({})));
   return { name, search: true, read: true, configured: config.enabled !== false && loggedIn,
-    category: 'catalog' as const, requiresLogin: true, loggedIn, platforms, requirement: loggedIn ? '已记录；按授权范围查询' : notLoggedIn };
+    category: 'catalog' as const, requiresLogin: true, loggedIn, platforms: [name], operations, contentTypes: [...new Set(operations.flatMap(operation => operation.contentTypes))],
+    accessMethod: 'api' as const, requirement: loggedIn ? '已记录；按授权范围查询' : notLoggedIn };
 }
 
 function requireKey(config: ApiConfig) { if (!config.apiKey) throw new NotLoggedInError(); }
@@ -23,7 +29,7 @@ function id(value: unknown, name: string) {
 
 function twitch(config: ApiConfig): Source {
   const platforms = ['channels', 'categories', 'streams', 'videos', 'clips'];
-  const cap = capability('twitch', config, platforms);
+  const cap = capability('twitch', config, { channels: ['channel'], categories: ['game'], streams: ['live-session'], videos: ['video'], clips: ['video'] });
   const get = async (path: string, params: Record<string, string>, signal: AbortSignal) => {
     requireKey(config);
     if (!config.clientId) throw new NotLoggedInError();
@@ -39,10 +45,10 @@ function twitch(config: ApiConfig): Source {
   };
   return {
     capability: cap,
-    channels: async () => platforms.map(platform => ({ source: 'twitch', platform, search: true, read: true, configured: cap.configured, browser: false, status: cap.loggedIn ? '已记录' : notLoggedIn })),
+    channels: async () => [{ source: 'twitch', platform: 'twitch', search: true, read: true, configured: cap.configured, operations: cap.operations, contentTypes: cap.contentTypes, browser: false, status: cap.loggedIn ? '已记录' : notLoggedIn }],
     async search(request) {
-      const platform = request.platform ?? config.engine ?? 'channels';
-      if (!platforms.includes(platform)) throw new Error('Twitch 支持 channels、categories、streams、videos、clips');
+      const platform = request.operation ?? config.engine ?? 'channels';
+      if (!platforms.includes(platform)) throw Object.assign(new Error('Twitch 支持 channels、categories、streams、videos、clips'), { code: 'UNSUPPORTED_OPERATION' });
       if (request.since && !['videos', 'clips'].includes(platform)) throw new Error('当前 Twitch 查询对象不支持发布日期过滤');
       let result: Row;
       if (['channels', 'categories'].includes(platform)) result = await get(`search/${platform}`, { query: request.query, first: String(request.limit) }, request.signal);
@@ -60,7 +66,7 @@ function twitch(config: ApiConfig): Source {
           : `https://www.twitch.tv/${encodeURIComponent(string(item.broadcaster_login) || string(item.user_login) || name)}`);
         return hit('twitch', { title, url, snippet: string(item.description) || [string(item.game_name), string(item.broadcaster_name), string(item.language)].filter(Boolean).join(' · '),
           publishedAt: ['videos', 'clips'].includes(platform) ? date(item.created_at) : undefined,
-          metadata: { id: item.id, platform, nextCursor: cursor, isLive: item.is_live, viewerCount: item.viewer_count, contentScope: 'metadata' } });
+          metadata: { id: item.id, platform: 'twitch', operation: platform, nextCursor: cursor, isLive: item.is_live, viewerCount: item.viewer_count, contentScope: 'metadata' } });
       }), request);
     },
     async read(url, signal) {
@@ -82,7 +88,7 @@ function twitch(config: ApiConfig): Source {
 }
 
 function discord(config: ApiConfig): Source {
-  const cap = capability('discord', config, ['messages']);
+  const cap = capability('discord', config, { messages: ['post'] });
   const get = async (path: string, params: Record<string, string>, signal: AbortSignal) => {
     requireKey(config);
     const url = endpoint(config, 'https://discord.com/api/v10/', path);
@@ -92,7 +98,7 @@ function discord(config: ApiConfig): Source {
   return {
     capability: cap,
     async search(request) {
-      if (request.platform && request.platform !== 'messages') throw new Error('Discord 当前查询 messages');
+      if ((request.operation ?? config.engine ?? 'messages') !== 'messages') throw Object.assign(new Error('Discord 当前查询 messages'), { code: 'UNSUPPORTED_OPERATION' });
       requireKey(config);
       const guild = id(config.guildId, 'Discord guildId');
       if (Array.from(request.query).length > 1024) throw new Error('Discord 查询最多 1024 字符');
@@ -136,7 +142,7 @@ function discord(config: ApiConfig): Source {
 
 function instagram(config: ApiConfig): Source {
   const platforms = ['users', 'posts', 'hashtag', 'hashtag-top', 'self-media'];
-  const cap = { ...capability('instagram', config, platforms), comments: true };
+  const cap = { ...capability('instagram', config, { users: ['account-metadata'], posts: ['post'], hashtag: ['post'], 'hashtag-top': ['post'], 'self-media': ['post'] }), comments: true };
   const get = async (path: string, params: Record<string, string>, signal: AbortSignal) => {
     requireKey(config);
     const url = endpoint(config, 'https://graph.facebook.com/v26.0/', path);
@@ -182,11 +188,11 @@ function instagram(config: ApiConfig): Source {
   }, signal)).business_discovery, 'Instagram 专业账号');
   return {
     capability: cap,
-    channels: async () => platforms.map(platform => ({ source: 'instagram', platform, search: true, read: true, configured: cap.configured, browser: false, status: cap.loggedIn ? '已记录' : notLoggedIn })),
+    channels: async () => [{ source: 'instagram', platform: 'instagram', search: true, read: true, configured: cap.configured, operations: cap.operations, contentTypes: cap.contentTypes, browser: false, status: cap.loggedIn ? '已记录' : notLoggedIn }],
     async search(request) {
       requireKey(config);
-      const platform = request.platform ?? config.engine ?? 'users';
-      if (!platforms.includes(platform)) throw new Error('Instagram 支持 users、posts、hashtag、hashtag-top、self-media');
+      const platform = request.operation ?? config.engine ?? 'users';
+      if (!platforms.includes(platform)) throw Object.assign(new Error('Instagram 支持 users、posts、hashtag、hashtag-top、self-media'), { code: 'UNSUPPORTED_OPERATION' });
       if (platform === 'users') {
         if (request.since) throw new Error('Instagram 用户资料没有可用的发布日期过滤');
         const name = username(request.query), item = await discovery(name, request.limit, request.signal);
@@ -211,7 +217,7 @@ function instagram(config: ApiConfig): Source {
         items = rows(result.data, 'Instagram'); paging = result.paging;
       }
       return filtered(items.flatMap(item => hit('instagram', { title: string(item.caption).split('\n')[0] || string(item.id), url: string(item.permalink), snippet: string(item.caption), publishedAt: date(item.timestamp) ?? epoch(item.timestamp),
-        metadata: { id: item.id, platform, mediaType: item.media_type, commentsCount: item.comments_count, likeCount: item.like_count, paging, contentScope: platform === 'self-media' ? 'authorized-account-media' : 'public-professional-media' } })), request);
+        metadata: { id: item.id, platform: 'instagram', operation: platform, mediaType: item.media_type, commentsCount: item.comments_count, likeCount: item.like_count, paging, contentScope: platform === 'self-media' ? 'authorized-account-media' : 'public-professional-media' } })), request);
     },
     async read(url, signal) {
       const parsed = new URL(url), match = ['instagram.com', 'www.instagram.com'].includes(parsed.hostname) ? parsed.pathname.match(/^\/([a-z0-9._]+)\/?$/i) : null;

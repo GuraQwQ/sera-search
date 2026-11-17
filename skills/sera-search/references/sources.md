@@ -2,7 +2,11 @@
 
 本指南用于选择 SERA 已接入的来源，以及在需要补充搜索入口时查阅官方语法。提供者能力看 `sera capabilities`，登录记录看 `sera auth`，具体平台及可匹配操作看 `sera channels`；结构化连接器看 `sera connectors`／MCP `sera_connectors`。参数和认证要求以 CLI 帮助及来源当前文档为准。
 
-字幕、直播历史、公开评审、研究产物、书目、漏洞、气象及专利等入口见[垂直来源与动作](../../../docs/specialist-sources.md)。先查动作 Schema，再提供参数；Aicu／Danmakus 通过 `sourceOptions` 分别指定 UID 与房间条件，按共同覆盖区间核对原始事件。
+字幕、直播记录、公开评审、研究产物、书目、漏洞、气象及专利等入口见[垂直来源与动作](../../../docs/specialist-sources.md)。先查动作 Schema，再按公开作品任务需要补参数；Aicu `room-danmaku.params.uid` 与 Danmakus `live-events.params.channelUid` 指主播 UID，按共同覆盖区间核对原始事件。
+
+`source` 是提供者，`platform` 是目标平台，`operation` 是动作。用 `channels --platform youtube` 可发现 YouTube、Filmot 与 Holodex，`twitch` 可发现 Twitch 与 ChatArchive；`bilibili`、`qq`、`wechat` 也关联原生与第三方入口。按所需材料、预算和证据缺口选择，关联不证明主体相同或数据独立，第三方关联源不会在缺少明确材料或动作时自动逐一查询。
+
+动作缺必填参数时，`search.plan.pendingActions` 返回 `source/operation/entrypoint/required`，该动作不请求。`entrypoint:comments` 使用 CLI `comments`／MCP `sera_comments`，`images` 使用 `image-search`／`reverse-image` 或 `sera_images`；专用动作看 `channels`，连接器导出仅含 `search` 定义。待补项与无命中都不能推出目标材料不存在。作品目录、音乐与社交 API 的细分由 `operation` 指定，例如 MusicBrainz 的 `artist`、Twitch 的 `clips`。
 
 ## 按对象选路
 
@@ -17,7 +21,9 @@
 | 公开账号、资料关联与头像比较 | `aliens-eye`／`sherlock` 可选扩展 | 先选站点与用户名，按需读取主页和关联；检测命中与主体归属分别核验 |
 | 地理对象、事件和时空数据 | `gods-eye-view` 独立扩展 | 先发现领域 Schema，再选区域、对象与预算；核对数据时间、采集范围和预测类型 |
 | 中文帖子、答案和评论 | 指定平台的 Agent Reach／OpenCLI | 是否取得完整对象，评论与正文分别记录 |
-| 视频内容 | 平台读取或字幕路径 | 标题、元数据、字幕、转录分别核对 |
+| 视频与作品演唱材料 | 视频候选、Filmot 字幕、Holodex 元数据及已配置平台读取 | 标题、元数据、字幕、转录分别核对；原生 B站目前只有 `videos` 与 `params.page`，没有用户搜索动作 |
+| Twitch 已收录场次与聊天回放 | `chatarchive` 的 `streams`／`replay` | 只覆盖已收录场次，关键词只筛回放当前页，保留时间与分页范围 |
+| 游戏价格记录 | `isthereanydeal` 当前价、历史低价与价格事件 | `price-history`／`game-price-history` 可匹配，游戏 ID、地区及实际覆盖分别核验 |
 | V2EX 帖子／节点 | V2EX 公开读取 | 浏览／读取接口与关键词检索的区别 |
 | 论文、医学与书目核验 | Crossref／OpenAlex／PubMed；arXiv 可走 OpenCLI | DOI／论文 ID；书目、摘要与全文的区别 |
 | Wiki、词典、古籍、文档站 | MediaWiki 直连，或官方文档域名与站内入口 | 语言、修订与软件版本；其他实例的 API 和访问条件 |
@@ -102,14 +108,14 @@ Exa 的查询适合描述想找到的材料；Brave 等关键词检索可使用�
 
 | 来源 | 认证与当前实现 | 过滤和内容边界 |
 |---|---|---|
-| [智谱 Web Search](https://docs.bigmodel.cn/api-reference/%E5%B7%A5%E5%85%B7-api/%E7%BD%91%E7%BB%9C%E6%90%9C%E7%B4%A2) | `zhipu`，Bearer Key；纯检索，配置 `engine` 可选 `search_std`／`search_pro`／`search_pro_sogou`／`search_pro_quark` | 查询最多 70 字符；按引擎映射 API 条件，再按已知域名／发布日期过滤；无正文读取 |
-| [豆包搜索 Custom](https://www.volcengine.com/docs/87772/2272953) | `doubao`，独立搜索专用 Bearer Key；当前为网页搜索 | 查询最多 100 字符；域名、日期和 `finance`／`game`／`health`／`gov` 行业条件；当前返回标题、链接和摘要 |
-| [SerpAPI](https://serpapi.com/search-api) | `serpapi`，API Key；网页 `--platform google`／`bing` | 自然搜索结果及独立关键词图片／Lens 动作；Google 网页映射日期条件，Bing 按已知发布日期本地过滤 |
+| [智谱 Web Search](https://docs.bigmodel.cn/api-reference/%E5%B7%A5%E5%85%B7-api/%E7%BD%91%E7%BB%9C%E6%90%9C%E7%B4%A2) | `zhipu`，Bearer Key，`platform:web`；`operation` 选 `search_std`／`search_pro`／`search_pro_sogou`／`search_pro_quark`，配置 `engine` 为默认 | 查询最多 70 字符；按引擎映射 API 条件，再按已知域名／发布日期过滤；无正文读取 |
+| [豆包搜索 Custom](https://www.volcengine.com/docs/87772/2272953) | `doubao`，独立搜索专用 Bearer Key，`platform:web`；`operation` 选 `web`／`finance`／`game`／`health`／`gov` | 查询最多 100 字符；域名、日期和行业条件；当前返回标题、链接和摘要 |
+| [SerpAPI](https://serpapi.com/search-api) | `serpapi`，API Key，`platform:web`；网页 `--operation google`／`bing` | 自然结果；独立 `images` 入口的 `operation` 为 `google_images`／`bing_images`／`google_lens`，输入 `query` 或 `imageUrl`；Google 网页映射日期条件，Bing 按已知发布日期本地过滤 |
 | [Crossref](https://www.crossref.org/documentation/retrieve-metadata/rest-api/)／[OpenAlex](https://docs.openalex.org/how-to-use-the-api/api-overview)／[PubMed](https://www.ncbi.nlm.nih.gov/books/NBK25501/) | 公开检索和单记录读取；OpenAlex／PubMed Key 可选 | DOI、作者、书目和可能存在的摘要／开放访问链接；元数据与全文分别获取 |
 | [MediaWiki](https://www.mediawiki.org/wiki/API:Main_page) | `wiki`，公开 Search／Revisions API；七个默认站点，可配置 `wiki.sites` | 中英日 Wikipedia；`oldid` 读取指定修订并保留版本 URL；修订时间为 `updatedAt` |
 | [skills.sh](https://skills.sh/) | `skills`，官方 CLI 使用的公开 `/api/search` | 技能标题、所属仓库与安装线索；正文和提交版本继续到 GitHub 核对 |
 | [Bangumi](https://github.com/bangumi/api)、[AniList](https://docs.anilist.co/)、[Jikan](https://docs.api.jikan.moe/)、[MangaDex](https://api.mangadex.org/docs/)、[VNDB](https://api.vndb.org/kana) | `bangumi`、`anilist`、`jikan`、`mangadex`、`vndb` 的公开资料查询 | 作品、名称、别名、类型、关联 ID 与元数据；用户列表、受限数据和章节图片按平台范围判断 |
-| [MusicBrainz](https://musicbrainz.org/doc/MusicBrainz_API)、[ListenBrainz](https://listenbrainz.readthedocs.io/en/latest/users/api/) | MusicBrainz 选 `recording|artist|release`；ListenBrainz 选 `user`，查询输入用户名 | 音乐实体及用户公开播放统计；MusicBrainz 设置有意义 UA 并节流 |
+| [MusicBrainz](https://musicbrainz.org/doc/MusicBrainz_API)、[ListenBrainz](https://listenbrainz.readthedocs.io/en/latest/users/api/) | `platform` 分别为 `musicbrainz`／`listenbrainz`；`operation` 分别选 `recording`／`artist`／`release` 或 `user` | 音乐实体及用户公开播放统计；MusicBrainz 设置有意义 UA 并节流 |
 | [Last.fm](https://www.last.fm/api)、[Discogs](https://www.discogs.com/developers) | `lastfm`、`discogs`，登记对应 Key／Token | 歌曲、艺人或发行记录；公开方法与用户会话操作分开 |
 | [Twitch](https://dev.twitch.tv/docs/api/reference/)、[Discord](https://docs.discord.com/developers/resources/message.md)、[Instagram](https://developers.facebook.com/docs/instagram-platform/) | `twitch` Token＋`clientId`；`discord` Bot Token＋`guildId`；`instagram` Token＋专业账号 `accountId` | 分类／频道等元数据、获授权服务器消息、专业账号／hashtag／授权媒体，详见平台指南 |
 | 视频／歌曲评论、关键词图片、来源匹配 | `comments`、`image-search`、`reverse-image` | 分页、父子关系、匹配类型与图片来源保留在结构化结果；范围由各动作和来源决定 |

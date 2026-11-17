@@ -1,11 +1,17 @@
-import type { ApiConfig, Config, SearchHit, SearchRequest, Source, SourceName } from '../types.js';
+import { z } from 'zod';
+import type { ApiConfig, Config, SearchHit, SearchRequest, Source, SourceName, SourceOperation } from '../types.js';
 import { NotLoggedInError, notLoggedIn } from '../credentials.js';
 import { object, rows, string, plain, date, hit, endpoint, json, apiHeaders, permitted } from './shared.js';
+import { describeOperation, selectOperation } from './operations.js';
 
-function capability(name: SourceName, config: ApiConfig) {
+const params = z.strictObject({});
+function capability(name: SourceName, config: ApiConfig, modes: string[]) {
   const loggedIn = Boolean(config.apiKey);
+  const ordered = config.engine && modes.includes(config.engine) ? [config.engine, ...modes.filter(mode => mode !== config.engine)] : modes;
+  const operations = ordered.map(mode => describeOperation(mode, `${name} 网页检索：${mode}`, ['page'], params));
   return { name, search: true, read: false, configured: config.enabled !== false && loggedIn,
-    requiresLogin: true, loggedIn, requirement: loggedIn ? '已记录' : notLoggedIn, category: 'web' as const };
+    requiresLogin: true, loggedIn, requirement: loggedIn ? '已记录' : notLoggedIn, category: 'web' as const,
+    platforms: ['web'], operations, contentTypes: ['page'], accessMethod: 'api' as const };
 }
 
 function requireKey(config: ApiConfig) { if (!config.apiKey) throw new NotLoggedInError(); }
@@ -14,10 +20,10 @@ function boundedQuery(query: string, maximum: number, name: string) {
   if (Array.from(query).length > maximum) throw new Error(`${name} 查询最多 ${maximum} 个字符，请使用聚焦的搜索词`);
 }
 
-function engine(config: ApiConfig, request: SearchRequest) {
-  const value = request.platform ?? config.engine ?? 'google';
-  if (!['google', 'bing'].includes(value)) throw new Error('SERP 引擎需要 google 或 bing');
-  return value;
+function operation(config: ApiConfig, request: SearchRequest, operations: SourceOperation[]) {
+  const selected = selectOperation({ ...request, operation: request.operation ?? config.engine }, operations.filter(item => !item.entrypoint || item.entrypoint === 'search'));
+  params.parse(request.params ?? {});
+  return selected;
 }
 
 function keyword(request: SearchRequest) {
@@ -52,14 +58,22 @@ function errorCode(value: unknown, name: string) {
 
 export function createWebSources(config: Config): Source[] {
   const zhipu = config.zhipu ?? {}, doubao = config.doubao ?? {}, serpapi = config.serpapi ?? {};
+  const zhipuCapability = capability('zhipu', zhipu, ['search_std', 'search_pro', 'search_pro_sogou', 'search_pro_quark']);
+  const doubaoCapability = capability('doubao', doubao, ['web', 'finance', 'game', 'health', 'gov']);
+  const serpCapability = capability('serpapi', serpapi, ['google', 'bing']);
+  for (const name of ['google_images', 'bing_images', 'google_lens']) {
+    const input = name === 'google_lens' ? z.strictObject({ imageUrl: z.string().url(), query: z.string().trim().min(1).optional(), limit: z.number().int().min(1).max(20).default(5) })
+      : z.strictObject({ query: z.string().trim().min(1), limit: z.number().int().min(1).max(20).default(5) });
+    serpCapability.operations.push({ ...describeOperation(name, name === 'google_lens' ? '按图片 URL 反向检索视觉匹配' : `${name} 关键词图片搜索`, ['image'], input), entrypoint: 'images' });
+  }
+  serpCapability.contentTypes.push('image');
   return [
     {
-      capability: capability('zhipu', zhipu),
+      capability: zhipuCapability,
       async search(request) {
+        const searchEngine = operation(zhipu, request, zhipuCapability.operations);
         requireKey(zhipu);
         boundedQuery(request.query, 70, '智谱');
-        const searchEngine = zhipu.engine ?? 'search_std';
-        if (!['search_std', 'search_pro', 'search_pro_sogou', 'search_pro_quark'].includes(searchEngine)) throw new Error('智谱 search_engine 不受支持');
         const payload: Record<string, unknown> = { search_query: request.query, search_engine: searchEngine, search_intent: false, content_size: 'medium' };
         if (searchEngine !== 'search_pro_quark') payload.count = searchEngine === 'search_pro_sogou' ? Math.ceil(request.limit / 10) * 10 : request.limit;
         if (request.domains?.length === 1 && searchEngine !== 'search_pro_quark') payload.search_domain_filter = request.domains[0];
@@ -75,21 +89,19 @@ export function createWebSources(config: Config): Source[] {
       },
     },
     {
-      capability: capability('doubao', doubao),
-      channels: async () => ['web', 'finance', 'game', 'health', 'gov'].map(platform => ({ source: 'doubao', platform,
+      capability: doubaoCapability,
+      channels: async () => [{ source: 'doubao', platform: 'web', operations: doubaoCapability.operations, contentTypes: ['page'],
         search: true, read: false, configured: doubao.enabled !== false && Boolean(doubao.apiKey), browser: false,
-        status: doubao.apiKey ? '已记录' : notLoggedIn })),
+        status: doubao.apiKey ? '已记录' : notLoggedIn }],
       async search(request) {
+        const selected = operation(doubao, request, doubaoCapability.operations);
         requireKey(doubao);
         boundedQuery(request.query, 100, '豆包搜索');
         if ((request.domains?.length ?? 0) > 20) throw new Error('豆包搜索最多支持 20 个域名');
         const filter: Record<string, unknown> = { NeedContent: false, NeedUrl: true };
         if (request.domains?.length) filter.Sites = request.domains.join('|');
         if (request.since) filter.TimeRange = `${request.since}..${new Date().toISOString().slice(0, 10)}`;
-        if (request.platform && request.platform !== 'web') {
-          if (!['finance', 'game', 'health', 'gov'].includes(request.platform)) throw new Error('豆包行业搜索支持 finance、game、health 或 gov');
-          filter.Industry = request.platform;
-        }
+        if (selected !== 'web') filter.Industry = selected;
         const data = await json(endpoint(doubao, 'https://open.feedcoopapi.com/search_api/', 'web_search'), {
           method: 'POST', headers: apiHeaders(doubao, 'Authorization', true),
           body: JSON.stringify({ Query: request.query, SearchType: 'web', Count: request.limit, Filter: filter, QueryControl: { QueryRewrite: false } }), signal: request.signal,
@@ -105,10 +117,10 @@ export function createWebSources(config: Config): Source[] {
       },
     },
     {
-      capability: capability('serpapi', serpapi),
+      capability: serpCapability,
       async search(request) {
+        const searchEngine = operation(serpapi, request, serpCapability.operations);
         requireKey(serpapi);
-        const searchEngine = engine(serpapi, request);
         const url = endpoint(serpapi, 'https://serpapi.com/', 'search.json');
         url.searchParams.set('api_key', serpapi.apiKey!);
         url.searchParams.set('engine', searchEngine);

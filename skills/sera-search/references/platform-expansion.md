@@ -4,14 +4,18 @@
 
 ## 指定平台的覆盖
 
+`source` 标识提供者，`platform` 标识目标平台，`operation` 标识动作。`channels --platform 平台` 可发现处理同平台材料的原生与第三方来源；`inputSchema`、`contentTypes`、`entrypoint` 决定下一步。平台关联不证明账号主体相同或数据独立，按公开作品任务需要、调用预算与覆盖选择材料。
+
 | 平台／对象 | 当前实现 | 调用与范围 |
 |---|---|---|
 | 百度图片 | `baidu-images` 关键词图片动作 | `image-search query --sources baidu-images`；网页内部协议按实际返回处理 |
 | 搜狗图片 | `sogou-images` 关键词图片入口 | 内部关键词接口或页面初始数据；反向图片输入选择 Lens／动画帧／插画匹配来源 |
 | Reddit | 平台帖子搜索与有限正文／评论读取；`sites` 可发现公开页面 | 专用平台路线按登录记录查询，正文读取保留当前后端内容范围 |
-| Twitch | 官方 Helix 分类、频道、直播、视频及剪辑 | `--sources twitch --platform categories|channels|streams|videos|clips`；Token＋Client-Id |
-| Discord | 官方获授权服务器消息搜索、消息读取及有限上下文 | `--sources discord --platform messages`；Bot Token、`guildId` 与可选 `channelId` |
-| Instagram／ins | 专业账号、近期媒体、hashtag、授权媒体评论；上游用户搜索仍可选 | 同名来源的 `users|posts|hashtag|hashtag-top|self-media`，Token＋`accountId` |
+| Bilibili | `bilibili` 原生视频候选和元数据，Aicu／Danmakus 等提供各自收录材料 | 原生 `--platform bilibili --operation videos`，`params.page` 选页；当前没有原生用户搜索动作 |
+| YouTube | `youtube` 原生、Filmot 字幕、Holodex 频道与直播／切片元数据 | 用 `channels --platform youtube` 发现动作，字幕、视频元数据与独立评论分别调用 |
+| Twitch | 官方 Helix 分类、频道、直播、视频及剪辑；ChatArchive 已归档场次与聊天回放 | `--sources twitch --platform twitch --operation clips` 等；Token＋Client-Id。ChatArchive `replay` 仅筛回放当前页 |
+| Discord | 官方获授权服务器消息搜索、消息读取及有限上下文 | `--sources discord --platform discord --operation messages`；Bot Token、`guildId` 与可选 `channelId` |
+| Instagram／ins | 专业账号、近期媒体、hashtag、授权媒体评论；上游用户搜索仍可选 | `--platform instagram`，`operation` 选 `users`／`posts`／`hashtag`／`hashtag-top`／`self-media`，Token＋`accountId` |
 | skills.sh | `skills` 使用官方 CLI 的公开搜索端点 | 搜索技能，再核对所属仓库、`SKILL.md` 与提交版本 |
 | 游戏 Wiki | Minecraft、Terraria、THBWiki 已由当前适配器取得命中 | 使用[独立游戏 Wiki 目录组](game-wikis.md)，按游戏选择站点 |
 | Galgame 社区 | 作品数据库与九组公开站点目录 | `vndb`／`bangumi` 查询记录，`sites` 加[独立目录](galgame.md)选择社区 |
@@ -32,7 +36,7 @@
 
 ## 独立评论动作
 
-`comments URL`／`sera_comments` 绑定歌曲、视频或授权媒体，获取顶层或指定父评论的回复页。每次返回 `page.comments`、`page.scope`、`page.nextCursor` 与实际截断线索；下一页传 `--cursor`，楼中楼传 `--parent`，单页请求最多 100 条。原始评论正文保存后再展示分页。
+`comments URL`／`sera_comments` 绑定歌曲、视频或授权媒体，获取顶层或指定父评论的回复页。渠道将这些独立动作标为 `entrypoint:comments`；直接传给 `search` 会拒绝，视频候选不能作为评论结果。`search.plan.pendingActions` 提供相应入口和必填字段，补齐后按任务需要执行。每次返回 `page.comments`、`page.scope`、`page.nextCursor` 与实际截断线索；下一页传 `--cursor`，楼中楼传 `--parent`，单页请求最多 100 条。原始评论正文保存后再展示分页。
 
 | 来源 | 当前路径 | 范围与认证 |
 |---|---|---|
@@ -53,7 +57,7 @@
 
 ## 关键词图片搜索与反向识图
 
-`image-search query` 和 `reverse-image imageURL` 分别调用关键词或图片输入路径。Brave／SerpAPI 图片能力附在现有来源，百度／搜狗图片、trace.moe、SauceNAO 使用各自来源。结果的 `metadata` 保留图片、承载页面、缩略图、匹配类型和实际后端线索；图片地址与文章证据分别核对。
+`image-search query` 和 `reverse-image imageURL` 分别调用关键词或图片输入路径，MCP 使用 `sera_images`。渠道 `entrypoint:images` 的动作通过 `operation` 选择；Brave／SerpAPI 图片能力附在现有来源，百度／搜狗图片、trace.moe、SauceNAO 使用各自来源。结果的 `metadata` 保留图片、承载页面、缩略图、匹配类型和实际后端线索；图片地址与文章证据分别核对。
 
 - **百度图片**：`baidu-images` 调用 [image.baidu.com](https://image.baidu.com/) 的内部关键词路径；响应需要真实图片项。远端网页协议、返回格式和访问限制会变化，来源记录保留实际结果与失败原因。
 - **百度 AI 图像搜索**：[官方说明](https://ai.baidu.com/ai-doc/IMAGESEARCH/Uk3bczr77)明确搜索用户自建图库，需要先入库；它不能替代百度全网搜图／识图。
@@ -63,7 +67,7 @@
 
 关键词图片、OCR、物体识别和来源追溯是不同能力。当前动作以接口返回的对象和范围为准，选择来源时核对它支持的输入及匹配类型。
 
-图片命中在 `retrievals[].metadata` 保存 `imageUrl`、`thumbnail`、`matchType` 及来源特定信息；`hit.url` 指向承载／作品页面。SerpAPI 关键词图片可选 `google|bing`，图片输入走 Google Lens。trace.moe 相似度标为 `0..1`，SauceNAO 标为 `0..100`，不同分数尺度不能直接比较。
+图片命中在 `retrievals[].metadata` 保存 `imageUrl`、`thumbnail`、`matchType` 及来源特定信息；`hit.url` 指向承载／作品页面。SerpAPI 使用目标平台 `web`，关键词图片选 `--operation google_images`／`bing_images`，图片 URL 输入选 `google_lens`；MCP 对应传 `operation` 与 `query` 或 `imageUrl`。网页检索的 `google`／`bing` 属于另一入口。trace.moe 相似度标为 `0..1`，SauceNAO 标为 `0..100`，不同分数尺度不能直接比较。
 
 ## 音乐、动漫、漫画与宅文化
 

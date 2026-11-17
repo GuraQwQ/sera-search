@@ -20,8 +20,8 @@ import { createDiscoverySources } from './providers/discovery.js';
 import { createArchiveSources } from './providers/archives.js';
 import { createForumSources } from './providers/forums.js';
 import { createEntitySources, steamDocumentMatches } from './providers/entities.js';
-import { directTarget, specificSource, taskRoute, preferredSources, materialTypes } from './routing.js';
-import { legacyContentTypes, specialistSites } from './provider-catalog.js';
+import { directTarget, specificSource, taskRoute, preferredSources, materialTypes, webSearchOrder } from './routing.js';
+import { legacyContentTypes, specialistSites, relatedPlatforms, materialMatches } from './provider-catalog.js';
 import { assessRelevance, discoveryTerms } from './providers/relevance.js';
 import { researchStateSchema, subjectSchema, criterionSchema, prepareResearch, inspectResearch, assessmentKey } from './research.js';
 export { researchStateSchema } from './research.js';
@@ -31,7 +31,7 @@ import { createFeedSources } from './providers/feeds.js';
 import { createMetadataSource } from './providers/metadata-parser.js';
 import { BackendPool, createBackendSources } from './backends.js';
 import { createExtensionSources } from './extensions.js';
-import { locatorSchema } from './providers/operations.js';
+import { locatorSchema, describeOperation } from './providers/operations.js';
 import { createResearchApiSources } from './providers/research-apis.js';
 import { createSpecialistApiSources } from './providers/specialist-apis.js';
 import { createHistoryApiSources } from './providers/history-apis.js';
@@ -76,7 +76,7 @@ export const researchSchema = searchSchema.extend({
 });
 
 export const commentsSchema = z.object({ url: z.string().url(), sources: z.array(sourceNameSchema).min(1).optional(), limit: z.number().int().min(1).max(100).default(20), cursor: z.string().optional(), parentId: z.string().optional(), order: z.string().optional() });
-export const imagesSchema = z.object({ query: z.string().trim().min(1).optional(), imageUrl: z.string().url().optional(), sources: z.array(sourceNameSchema).min(1).optional(), platform: z.string().optional(), limit: z.number().int().min(1).max(20).default(5) }).refine(value => value.query || value.imageUrl, '需要关键词或图片 URL');
+export const imagesSchema = z.object({ query: z.string().trim().min(1).optional(), imageUrl: z.string().url().optional(), sources: z.array(sourceNameSchema).min(1).optional(), platform: z.string().regex(platformIdPattern).optional(), operation: z.string().regex(platformIdPattern).optional(), limit: z.number().int().min(1).max(20).default(5) }).refine(value => value.query || value.imageUrl, '需要关键词或图片 URL');
 
 export function mergeHits(hits: SearchHit[]): AggregatedHit[] {
   const merged = new Map<string, AggregatedHit>();
@@ -123,10 +123,17 @@ export class Engine {
       attach('serpapi').capability.images = true;
       attach('brave').images = request => braveImages(config.brave, request);
       attach('brave').capability.images = true;
+      attach('brave').capability.operations!.push({ ...describeOperation('keyword', '按关键词检索图片', ['image'], z.object({ query: z.string().trim().min(1) })), entrypoint: 'images' });
     }
     for (const source of this.sources) {
       source.capability.contentTypes ??= legacyContentTypes[source.capability.name] ?? specialistSites[source.capability.name as keyof typeof specialistSites]?.contentTypes;
+      source.capability.platforms = [...new Set(this.config.connectors?.find(item => item.id === source.capability.name)?.platforms ?? relatedPlatforms[source.capability.name] ?? (webSearchOrder.includes(source.capability.name) || ['web', 'serpapi'].includes(source.capability.name) ? ['web'] : source.capability.platforms ?? [source.capability.name]))];
+      if (source.connector) source.connector.platforms = source.capability.platforms;
+      if (source.comments) {
+        source.capability.operations = [...(source.capability.operations ?? []).filter(item => item.entrypoint !== 'comments'), { ...describeOperation('comments', '读取指定公开对象的评论单页，按返回游标续读', ['bilibili', 'youtube'].includes(source.capability.name) ? ['video-comment'] : ['comment'], commentsSchema), entrypoint: 'comments' }];
+      }
       if (!sources) { if (source.capability.operations) source.capability.operations = allowedOperations(source.capability.operations); applyPolicy(config, source); }
+      if (source.capability.operations?.length) source.capability.contentTypes = [...new Set([...(source.capability.contentTypes ?? []), ...source.capability.operations.flatMap(item => item.contentTypes)])];
     }
     this.store = new EvidenceStore(config);
   }
@@ -140,17 +147,20 @@ export class Engine {
     const results = await Promise.all(names.map(async name => {
       const source = this.sources.find(item => item.capability.name === name);
       const started = Date.now(), signal = this.signal(options.signal), requests: NetworkRequest[] = [];
-      if (!source || source.channels && !source.capability.configured) return { channels: [], run: this.unavailable(name, source) };
+      if (!source) return { channels: [], run: this.unavailable(name, source) };
       try {
         signal.throwIfAborted();
-        const channels: Channel[] = source.channels ? await httpTrace.run(requests, () => source.channels!(signal)) : [{ source: name,
-          platform: source.capability.platforms?.[0] ?? (['exa', 'tavily', 'brave', 'web'].includes(name) ? 'web' : name),
-          search: source.capability.search, read: source.capability.read, configured: source.capability.configured,
+        const channels: Channel[] = source.channels && source.capability.configured && !this.config.connectors?.find(item => item.id === name)?.platforms ? await httpTrace.run(requests, () => source.channels!(signal)) : (source.capability.platforms ?? [name]).map(platform => ({ source: name,
+          platform,
+          search: source.capability.search && (!source.capability.searchPlatforms || source.capability.searchPlatforms.includes(platform)), read: source.capability.read, configured: source.capability.configured,
           comments: source.capability.comments, images: source.capability.images,
           operations: source.capability.operations, contentTypes: source.capability.contentTypes,
-          browser: false, description: source.capability.requirement, status: source.capability.requiresLogin && !source.capability.loggedIn ? notLoggedIn : source.capability.configured ? '可调用' : '不可用' }];
+          browser: false, description: source.capability.requirement, status: source.capability.requiresLogin && !source.capability.loggedIn ? notLoggedIn : source.capability.configured ? '可调用' : '不可用' }));
         const state = accessState(this.config, source);
-        const selected = (options.platform ? channels.filter(channel => channel.platform === options.platform) : channels).map(channel => ({ ...channel, access: source.capability.access, priority: state.priority, automatic: channel.configured && state.automatic, operations: channel.operations ?? source.capability.operations, ...(state.reason ? { status: state.reason } : {}) }));
+        const selected = (options.platform ? channels.filter(channel => channel.platform === options.platform || options.platform === 'academic' && source.capability.category === 'academic') : channels).map(channel => {
+          const operations = channel.operations ? [...channel.operations, ...(source.capability.operations ?? []).filter(operation => operation.entrypoint && operation.entrypoint !== 'search' && !channel.operations!.some(item => item.name === operation.name && item.entrypoint === operation.entrypoint))] : source.capability.operations;
+          return { ...channel, comments: channel.comments ?? source.capability.comments, images: channel.images ?? source.capability.images, access: source.capability.access, priority: state.priority, automatic: channel.configured && state.automatic, operations, ...(state.reason ? { status: state.reason } : {}) };
+        });
         return { channels: selected, run: { source: name, status: selected.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: selected.length, network: networkReport(requests, this.config) } as SourceRun };
       } catch (error) { return { channels: [], run: { ...await this.failure(name, error, started, signal), network: networkReport(requests, this.config) } }; }
     }));
@@ -197,15 +207,36 @@ export class Engine {
     if (input.since && input.until && input.since > input.until) throw new Error('since 不能晚于 until');
     const material = input.contentTypes ?? materialTypes(input.query);
     const inferred = taskRoute(input.query, input.intent), route = material.length ? { ...inferred, reason: `按材料 ${material.join('、')} 匹配来源和动作；时间条件由动作解释` } : inferred;
+    const supportsPlatform = (source: Source) => !input.platform || (source.capability.searchPlatforms ?? source.capability.platforms)?.includes(input.platform)
+      || ['agent-reach', 'opencli'].includes(source.capability.name) || Boolean(input.sources?.includes(source.capability.name) && source.capability.backend && source.channels && !source.capability.searchPlatforms) || input.platform === 'academic' && source.capability.category === 'academic';
+    const searchOperations = (source: Source) => source.capability.operations?.filter(item => !item.entrypoint || item.entrypoint === 'search');
+    const operationFor = (source: Source) => input.sourceOptions?.[source.capability.name]?.operation ?? input.operation
+      ?? searchOperations(source)?.filter(item => materialMatches(item.contentTypes, material)).sort((a, b) => a.contentTypes.length - b.contentTypes.length)[0]?.name;
+    const parametersFor = (source: Source) => input.sourceOptions?.[source.capability.name]?.params ?? input.params ?? {};
+    const requiredFor = (source: Source, operation: string | undefined) => {
+      const schema = source.capability.operations?.find(item => item.name === operation)?.inputSchema;
+      const properties = schema?.properties as Record<string, { default?: unknown }> | undefined;
+      return ((schema?.required as string[] | undefined) ?? []).filter(key => parametersFor(source)[key] === undefined && properties?.[key]?.default === undefined);
+    };
+    const pendingActions = this.sources.filter(source => (!input.sources || input.sources.includes(source.capability.name)) && supportsPlatform(source)).flatMap(source => {
+      const requested = input.sourceOptions?.[source.capability.name]?.operation ?? input.operation;
+      return (source.capability.operations ?? []).filter(operation => operation.entrypoint !== 'images' && (requested ? operation.name === requested : material.length ? materialMatches(operation.contentTypes, material) : Boolean(input.sources || input.platform) && operation === searchOperations(source)?.[0])).flatMap(operation => {
+        const required = requiredFor(source, operation.name);
+        return operation.entrypoint === 'comments' || required.length ? [{ source: source.capability.name, operation: operation.name, entrypoint: operation.entrypoint ?? 'search' as const, required }] : [];
+      });
+    });
     const selected = input.sources ? [...new Set(input.sources)] : input.at ? ['wayback' as SourceName] : input.platform
-      ? this.sources.filter(source => source.capability.configured && source.search && (source.capability.platforms?.includes(input.platform!) || ['agent-reach', 'opencli'].includes(source.capability.name) || input.platform === 'academic' && source.capability.category === 'academic')).map(source => source.capability.name)
+      ? this.sources.filter(source => source.capability.configured && source.search && supportsPlatform(source)).map(source => source.capability.name)
        : [...new Set<SourceName>([...(sourceOrder ?? preferredSources(route.intent, input.query, material)), ...(material.length || input.operation ? this.sources.filter(source => source.search && source.capability.configured).map(source => source.capability.name) : ['agent-reach' as const])])].filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search && (name !== 'sites' || Boolean(input.platform))));
     const matching = selected.filter(name => {
-      const capability = this.sources.find(source => source.capability.name === name)?.capability;
-      return (input.sources || input.at || !material.length || material.some(type => capability?.contentTypes?.includes(type) || capability?.operations?.some(operation => operation.contentTypes.includes(type))))
-        && (!input.operation || input.sources || capability?.operations?.some(operation => operation.name === input.operation));
+      const source = this.sources.find(source => source.capability.name === name);
+      if (!source) return Boolean(input.sources);
+      const operations = searchOperations(source), operation = operationFor(source), effective = operations?.find(item => item.name === operation) ?? (!operation ? operations?.[0] : undefined);
+      if (!input.sources && !material.length && !operation && relatedPlatforms[name]) return false;
+      if (material.length && operations?.length && !operation && !materialMatches(operations.flatMap(item => item.contentTypes), material)) return false;
+      return (input.sources || supportsPlatform(source)) && (input.sources || input.at || !material.length || materialMatches(effective?.contentTypes ?? operations?.flatMap(item => item.contentTypes) ?? source.capability.contentTypes, material))
+        && (!operation || input.sources || Boolean(effective)) && !requiredFor(source, effective?.name).length;
     });
-    const operationFor = (source: Source) => input.sourceOptions?.[source.capability.name]?.operation ?? input.operation ?? source.capability.operations?.find(item => material.some(type => item.contentTypes.includes(type)))?.name;
     if (!input.sources) {
       for (let index = matching.length - 1; index >= 0; index--) {
         const source = this.sources.find(item => item.capability.name === matching[index])!;
@@ -224,6 +255,7 @@ export class Engine {
     const run = async (name: SourceName, query = input.query, filter = false) => {
       const source = this.sources.find(item => item.capability.name === name);
       if (!source?.search || !source.capability.configured) return { hits: [], run: this.unavailable(name, source) };
+      if (!supportsPlatform(source)) return { hits: [], run: { source: name, status: 'unavailable' as const, elapsedMs: 0, returned: 0, code: 'UNSUPPORTED_PLATFORM', message: '所选来源不支持此平台，请查看 channels' } };
       const restricted = this.accessFailure(source, operationFor(source));
       if (restricted) return { hits: [], run: restricted };
       const settings = { operation: input.sourceOptions?.[name]?.operation ?? input.operation, params: input.sourceOptions?.[name]?.params ?? input.params };
@@ -232,7 +264,7 @@ export class Engine {
       let coverage: SourceRun['coverage'] = { scope: '本次检索返回范围', completeness: 'unknown', requested: { since: input.since, until: input.until }, limitations: ['检索命中数量不表示数据收录完整'] };
       try {
         signal.throwIfAborted();
-        if (settings.operation && !source.capability.operations?.some(operation => operation.name === settings.operation)) throw Object.assign(new Error('来源不支持此操作，请查看 channels'), { code: 'UNSUPPORTED_OPERATION' });
+        if (settings.operation && !searchOperations(source)?.some(operation => operation.name === settings.operation)) throw Object.assign(new Error('此动作不能通过 search 执行，请查看 channels 的 entrypoint'), { code: 'UNSUPPORTED_OPERATION' });
         if (settings.params && Object.keys(settings.params).length && !source.capability.operations?.length) throw Object.assign(new Error('来源未声明结构化参数，请查看 channels'), { code: 'UNSUPPORTED_PARAMETERS' });
         const operation = operationFor(source);
         const returned = await httpTrace.run(requests, () => source.search!({ ...input, ...settings, query, operation, signal, onAttempt: attempt => attempts.push(attempt), onCoverage: value => { coverage = value; } }));
@@ -289,7 +321,8 @@ export class Engine {
     const good = runs.some(run => ['ok', 'empty'].includes(run.status));
     const failed = runs.some(run => !['ok', 'empty'].includes(run.status) || run.code === 'PARTIAL_RESULT');
     return { query: input.query, hits, runs, route, plan: { strategy, contentTypes: material, selected: scheduled,
-      stopReason: options.signal?.aborted ? 'cancelled' : strategy === 'fallback' && enough() ? 'enough-results' : scheduled.length < matching.length ? 'budget' : 'exhausted' }, status: !good ? 'error' : failed ? 'partial' : hits.length ? 'ok' : 'empty' };
+      ...(pendingActions.length ? { pendingActions } : {}),
+      stopReason: options.signal?.aborted ? 'cancelled' : strategy === 'fallback' && enough() ? 'enough-results' : scheduled.length < matching.length ? 'budget' : 'exhausted' }, status: !good ? pendingActions.length ? 'partial' : 'error' : failed ? 'partial' : hits.length ? 'ok' : 'empty' };
   }
 
   async images(options: Omit<ImageRequest, 'signal'> & { sources?: SourceName[]; signal?: AbortSignal }): Promise<SearchReport> {
@@ -299,14 +332,18 @@ export class Engine {
     const run = async (name: SourceName) => {
       const source = this.sources.find(item => item.capability.name === name), started = Date.now(), signal = this.signal(options.signal), requests: NetworkRequest[] = [];
       if (!source?.images || !source.capability.configured) return { hits: [], run: this.unavailable(name, source) };
-      const restricted = this.accessFailure(source); if (restricted) return { hits: [], run: restricted };
-      try { const hits = await httpTrace.run(requests, () => source.images!({ ...input, signal })); return { hits, run: { source: name, status: hits.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: hits.length, network: networkReport(requests, this.config) } as SourceRun }; }
+      const restricted = this.accessFailure(source, input.operation); if (restricted) return { hits: [], run: restricted };
+      try {
+        if (input.platform && !source.capability.platforms?.includes(input.platform)) throw Object.assign(new Error('所选来源不支持此平台，请查看 channels'), { code: 'UNSUPPORTED_PLATFORM' });
+        if (input.operation && !source.capability.operations?.some(item => item.name === input.operation && item.entrypoint === 'images')) throw Object.assign(new Error('此动作不能通过 images 执行，请查看 channels 的 entrypoint'), { code: 'UNSUPPORTED_OPERATION' });
+        const hits = await httpTrace.run(requests, () => source.images!({ ...input, signal })); return { hits, run: { source: name, status: hits.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: hits.length, network: networkReport(requests, this.config) } as SourceRun };
+      }
       catch (error) { return { hits: [], run: { ...await this.failure(name, error, started, signal), network: networkReport(requests, this.config) } }; }
     };
     const results = [];
     if (input.sources) {
       for (let start = 0; start < names.length; start += 3) { if (options.signal?.aborted) break; results.push(...await Promise.all(names.slice(start, start + 3).map(run))); }
-    } else for (const name of names) { if (options.signal?.aborted) break; const source = this.sources.find(item => item.capability.name === name); if (source?.capability.access && !accessState(this.config, source).automatic) continue; results.push(await run(name)); if (mergeHits(results.flatMap(item => item.hits)).length >= input.limit) break; }
+    } else for (const name of names) { if (options.signal?.aborted) break; const source = this.sources.find(item => item.capability.name === name); if (source?.capability.access && !accessState(this.config, source, input.operation).automatic || input.platform && !source?.capability.platforms?.includes(input.platform) || input.operation && !source?.capability.operations?.some(item => item.name === input.operation && item.entrypoint === 'images')) continue; results.push(await run(name)); if (mergeHits(results.flatMap(item => item.hits)).length >= input.limit) break; }
     const hits = mergeHits(results.flatMap(item => item.hits)), runs = results.map(item => item.run), good = runs.some(run => ['ok', 'empty'].includes(run.status));
     return { query: input.query ?? input.imageUrl!, hits, runs, status: !good ? 'error' : runs.some(run => !['ok', 'empty'].includes(run.status)) ? 'partial' : hits.length ? 'ok' : 'empty' };
   }
