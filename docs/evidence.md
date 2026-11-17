@@ -14,7 +14,7 @@
 
 多个已知链接用 `read-many`（MCP：`sera_read_many`），最多20项、三路并行；重复 URL 合并请求，结果保持输入顺序，失败逐项返回。已知 Steam AppID、Niconico ID、DOI、PMID、`wikidata:Q28865` 这类明确实体 ID 可直接传给 `read` 或 `research`，无需先跑搜索。
 
-已知视频可按 `channels` 的 `entrypoint:read` 选择元数据或字幕，`read` 支持 `operation`、`params`、`contentTypes`。OpenCLI 的 YouTube `video` 和 B站 `video` 保留字段记录，类型为 `metadata`；`transcript`／`subtitle` 取得的实际文本类型为 `subtitle`，并保留接口给出的时间标记。不同动作、参数、材料和 `locator` 分别匹配缓存；同一 URL 的评论页不能充当视频正文或元数据。Wikidata 声明和外部 ID、VNDB 发行语言与商店关联仍属于各自数据库的记录，事实结论继续核对声明范围和原始出处。
+已知视频可按 `channels` 的 `entrypoint:read` 选择元数据或字幕，`read` 支持 `operation`、`params`、`contentTypes`。OpenCLI 的 YouTube `video` 和 B站 `video` 保留字段记录，类型为 `metadata`；`transcript`／`subtitle` 取得的实际文本类型为 `subtitle`，并保留接口给出的时间标记。不同动作、参数、材料和 `locator` 分别匹配缓存；定位中明确提供的父 URL、起止秒数和事件时间也参与核对。同一 URL 的评论页不能充当视频正文或元数据。Wikidata 声明和外部 ID、VNDB 发行语言与商店关联仍属于各自数据库的记录，事实结论继续核对声明范围和原始出处。
 
 ```bash
 node dist/cli.js read-many "steam:105600" "sm8628149" --keyword "release_date" --keyword "firstRetrieve" --json
@@ -26,6 +26,8 @@ node dist/cli.js research "某作品" --goal "发行日期" --goal "中文支持
 `research` 使用 `version:2` 状态，分别保存 `subjects`、`criteria` 与 `assessments`；`goals` 是建立必需判据的简便入口。CLI 从首轮传 `--state ./research-state.json`，创建或原子更新状态；Agent 核验后填写单元的 `status`、`outcome`、`conclusion`、`scope` 和 `citations` 原文坐标，MCP 下一轮传回同一 `state`。已有证据可为另一个判据重新定位，不因页面已经取证而跳过核验。完成判断会复核本轮读取来源、材料、动作参数及时间范围；条件改变后，不适用的旧结论和引用保留并回到待核验，继续取得对应材料。
 
 同 ID 的对象或判据定义改变时，只重新打开相关核验单元，保留结论、引用和证据，并允许重新审阅；提交相同定义继续复用。URL、对象标识符和结构化动作续查保留查询种子，`discoveryQuery` 可显式替换本轮发现查询。
+
+研究续查省略 `raw` 时保留既有观测的模式，显式传入时按该模式重新核验。读取参数即使省略动作名也会参与复核；搜索参数与各来源的读取参数分别处理。
 
 后续先复用材料，再围绕当前对象与判据补证；新增 URL、证据与通过检查的核验单元见 `comparison.progress`。零进展时调整默认来源顺序或建议查询，`discoveryQuery` 可显式指定本轮查询；已知 URL 不计入新增命中预算。`accessFailures[].retryAt` 在跨轮保持限流等待，`refresh` 仍遵守。`candidates` 是待审阅关联，`reviewedEvidenceIds` 记录已审阅而不足以支持当前判据的材料。
 

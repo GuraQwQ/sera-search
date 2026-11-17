@@ -90,11 +90,11 @@ function createChatArchive(config: Config, definition: ConnectorDefinition): Sou
       const offset = z.coerce.number().int().nonnegative().parse(parsed.searchParams.get('offset') ?? '0'), count = z.coerce.number().int().min(1).max(200).parse(parsed.searchParams.get('count') ?? '20');
       const items = rows(await client('chat_with_segments', signal, { select: 'stream_id,display_name,username,message,sent_at,segment_title,segment_category', stream_id: `eq.${streamId}`, order: 'sent_at.desc', offset, limit: count }), 'ChatArchive 回放');
       const item = items.find(item => messageId(item) === options.locator!.id); if (!item) throw mismatch();
-      return document(definition.id, url, `${item.display_name ?? item.username ?? ''} · ${item.sent_at}`, string(item.message), { contentKind: 'post', publishedAt: date(item.sent_at), locator: { kind: 'event', id: messageId(item), occurredAt: date(item.sent_at) }, metadata: { record: item, contentScope: 'free-replay-event', limitations: definition.limitations } });
+      return document(definition.id, url, `${item.display_name ?? item.username ?? ''} · ${item.sent_at}`, string(item.message), { contentKind: 'post', publishedAt: date(item.sent_at), locator: { kind: 'event', id: messageId(item), occurredAt: date(item.sent_at) }, metadata: { record: item, contentType: 'live-chat', contentScope: 'free-replay-event', limitations: definition.limitations } });
     }
     const values = rows(await client('twitch_streams', signal, { stream_id: `eq.${streamId}`, limit: 1 }), 'ChatArchive 场次');
     if (!values[0]) throw Object.assign(new Error('ChatArchive 未返回该场次'), { code: 'NOT_FOUND' });
-    return record(definition.id, url, string(values[0].title), values[0], streamId, { limitations: definition.limitations });
+    return record(definition.id, url, string(values[0].title), values[0], streamId, { contentType: 'live-session', limitations: definition.limitations });
   } });
 }
 
@@ -105,7 +105,7 @@ function createSakuga(config: Config, definition: ConnectorDefinition): Source {
       publishedAt: epoch(item.created_at), locator: { kind: 'record', id: String(item.id) }, metadata: { record: item, fileUrl: item.file_url, sampleUrl: item.sample_url, sourceUrl: item.source } })), 'sakugabooru:posts', values.length >= request.limit ? JSON.stringify({ ...params, page: params.page + 1 }) : undefined, definition.limitations);
   } }, read: async (url, signal, _options, client) => { const identity = queryId(url, ['www.sakugabooru.com', 'sakugabooru.com'], /^\/post\/show\/(\d+)/);
     const values = rows(await client('post.json', signal, { tags: `id:${identity}`, limit: 1 }), 'Sakugabooru'), item = values.find(item => String(item.id) === identity);
-    if (!item) throw mismatch(); return record(definition.id, url, `作画片段 ${identity}`, item, identity, { contentScope: 'clip-metadata-and-tags' }); } });
+    if (!item) throw mismatch(); return record(definition.id, url, `作画片段 ${identity}`, item, identity, { contentType: 'animation-clip', contentScope: 'clip-metadata-and-tags' }); } });
 }
 
 function createItad(config: Config, definition: ConnectorDefinition): Source {
@@ -132,17 +132,17 @@ function createItad(config: Config, definition: ConnectorDefinition): Source {
       const item = options?.locator ? values.find(item => historyId(game, country, item) === options.locator!.id) : undefined;
       if (options?.locator && !item) throw mismatch();
       return document(definition.id, url, item ? `价格变更 ${item.timestamp}` : `游戏 ${game} 价格历史`, JSON.stringify(item ?? values, null, 2), { contentKind: 'metadata',
-        ...(item ? { locator: { kind: 'event', id: historyId(game, country, item), occurredAt: date(item.timestamp) } } : {}), metadata: { country, gameId: game, attribution: 'IsThereAnyDeal', contentScope: 'price-change-events' } });
+        ...(item ? { locator: { kind: 'event', id: historyId(game, country, item), occurredAt: date(item.timestamp) } } : {}), metadata: { country, gameId: game, attribution: 'IsThereAnyDeal', contentType: 'game-price-history', contentScope: 'price-change-events' } });
     }
     if (parsed.hostname === 'api.isthereanydeal.com' && parsed.pathname === '/games/historylow/v1') {
       const game = uuid.parse(parsed.searchParams.get('id')), country = z.string().regex(/^[A-Z]{2}$/).parse(parsed.searchParams.get('country') ?? 'US');
       const item = rows(await client('games/historylow/v1', signal, { country }, [game]), 'ITAD 历史最低价').find(item => item.id === game);
-      if (!item) throw mismatch(); return record(definition.id, url, `历史最低价 ${game}`, item, `low:${game}:${country}`, { attribution: 'IsThereAnyDeal', country, contentScope: 'historical-low' });
+      if (!item) throw mismatch(); return record(definition.id, url, `历史最低价 ${game}`, item, `low:${game}:${country}`, { attribution: 'IsThereAnyDeal', country, contentType: 'game-price-history', contentScope: 'historical-low' });
     }
     if (!identity || !['api.isthereanydeal.com', 'isthereanydeal.com'].includes(parsed.hostname)) throw new Error('ITAD 读取需要游戏 ID 或检索命中的记录链接'); uuid.parse(identity);
     const prices = parsed.pathname.includes('prices'), value = prices ? rows(await client('games/prices/v3', signal, { country: parsed.searchParams.get('country') ?? 'US' }, [identity]), 'ITAD 报价').find(item => item.id === identity)
       : object(await client('games/info/v2', signal, { id: identity }), 'ITAD 游戏');
-    if (!value || value.id !== identity) throw mismatch(); return record(definition.id, url, string(value.title) || `ITAD ${identity}`, value, identity, { attribution: 'IsThereAnyDeal', contentScope: prices ? 'current-store-prices' : 'game-metadata' }); } });
+    if (!value || value.id !== identity) throw mismatch(); return record(definition.id, url, string(value.title) || `ITAD ${identity}`, value, identity, { attribution: 'IsThereAnyDeal', contentType: prices ? 'game-price' : 'game-metadata', contentScope: prices ? 'current-store-prices' : 'game-metadata' }); } });
 }
 
 function createModrinth(config: Config, definition: ConnectorDefinition): Source {
@@ -157,7 +157,7 @@ function createModrinth(config: Config, definition: ConnectorDefinition): Source
     if (parsed.hostname !== 'modrinth.com' || parts.length < 2) throw new Error('Modrinth 读取需要项目或版本链接');
     const isVersion = parts[2] === 'version', identity = options?.locator?.id ?? (isVersion ? parts[3] : parts[1]);
     if (!identity) throw new Error('Modrinth 链接缺少 ID'); const value = object(await client(`${isVersion ? 'version' : 'project'}/${encodeURIComponent(identity)}`, signal), 'Modrinth 记录');
-    if (options?.locator && value.id !== identity) throw mismatch(); return record(definition.id, url, string(value.title) || string(value.name), value, String(value.id), { contentScope: isVersion ? 'version-files-and-dependencies' : 'project-metadata' }); } });
+    if (options?.locator && value.id !== identity) throw mismatch(); return record(definition.id, url, string(value.title) || string(value.name), value, String(value.id), { contentType: isVersion ? 'mod-version' : 'mod-metadata', contentScope: isVersion ? 'version-files-and-dependencies' : 'project-metadata' }); } });
 }
 
 function createSpeedrun(config: Config, definition: ConnectorDefinition): Source {
@@ -172,7 +172,7 @@ function createSpeedrun(config: Config, definition: ConnectorDefinition): Source
     const match = options?.locator?.id.match(/^(game|run):([\w-]+)$/), runId = parsed.pathname.match(/^\/runs?\/([\w-]+)/)?.[1], kind = match?.[1] ?? (runId ? 'run' : 'game');
     const identity = match?.[2] ?? runId ?? parsed.pathname.split('/').filter(Boolean)[0]; if (!identity) throw new Error('Speedrun 链接缺少记录标识');
     const value = object(object(await client(`${kind === 'run' ? 'runs' : 'games'}/${encodeURIComponent(identity)}`, signal), 'Speedrun').data, 'Speedrun 记录');
-    if (match && value.id !== identity) throw mismatch(); return record(definition.id, url, kind === 'game' ? string(object(value.names, 'Speedrun 名称').international) : `速通 ${value.id}`, value, `${kind}:${value.id}`); } });
+    if (match && value.id !== identity) throw mismatch(); return record(definition.id, url, kind === 'game' ? string(object(value.names, 'Speedrun 名称').international) : `速通 ${value.id}`, value, `${kind}:${value.id}`, { contentType: kind === 'game' ? 'game-metadata' : 'speedrun-record' }); } });
 }
 
 function createBgg(config: Config, definition: ConnectorDefinition): Source {
@@ -185,7 +185,7 @@ function createBgg(config: Config, definition: ConnectorDefinition): Source {
   } }, read: async (url, signal, _options, client) => { const identity = queryId(url, ['boardgamegeek.com', 'www.boardgamegeek.com'], /^\/boardgame\/(\d+)/), xml = String(await client('thing', signal, { id: identity, stats: 1 }, undefined, 'text'));
     const item = entries(xml).find(item => item.id === identity); if (!item) throw mismatch();
     return document(definition.id, url, attr(item.xml.match(/<name\b[^>]*type=["']primary["'][^>]*>/)?.[0] ?? '', 'value') || `桌游 ${identity}`, xml,
-      { contentKind: 'metadata', locator: { kind: 'record', id: identity }, metadata: { format: 'xml-api2', contentScope: 'boardgame-metadata-and-ratings' } }); } });
+      { contentKind: 'metadata', locator: { kind: 'record', id: identity }, metadata: { format: 'xml-api2', contentType: 'boardgame-metadata', contentScope: 'boardgame-metadata-and-ratings' } }); } });
 }
 
 function createScryfall(config: Config, definition: ConnectorDefinition): Source {
@@ -198,7 +198,7 @@ function createScryfall(config: Config, definition: ConnectorDefinition): Source
     const match = parsed.pathname.match(/^\/card\/([\w]+)\/([\w-]+)/), apiId = parsed.pathname.match(/^\/cards\/([\w-]+)$/)?.[1];
     const path = identity ? `cards/${uuid.parse(identity)}` : apiId ? `cards/${uuid.parse(apiId)}` : match ? `cards/${match[1]}/${match[2]}` : undefined;
     if (!path) throw new Error('Scryfall 链接缺少卡牌 ID 或版本/收藏编号'); const value = object(await client(path, signal), 'Scryfall 卡牌');
-    if (identity && value.id !== identity) throw mismatch(); return record(definition.id, url, string(value.name), value, String(value.id), { contentScope: 'card-printing-and-rules' }); } });
+    if (identity && value.id !== identity) throw mismatch(); return record(definition.id, url, string(value.name), value, String(value.id), { contentType: 'card-metadata', contentScope: 'card-printing-and-rules' }); } });
 }
 
 function createAcoustid(config: Config, definition: ConnectorDefinition): Source {
@@ -208,7 +208,7 @@ function createAcoustid(config: Config, definition: ConnectorDefinition): Source
     const value = pageOf(items, params.resultOffset, request, params);
     return finish(request, value.values.flatMap(item => hit(definition.id, { title: `录音候选 ${item.id} · 匹配 ${item.score}`, url: `https://acoustid.org/track/${item.id}`, snippet: JSON.stringify(item.recordings ?? []), locator: { kind: 'record', id: String(item.id) }, metadata: { record: item, score: item.score, contentType: 'recording-match' } })), 'acoustid:fingerprint-matches', value.next, definition.limitations);
   } }, read: async (url, signal, _options, client) => { const identity = uuid.parse(queryId(url, ['acoustid.org'], /^\/track\/([\w-]+)/)), items = results(await client('v2/lookup', signal, { trackid: identity, meta: 'recordings+releasegroups' })), item = items.find(item => item.id === identity);
-    if (!item) throw mismatch(); return record(definition.id, url, `AcoustID ${identity}`, item, identity, { contentScope: 'fingerprint-linked-recordings' }); } });
+    if (!item) throw mismatch(); return record(definition.id, url, `AcoustID ${identity}`, item, identity, { contentType: 'recording-match', contentScope: 'fingerprint-linked-recordings' }); } });
 }
 
 function createSetlist(config: Config, definition: ConnectorDefinition): Source {
@@ -221,7 +221,7 @@ function createSetlist(config: Config, definition: ConnectorDefinition): Source 
     const version = options?.locator?.id.match(/^version:([\w-]+)$/)?.[1], identityFromUrl = parsed.pathname.match(/-([a-f\d]+)\.html$/i)?.[1];
     if (!version && !identityFromUrl) throw new Error('setlist.fm 链接缺少曲目 ID');
     const value = object(await client(version ? `setlist/version/${version}` : `setlist/${identityFromUrl}`, signal), 'setlist.fm 曲目');
-    if (options?.locator && identity(value) !== options.locator.id) throw mismatch(); return record(definition.id, url, `${object(value.artist, 'setlist.fm 艺人').name} · ${value.eventDate}`, value, identity(value), { contentScope: 'concert-setlist-version', versionId: value.versionId }); } });
+    if (options?.locator && identity(value) !== options.locator.id) throw mismatch(); return record(definition.id, url, `${object(value.artist, 'setlist.fm 艺人').name} · ${value.eventDate}`, value, identity(value), { contentType: 'concert-setlist', contentScope: 'concert-setlist-version', versionId: value.versionId }); } });
 }
 
 export function createHobbySources(config: Config): Source[] {

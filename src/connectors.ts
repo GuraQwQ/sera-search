@@ -1,9 +1,8 @@
 import { z } from 'zod';
-import { setTimeout as delay } from 'node:timers/promises';
 import type { AccessPolicy, ApiConfig, Config, Document, ReadOptions, SearchHit, SearchRequest, Source } from './types.js';
 import { sourceConfig } from './source-config.js';
 import { describeOperation, reportCoverage } from './providers/operations.js';
-import { endpoint, response, plain, date, permitted, withoutAuthentication } from './providers/shared.js';
+import { endpoint, response, plain, date, permitted, withoutAuthentication, withRequestLimits } from './providers/shared.js';
 import { sourceNameSchema } from './source-schema.js';
 import { accessState, policyFor } from './source-policy.js';
 import { specialistSites, relatedPlatforms } from './provider-catalog.js';
@@ -48,23 +47,6 @@ export const connectorDefinitionSchema = z.object({
   read: z.object({ hosts: z.array(z.string().min(1)).min(1), pattern: z.string().refine(value => { try { new RegExp(value); return true; } catch { return false; } }), request: requestSchema, title: z.string().optional(), content_kind: z.enum(['page', 'post', 'subtitle', 'metadata']).optional(), access: accessSchema.optional() }).optional(), limitations: z.array(z.string()).optional(),
 });
 
-const slots = new Map<string, { tail: Promise<void>; lastStart: number }>();
-async function pace(key: string, interval: number, signal: AbortSignal) {
-  const state = slots.get(key) ?? { tail: Promise.resolve(), lastStart: 0 }; slots.set(key, state);
-  const previous = state.tail;
-  let release!: () => void; const turn = new Promise<void>(resolve => { release = resolve; });
-  state.tail = previous.then(() => turn);
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const cancel = () => { signal.removeEventListener('abort', cancel); reject(signal.reason); };
-      signal.addEventListener('abort', cancel, { once: true });
-      previous.then(() => { signal.removeEventListener('abort', cancel); resolve(); });
-      if (signal.aborted) cancel();
-    });
-    const wait = state.lastStart + interval - Date.now(); if (wait > 0) await delay(wait, undefined, { signal });
-    signal.throwIfAborted(); state.lastStart = Date.now();
-  } finally { release(); }
-}
 export function connectorClient(config: ApiConfig, definition: Pick<ConnectorDefinition, 'id' | 'base_url' | 'auth' | 'limits'>): StructuredClient {
   return async (path, signal, query = {}, body, format = 'json', headers = {}) => {
     const url = endpoint(config, definition.base_url, path);
@@ -74,27 +56,9 @@ export function connectorClient(config: ApiConfig, definition: Pick<ConnectorDef
     if (config.apiKey && auth?.body && body && typeof body === 'object' && !Array.isArray(body)) body = { ...body, [auth.body]: config.apiKey };
     const requestHeaders = { Accept: format === 'text' ? 'text/plain,application/xml,text/html' : 'application/json', 'User-Agent': config.userAgent ?? 'SERA structured-data client', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       ...(config.apiKey && auth && auth.type !== 'none' && !auth.query && !auth.body ? { [auth.header ?? 'Authorization']: `${auth.prefix ?? (auth.type === 'bearer' ? 'Bearer ' : '')}${config.apiKey}` } : {}), ...headers };
-    const interval = definition.limits?.min_interval_ms ?? 0, key = definition.id + ':' + url.origin;
-    if (interval) await pace(key, interval, signal);
-    const result = await response(url, { signal, headers: requestHeaders, ...(body === undefined ? {} : { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body) }) }, definition.id);
-    const maximum = definition.limits?.max_response_bytes ?? 8 * 1024 * 1024;
-    if (format === 'response') {
-      if (!result.body) return result;
-      let received = 0;
-      const body = result.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ transform(chunk, controller) {
-        received += chunk.byteLength;
-        if (received > maximum) throw Object.assign(new Error('结构化响应超过本次字节预算，请缩小范围或继续分页'), { code: 'RESPONSE_BUDGET' });
-        controller.enqueue(chunk);
-      } }));
-      const bounded = new Response(body, { status: result.status, statusText: result.statusText, headers: result.headers });
-      Object.defineProperty(bounded, 'url', { value: result.url });
-      return bounded;
-    }
-    const reader = result.body?.getReader(); if (!reader) throw new Error(`${definition.id} 响应没有内容`);
-    const chunks: Uint8Array[] = []; let size = 0;
-    try { while (true) { const part = await reader.read(); if (part.done) break; size += part.value.length; if (size > maximum) throw Object.assign(new Error('结构化响应超过本次字节预算，请缩小范围或继续分页'), { code: 'RESPONSE_BUDGET' }); chunks.push(part.value); } }
-    finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
-    const value = Buffer.concat(chunks).toString('utf8');
+    const result = await withRequestLimits(definition.id, definition.limits, () => response(url, { signal, headers: requestHeaders, ...(body === undefined ? {} : { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body) }) }, definition.id));
+    if (format === 'response') return result;
+    const value = await result.text();
     return format === 'text' ? value : JSON.parse(value);
   };
 }
@@ -134,7 +98,7 @@ export function createStructuredSource(config: Config, definition: ConnectorDefi
       const params = schemas.get(name)!.parse(request.params ?? {}) as Record<string, any>;
       const selectedClient = access.policy.authentication === 'none' ? anonymousClient : client;
       if (hooks.search?.[name] && !operation.request) {
-        const run = () => hooks.search![name]!({ ...request, operation: name }, params, selectedClient);
+        const run = () => withRequestLimits(definition.id, definition.limits, () => hooks.search![name]!({ ...request, operation: name }, params, selectedClient));
         return access.policy.authentication === 'none' ? withoutAuthentication(settings.apiKey, definition.auth, run) : run();
       }
       if (!operation.request || !operation.output) throw new Error('此操作需要专用协议适配器');
@@ -164,7 +128,7 @@ export function createStructuredSource(config: Config, definition: ConnectorDefi
       if (!source.capability.configured) throw Object.assign(new Error('来源已停用'), { code: 'SOURCE_DISABLED' });
       const selectedClient = access.policy.authentication === 'none' ? anonymousClient : client;
       if (hooks.read && !definition.read) {
-        const run = () => hooks.read!(url, signal, options, selectedClient);
+        const run = () => withRequestLimits(definition.id, definition.limits, () => hooks.read!(url, signal, options, selectedClient));
         return access.policy.authentication === 'none' ? withoutAuthentication(settings.apiKey, definition.auth, run) : run();
       }
       const spec = definition.read!, address = new URL(url), match = address.pathname.match(new RegExp(spec.pattern));

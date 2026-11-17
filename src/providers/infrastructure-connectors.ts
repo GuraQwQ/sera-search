@@ -173,9 +173,10 @@ async function scanEvents(result: Response, signal: AbortSignal, settings: ScanO
   };
   try {
     for await (const chunk of unzip) {
-      signal.throwIfAborted(); expanded += chunk.length;
-      if (expanded > settings.maxExpandedBytes) { stopped = true; break; }
-      pending += decode.decode(chunk, { stream: true });
+      signal.throwIfAborted();
+      const remaining = Math.max(0, settings.maxExpandedBytes - expanded), prefix = chunk.subarray(0, remaining);
+      expanded += prefix.length;
+      pending += decode.decode(prefix, { stream: true });
       if (pending.length > 4 * 1024 * 1024 && !pending.includes('\n')) { stopped = true; break; }
       let stop: number;
       while ((stop = pending.indexOf('\n')) >= 0) {
@@ -183,6 +184,7 @@ async function scanEvents(result: Response, signal: AbortSignal, settings: ScanO
         if (stopped) break;
       }
       if (stopped) break;
+      if (prefix.length < chunk.length) { stopped = true; break; }
     }
     if (!stopped) { pending += decode.decode(); if (pending.trim()) consume(pending); ended = !stopped; }
   } catch (error) {
@@ -199,7 +201,7 @@ function validHour(value: string): string {
 function ghArchive(config: Config): Source {
   const definition = definitions.get('gh-archive')!, recent = new Map<string, ReturnType<typeof document>>();
   const eventDocument = (url: string, value: Row, line: number, name: string) => document('gh-archive', url, `${string(object(value.repo, 'GH Archive repo').name)} · ${value.type}`, JSON.stringify(value, null, 2), {
-    contentKind: 'metadata', publishedAt: date(value.created_at), locator: { kind: 'event', id: string(value.id), occurredAt: date(value.created_at) }, metadata: { contentType: 'github-event', hour: name, line, contentScope: 'archived-public-event' },
+    contentKind: 'metadata', publishedAt: date(value.created_at), locator: { kind: 'event', id: string(value.id), occurredAt: date(value.created_at), parentUrl: `https://github.com/${string(object(value.repo, 'GH Archive repo').name)}` }, metadata: { contentType: 'github-event', hour: name, line, contentScope: 'archived-public-event' },
   });
   return createStructuredSource(config, definition, { search: { events: async (request, params, client) => {
     recent.clear();
@@ -209,7 +211,8 @@ function ghArchive(config: Config): Source {
     if (request.since && hourDate < request.since || request.until && hourDate > request.until) throw new Error('指定小时不在 since/until 范围内');
     const result: Response = await client(`${name}.json.gz`, request.signal, {}, undefined, 'response', { Accept: 'application/gzip' });
     const scanned = await scanEvents(result, request.signal, params as ScanOptions, item => (!repository || string(object(item.repo, 'GH Archive repo').name).toLowerCase() === repository.toLowerCase()) && (!params.eventTypes?.length || params.eventTypes.includes(string(item.type))), request.limit);
-    reportCoverage(request, `gh-archive:${name}`, { completeness: scanned.truncated || scanned.invalid ? 'partial' : 'complete', truncated: scanned.truncated, ...(scanned.truncated ? { nextCursor: String(scanned.lineNo) } : {}), observed: { since: `${hourDate}T${String(Number(name.split('-')[3])).padStart(2, '0')}:00:00Z`, until: `${hourDate}T${String(Number(name.split('-')[3])).padStart(2, '0')}:59:59Z` }, limitations: [...definition.limitations!, `本次读取 ${scanned.compressed} 压缩字节，检查 ${scanned.scanned} 条事件；无效 JSON ${scanned.invalid} 条。`] });
+    const progressed = scanned.lineNo > params.skipEvents;
+    reportCoverage(request, `gh-archive:${name}`, { completeness: scanned.truncated || scanned.invalid ? 'partial' : 'complete', truncated: scanned.truncated, ...(scanned.truncated && progressed ? { nextCursor: String(scanned.lineNo) } : {}), observed: { since: `${hourDate}T${String(Number(name.split('-')[3])).padStart(2, '0')}:00:00Z`, until: `${hourDate}T${String(Number(name.split('-')[3])).padStart(2, '0')}:59:59Z` }, limitations: [...definition.limitations!, `本次读取 ${scanned.compressed} 压缩字节，检查 ${scanned.scanned} 条事件；无效 JSON ${scanned.invalid} 条。`, ...(scanned.truncated && !progressed ? [`本次预算尚未取得下一条完整事件；提高字节预算后，从 skipEvents=${params.skipEvents} 重试。`] : [])] });
     return scanned.found.flatMap(({ item, line }) => {
       const id = string(item.id), repo = string(object(item.repo, 'GH Archive repo').name), target = new URL(`${name}.json.gz`, definition.base_url);
       target.searchParams.set('event', id); target.searchParams.set('line', String(line));

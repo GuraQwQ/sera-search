@@ -1,12 +1,47 @@
 import type { ApiConfig, Document, SearchHit, SourceName } from '../types.js';
 import { EnvHttpProxyAgent } from 'undici';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export type Row = Record<string, unknown>;
 
 let proxy: EnvHttpProxyAgent | undefined;
 const retryDeadlines = new Map<string, number>();
 const anonymousRequests = new AsyncLocalStorage<{ fields: Set<string>; secret?: string }>();
+const requestLimits = new AsyncLocalStorage<{ source: string; min_interval_ms?: number; max_response_bytes?: number }>();
+const slots = new Map<string, { tail: Promise<void>; lastStart: number }>();
+export function withRequestLimits<T>(source: string, limits: { min_interval_ms?: number; max_response_bytes?: number } | undefined, run: () => Promise<T>): Promise<T> {
+  if (requestLimits.getStore()?.source === source) return run();
+  return requestLimits.run({ source, ...limits }, run);
+}
+async function pace(key: string, interval: number, signal: AbortSignal) {
+  const state = slots.get(key) ?? { tail: Promise.resolve(), lastStart: 0 }; slots.set(key, state);
+  const previous = state.tail;
+  let release!: () => void; const turn = new Promise<void>(resolve => { release = resolve; });
+  state.tail = previous.then(() => turn);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const cancel = () => { signal.removeEventListener('abort', cancel); reject(signal.reason); };
+      signal.addEventListener('abort', cancel, { once: true });
+      previous.then(() => { signal.removeEventListener('abort', cancel); resolve(); });
+      if (signal.aborted) cancel();
+    });
+    const wait = state.lastStart + interval - Date.now(); if (wait > 0) await delay(wait, undefined, { signal });
+    signal.throwIfAborted(); state.lastStart = Date.now();
+  } finally { release(); }
+}
+function boundedResponse(result: Response, maximum: number): Response {
+  if (!result.body) return result;
+  let received = 0;
+  const body = result.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ transform(chunk, controller) {
+    received += chunk.byteLength;
+    if (received > maximum) throw Object.assign(new Error('结构化响应超过本次字节预算，请缩小范围或继续分页'), { code: 'RESPONSE_BUDGET' });
+    controller.enqueue(chunk);
+  } }));
+  const bounded = new Response(body, { status: result.status, statusText: result.statusText, headers: result.headers });
+  Object.defineProperties(bounded, { url: { value: result.url }, redirected: { value: result.redirected }, type: { value: result.type } });
+  return bounded;
+}
 export function withoutAuthentication<T>(apiKey: string | undefined, auth: { header?: string; query?: string; body?: string } | undefined, run: () => Promise<T>): Promise<T> {
   const fields = new Set(['authorization', 'cookie', 'proxy-authorization', 'x-api-key', 'api-key', 'api-username', 'x-subscription-token', 'api_key', 'key', 'access_token', 'token', 'subscription-key', auth?.header, auth?.query, auth?.body].filter((value): value is string => Boolean(value)).map(value => value.toLowerCase()));
   return anonymousRequests.run({ fields, secret: apiKey }, async () => {
@@ -14,7 +49,7 @@ export function withoutAuthentication<T>(apiKey: string | undefined, auth: { hea
     catch (error) { if (error && typeof error === 'object') Object.assign(error, { credentialUsed: false }); throw error; }
   });
 }
-export function fetchResponse(url: URL | string, init: RequestInit): Promise<Response> {
+export async function fetchResponse(url: URL | string, init: RequestInit): Promise<Response> {
   const anonymous = anonymousRequests.getStore();
   if (anonymous) {
     const address = new URL(url), headers = new Headers(init.headers);
@@ -38,7 +73,10 @@ export function fetchResponse(url: URL | string, init: RequestInit): Promise<Res
   const configured = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
   const useProxy = configured && !['localhost', '127.0.0.1', '[::1]'].includes(host);
   const settings = useProxy ? { ...init, dispatcher: proxy ??= new EnvHttpProxyAgent() } : init;
-  return fetch(url, settings);
+  const limits = requestLimits.getStore();
+  if (limits?.min_interval_ms) await pace(limits.source + ':' + new URL(url).origin, limits.min_interval_ms, init.signal ?? new AbortController().signal);
+  const result = await fetch(url, settings);
+  return limits ? boundedResponse(result, limits.max_response_bytes ?? 8 * 1024 * 1024) : result;
 }
 
 export function object(value: unknown, name: string): Row {
@@ -141,7 +179,10 @@ export async function response(url: URL | string, init: RequestInit, name: strin
 export async function json(url: URL | string, init: RequestInit, name: string): Promise<Row> {
   const result = await response(url, init, name);
   try { return object(await result.json(), name); }
-  catch { throw new Error(`${name} 响应不是有效 JSON 对象`); }
+  catch (error) {
+    if ((error as { code?: string })?.code === 'RESPONSE_BUDGET') throw error;
+    throw new Error(`${name} 响应不是有效 JSON 对象`);
+  }
 }
 
 export function document(source: SourceName, url: string, title: string, content: unknown, extra: Partial<Document> = {}): Document {
