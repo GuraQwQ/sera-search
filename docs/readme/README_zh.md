@@ -43,9 +43,11 @@ node dist/cli.js capabilities --home ./.sera --sources bing,web --json
 node dist/cli.js research "TypeScript 官方发布记录" --home ./.sera --sources bing --read-sources web --read-limit 3 --json
 ```
 
-公开来源可直接请求；需要账号的来源通过 `login` 登记。数据目录统一使用 `--home` 或 `SERA_HOME`，重复执行 `install` 保留已有配置。网络、登录与额度状态以每次返回的 `runs` 为准。
+在真实终端运行 `install` 会进入配置向导：探测已有工具入口，从受支持的环境变量补齐凭据，复核已保存的平台会话，再按选择加入新平台。无人值守使用 `node dist/cli.js install --home ./.sera --yes --json`；加 `--sources github,youtube` 可限定本轮来源。API 凭据仅登记，实际请求时才验证；免费档确认与平台登录分别选择，完整参数见[安装配置](../../docs/cli.md#安装配置与调用后端)。
 
-默认 `install` 准备 SERA 配置，扩展依赖按需安装：
+先指定 `--home`，让数据、依赖与缓存写入选定磁盘；源码示例使用工作区内 `.sera/`，避免落入默认用户目录所在的 C 盘。重复向导保留已有凭据字段和用户停用项，补全缺项。后续调用沿用同一 `--home` 或 `SERA_HOME`；已可用的公开来源可直接请求，网络、登录与额度以 `runs` 为准。
+
+向导只探测本机已有工具，下载组件仍需显式选择 `--components`：
 
 ```bash
 node dist/cli.js install --home F:/tools/sera-data --components ghgrab,scrapling,metadata-parser --python D:/Python/python.exe --browser "D:/Apps/Edge/msedge.exe"

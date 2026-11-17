@@ -200,7 +200,7 @@ export interface Source {
   capability: Capability;
   connector?: import('./connectors.js').ConnectorDefinition;
   channels?: (signal: AbortSignal) => Promise<Channel[]>;
-  login?: (platform: string, signal: AbortSignal) => Promise<void>;
+  login?: (platform: string, signal: AbortSignal, options?: { sessionOnly?: boolean }) => Promise<void>;
   logout?: (platform: string, signal: AbortSignal) => Promise<void>;
   search?: (request: SearchRequest) => Promise<SearchHit[]>;
   read?: (url: string, signal: AbortSignal, options?: ReadOptions) => Promise<Document>;

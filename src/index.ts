@@ -30,4 +30,6 @@ export { accessState, policyFor } from './source-policy.js';
 export { componentNames, installComponents, cleanIntegrationCache } from './components.js';
 export type { ComponentName, ComponentResult } from './components.js';
 export { login, logout, authStatus } from './auth.js';
+export { configureSetup } from './setup.js';
+export type { SetupOptions } from './setup.js';
 export * from './types.js';

@@ -14,10 +14,10 @@ SERA 将下列五个来源接入统一能力、搜索与读取流程；`ghgrab` 
 
 ## 安装与目录
 
-默认 `install` 准备配置与可选 Skill 链接。需要扩展依赖时，显式选择组件；可以一次安装多个组件，也可以分次补装。
+真实终端中的 `install` 默认进入向导，探测已有组件入口、补齐受支持环境变量，并按选择配置平台。无人值守用 `--yes --json`，流程会保留已有凭据字段与用户停用项；本机探测不下载软件。需要扩展依赖时显式传 `--components`，可一次安装多个组件或分次补装。完整向导选项见[CLI](cli.md#安装配置与调用后端)。
 
 ```powershell
-node .\dist\cli.js install --home 'F:\tools\sera-data'
+node .\dist\cli.js install --home ./.sera
 node .\dist\cli.js install --home 'F:\tools\sera-data' --components ghgrab,scrapling,metadata-parser --python 'D:\Python\python.exe' --browser 'D:\Apps\Edge\msedge.exe'
 node .\dist\cli.js capabilities --home 'F:\tools\sera-data' --sources ghgrab,scrapling,metadata-parser,google-news,iptv --json
 ```
@@ -32,7 +32,7 @@ node .\dist\cli.js capabilities --home 'F:\tools\sera-data' --sources ghgrab,scr
 | `<home>/tools/state` | 后端配置与持久状态 | 保留 |
 | `<home>/cache/integrations` | 下载、安装与运行的受管理缓存 | 清理 |
 
-安装成功后，配置写入实际可执行文件的绝对路径；模板中的 `enabled:false` 随成功安装更新。重复 `install --components` 会核对并补全所选组件，部分完成或中断后可重试同一命令。默认 `install` 保留已有配置与已安装组件。`clean` 同时处理 SERA 证据缓存，依赖、配置、登录记录与持久会话保留；清理范围见[证据指南](evidence.md)。
+显式安装组件成功后，配置写入实际可执行文件的绝对路径并启用所选组件。重复 `install --components` 会核对并补全所选组件，部分完成或中断后可重试同一命令。向导探测已有工具时，仅本轮新建模板中的组件可自动启用；既有 `enabled:false` 保留，交互中可以另外选择启用。`clean` 同时处理 SERA 证据缓存，依赖、配置、登录记录与持久会话保留；清理范围见[证据指南](evidence.md)。
 
 `google-news` 与 `iptv` 使用 SERA 自身的 HTTP 适配，无需安装 Python 组件。新闻语言、地区、主题和 M3U 地址见[配置指南](configuration.md)。
 

@@ -26,12 +26,34 @@ node dist/cli.js connectors --sources modrinth,scryfall --json
 
 自动选路优先匿名免费、认证免费，再考虑周期免费配额；认证加配额的来源进一步降权。付费必需动作和一次性试用排除；混合计费或计费未确认的入口需在确认账号免费档后设置 `sources.<来源>.freeTierConfirmed: true`。已知免费 Key 来源按其声明使用。该设置是账号档位声明，实际额度与账单仍由服务端控制。
 
-## 安装扩展与调用后端
+## 安装配置与调用后端
 
-默认 `install` 创建或复用配置，显式选择 `--components` 才安装扩展。`--python` 指定已有 Python 3.10+，`--browser` 指定已有 Chromium／Edge 可执行文件；路径请替换为本机实际位置。
+先选数据目录，再运行 `install`；源码可用 `--home ./.sera`，独立安装可用 `--home F:/tools/sera-data`，避免默认用户目录和缓存占用 C 盘。真实终端中的 `install` 默认启动向导；逐步探测已有组件、补齐凭据、确认免费档和选择平台。非终端或 `--json` 模式不提问。
+
+| 选项 | 配置行为 |
+|---|---|
+| `--setup` | 显式启用向导流程；非交互环境也执行可自动完成的步骤 |
+| `--yes` | 无人值守补齐可用环境变量和已有工具入口；保留既有停用项及已有凭据字段 |
+| `--sources a,b` | 限定本轮配置的来源 |
+| `--platform opencli:zhihu,agent-reach:xiaohongshu` | 加入要复核的平台；非交互仅验证已有会话，交互中需要时打开登录页 |
+| `--confirm-free-tier exa,tavily` | 明确确认所列来源使用免费档；`--yes` 不代替该确认 |
+| `--components ghgrab,scrapling` | 选择需要下载、安装或修复的组件 |
+
+仅本轮新建配置模板中的组件可在探测成功后自动启用；既有 `enabled:false` 保留，包括旧默认模板的停用项。交互向导会单独列出已停用组件，由用户填写本次要启用的组件。
+
+`--yes` 不打开登录页面。API Key 只登记，不发送试探请求；已有活动凭据按字段补缺，不替换已存字段。已保存的 OpenCLI／Agent Reach 平台记录自动复核，新平台通过 `--platform` 或交互选择；非交互仅验证已有会话。经后端 `whoami`／会话同步确认后才记录登录，明确认证失效会作废本地记录并保留凭据字段，网络失败不作废。普通本机探测不安装软件，组件下载只由 `--components` 触发。
 
 ```bash
-node dist/cli.js install --home F:/tools/sera-data
+# 真实终端逐步配置
+node dist/cli.js install --home ./.sera
+
+# 无人值守，只处理所选来源的已有入口和环境变量
+node dist/cli.js install --home ./.sera --yes --sources github,youtube,opencli --platform opencli:zhihu --json
+
+# 已核对账号免费档后单独确认
+node dist/cli.js install --home ./.sera --setup --sources exa,tavily --confirm-free-tier exa,tavily --json
+
+# 显式安装扩展依赖
 node dist/cli.js install --home F:/tools/sera-data --components ghgrab,scrapling,metadata-parser --python D:/Python/python.exe --browser "D:/Apps/Edge/msedge.exe"
 node dist/cli.js capabilities --home F:/tools/sera-data --sources ghgrab,scrapling,metadata-parser,google-news,iptv --json
 
@@ -42,6 +64,12 @@ node dist/cli.js backend scrapling --home F:/tools/sera-data --json
 # TOOL_NAME 替换为发现的工具名，文件内容为该工具接受的 JSON 对象
 node dist/cli.js backend scrapling TOOL_NAME --input ./backend-input.json --home F:/tools/sera-data --json
 ```
+
+安装向导的提示和进度写入 stderr，stdout 始终为一个最终 JSON 对象。部分步骤未完成时保留成功项，返回 `partial` 和下一步，退出码为 `0`；取消退出码为 `130`，可重跑同一命令补齐。免费档声明不限制服务端账单，凭据及环境变量说明见[配置指南](configuration.md)。
+
+`setup.sources[].status` 区分 `recorded`（凭据已记录）、`public`（公开入口）、`needs-key`、`needs-settings`、`needs-free-tier`、`disabled` 和 `needs-component`；按待办补齐后重跑，已记录不表示 API 已在线验证。
+
+`--python` 指定已有 Python 3.10+，`--browser` 指定已有 Chromium／Edge 可执行文件；路径请替换为本机实际位置。
 
 `backend` 接受 `ghgrab`、`scrapling`、`aliens-eye`、`sherlock` 或 `gods-eye-view`，按上游 Schema 传参。组件位于 `<home>/tools`，安装与运行缓存位于 `<home>/cache/integrations`；重复 `install --components` 会核对、补全或修复所选组件。Scrapling 的内存会话在同一 MCP 连接内保持；每次 CLI `backend` 是独立进程，需要跨进程会话时使用上游发现的 save／load 工具。完整能力与兼容范围见[扩展来源与后端](integrations.md)。
 

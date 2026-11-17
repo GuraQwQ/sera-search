@@ -391,18 +391,20 @@ export function createPlatformSources(config: Config): Source[] {
             ...(search ? { browser: search.browser, strategy: search.strategy } : {}) }] as Channel[] : [];
         });
       },
-      login: async (platform, suppliedSignal) => {
+      login: async (platform, suppliedSignal, options) => {
         const signal = AbortSignal.any([suppliedSignal, AbortSignal.timeout(300000)]);
         const commands = (await getRegistry(signal)).filter(entry => entry.site === platform);
         if (!commands.length) throw new PlatformError('UNSUPPORTED_COMMAND', `OpenCLI 未注册 ${platform} 站点。`);
         if (!commands.some(needsOpenCliLogin)) return;
         const identity = commands.find(entry => entry.name === 'whoami' && entry.access === 'read' && entry.args.every(arg => !arg.required));
+        if (options?.sessionOnly && !identity) throw new PlatformError('SESSION_CHECK_UNAVAILABLE', '此平台没有只读会话验证入口，可在交互向导中完成登录验证。');
         const identify = async () => {
           if (!identity) return false;
           try { return loggedIn(await callOpenCli([platform, 'whoami', '-f', 'json'], signal)); }
           catch (error) { if (error instanceof NotLoggedInError) return false; throw error; }
         };
         if (await identify()) return;
+        if (options?.sessionOnly) throw new NotLoggedInError();
         const entry = commands.find(command => command.name === 'login' && command.access === 'write' && command.args.every(arg => !arg.required));
         if (!entry) throw new NotLoggedInError();
         const args = [platform, 'login', '-f', 'json'];

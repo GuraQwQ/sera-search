@@ -4,6 +4,29 @@
 
 编辑数据目录内的 `config.json`，或通过 `--config`／`SERA_CONFIG` 指定配置文件。完整字段见 [config.example.json](../config.example.json)。配置保存 API 入口、搜索引擎、地域和启用状态；凭据单独存入数据目录的 `credentials/`。数据目录的优先级为 `--home`、`SERA_HOME`、配置中的 `home`、默认用户目录。
 
+## 首次配置与补齐
+
+先指定数据目录，例如源码工作区的 `--home ./.sera` 或 `--home F:/tools/sera-data`，使配置、依赖与缓存落在选定位置，避免使用 C 盘用户目录。真实终端运行 `install` 默认进入向导；无人值守用 `install --yes --json`，非终端或 `--json` 模式不提问。完整参数见[CLI 安装配置](cli.md#安装配置与调用后端)。
+
+```bash
+node dist/cli.js install --home ./.sera
+node dist/cli.js install --home ./.sera --yes --sources github,youtube,opencli --json
+```
+
+向导探测已有原生工具入口，从受支持环境变量补齐凭据和账号设置；既有活动凭据按字段保留。仅本轮新建模板中的组件可在探测成功后自动启用，既有 `enabled:false` 保留；交互中可另外选择启用已停用组件。
+
+通用 Key 名为 `SERA_<来源大写且连字符转下划线>_API_KEY` 或 `<来源大写且连字符转下划线>_API_KEY`，也识别下列常用变量：
+
+| 来源 | 环境变量 |
+|---|---|
+| GitHub／Hugging Face／YouTube | `GITHUB_TOKEN`／`GH_TOKEN`、`HF_TOKEN`、`YOUTUBE_API_KEY` |
+| Twitch | `TWITCH_ACCESS_TOKEN`、`TWITCH_CLIENT_ID` |
+| Discord | `DISCORD_BOT_TOKEN`、`DISCORD_GUILD_ID`、`DISCORD_CHANNEL_ID` |
+| Instagram | `INSTAGRAM_ACCESS_TOKEN`、`INSTAGRAM_ACCOUNT_ID` |
+| LinuxDo／网易云／授权公众号 | `LINUXDO_USERNAME`、`NETEASE_BASE_URL`、`WECHAT_ACCESS_TOKEN`，分别补用户名、已有服务地址与自己授权账号的 Token |
+
+API 凭据仅登记，实际调用时验证；探测工具不下载软件，下载由 `--components` 明确选择。已保存的 OpenCLI／Agent Reach 平台记录自动复核，新平台通过 `--platform 后端:平台` 或交互选择加入。非交互仅验证已有会话，真实终端需要时进入官方登录页。`--yes` 不发起网页登录，也不确认费用；免费档可在交互中逐项选择，或明确传 `--confirm-free-tier 来源列表`。
+
 | 来源 | 凭据 | 获取能力 |
 |---|---|---|
 | `exa`、`tavily` | 各服务 API Key | 网页搜索与正文提取 |
@@ -53,7 +76,7 @@ OpenAlex 匿名入口按 `free-quota` 使用免费每日预算；带 Key 的入�
 
 ## 可选组件
 
-`install` 默认准备配置，安装扩展时显式传 `--components ghgrab,scrapling,metadata-parser`。`--python` 指定已有 Python 3.10+；`--browser` 指定已有 Chromium／Edge 可执行文件。组件安装到 `<home>/tools`，缓存集中到 `<home>/cache/integrations`，成功后把绝对命令路径写入配置。空状态、部分安装及中断后均可重复执行相同的 `install` 命令。用 `clean` 清理受管理缓存会保留依赖、配置和会话数据。详细安装步骤见[扩展来源与后端](integrations.md)。
+安装扩展依赖时显式传 `--components ghgrab,scrapling,metadata-parser`。`--python` 指定已有 Python 3.10+；`--browser` 指定已有 Chromium／Edge 可执行文件。组件安装到 `<home>/tools`，缓存集中到 `<home>/cache/integrations`，成功后把绝对命令路径写入配置。空状态、部分安装及中断后均可重复执行相同的 `install` 命令。用 `clean` 清理受管理缓存会保留依赖、配置和会话数据。详细安装步骤见[扩展来源与后端](integrations.md)。
 
 [配置示例](../config.example.json)中的三个命令模板默认禁用，安装后由 `install` 填入实际路径；手动配置时使用原生可执行文件与独立参数数组。`ghgrab` 的参数为 `["mcp"]`，Scrapling 使用 `scrapling-mcp`，`metadata-parser` 使用 Python 加包内 `bridges/metadata_parser.py` 的绝对路径。
 
@@ -62,13 +85,13 @@ OpenAlex 匿名入口按 `free-quota` 使用免费每日预算；带 Key 的入�
 用 `login --from-env` 登记已有环境变量，或用 `login --stdin` 传入纯 Key／凭据 JSON：
 
 ```powershell
-node .\dist\cli.js login exa --from-env EXA_API_KEY
-$env:TAVILY_API_KEY | node .\dist\cli.js login tavily --stdin
+node .\dist\cli.js login exa --home ./.sera --from-env EXA_API_KEY
+$env:TAVILY_API_KEY | node .\dist\cli.js login tavily --home ./.sera --stdin
 @{ apiKey = $env:TWITCH_ACCESS_TOKEN; clientId = $env:TWITCH_CLIENT_ID } |
-  ConvertTo-Json -Compress | node .\dist\cli.js login twitch --stdin
-node .\dist\cli.js login youtube --from-env YOUTUBE_API_KEY
-node .\dist\cli.js auth --json
-node .\dist\cli.js logout exa
+  ConvertTo-Json -Compress | node .\dist\cli.js login twitch --home ./.sera --stdin
+node .\dist\cli.js login youtube --home ./.sera --from-env YOUTUBE_API_KEY
+node .\dist\cli.js auth --home ./.sera --json
+node .\dist\cli.js logout exa --home ./.sera
 ```
 
 环境变量经登记后成为本地登录记录。API 登录返回“已记录”，下一次请求才验证凭据；需要凭据的渠道无有效记录或被上游确认认证失效时，纯文本查询只返回“未登录，不可用”，JSON 保留 `runs` 和 `NOT_LOGGED_IN` 状态。限流、余额不足和网络失败按实际错误记录。
@@ -103,10 +126,10 @@ Windows 上若命令入口是 `.cmd` 或 `.ps1`，请配置真正的运行时。
 Agent Reach 使用上游统一 CLI 的 `channels`、平台动作和 `read` 协议。平台依赖与浏览器会话由 [Agent Reach](https://github.com/Panniantong/Agent-Reach) 或 [OpenCLI](https://github.com/jackwener/OpenCLI) 管理。浏览器渠道还需其浏览器桥接或专用浏览器就绪。公开渠道直接查询；账号渠道需要经后端验证的 SERA 平台登录记录：
 
 ```bash
-node dist/cli.js login opencli --platform zhihu
-node dist/cli.js login agent-reach --platform xiaohongshu
-node dist/cli.js auth opencli --platform zhihu --json
-node dist/cli.js logout opencli --platform zhihu
+node dist/cli.js login opencli --home ./.sera --platform zhihu
+node dist/cli.js login agent-reach --home ./.sera --platform xiaohongshu
+node dist/cli.js auth opencli --home ./.sera --platform zhihu --json
+node dist/cli.js logout opencli --home ./.sera --platform zhihu
 ```
 
 OpenCLI 可打开官方登录页面并通过明确的登录结果或 `whoami` 验证，用户完成网页验证后才记录。Agent Reach 当前同步后端已有登录，调用其 `login --sync`。平台用户名／密码需在对应后端的官方登录流程使用；SERA 的凭据 JSON 用于对应 API 声明的认证字段。部分平台无后端退出命令，`logout` 会清除本地记录并提示到后端或官网退出。OpenCLI 的配置与缓存目录位于 SERA 数据目录；Agent Reach 浏览器状态仍由其后端管理。

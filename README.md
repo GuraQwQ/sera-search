@@ -43,9 +43,11 @@ Search public sources and read the original pages:
 node dist/cli.js research "TypeScript official release notes" --home ./.sera --sources bing --read-sources web --read-limit 3 --json
 ```
 
-Public sources can be requested directly. Register credentials with `login` for sources that require an account. Use the same `--home` or `SERA_HOME` for every call; repeated `install` preserves existing configuration. Each response records actual network, login, and quota outcomes in `runs`.
+In a terminal, `install` starts a setup wizard: it finds existing tool entry points, fills missing credentials from supported environment variables, rechecks saved platform sessions, and lets you select additional platforms. For unattended setup, run `node dist/cli.js install --home ./.sera --yes --json`; `--sources github,youtube` limits this setup run. API credentials are recorded for later request validation. Free-tier confirmation and platform login are separate choices; see [setup options](docs/cli.md#安装配置与调用后端).
 
-The default `install` prepares SERA configuration without installing optional dependencies. Add repository tools, browser extraction, and HTML metadata parsing when needed:
+Choose `--home` before setup so data, dependencies, and caches go to your intended drive; the source example uses the checkout's `.sera/` instead of the default user directory. Repeating setup keeps existing credential fields and user-disabled settings while filling missing items. Use the same `--home` or `SERA_HOME` for later calls. Available public sources can be requested directly; actual network, authentication, and quota outcomes appear in `runs`.
+
+Setup discovers local tools; downloads require an explicit `--components` selection. Add repository tools, browser extraction, and HTML metadata parsing when needed:
 
 ```bash
 node dist/cli.js install --home F:/tools/sera-data --components ghgrab,scrapling,metadata-parser --python D:/Python/python.exe --browser "D:/Apps/Edge/msedge.exe"

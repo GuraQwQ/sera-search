@@ -51,10 +51,13 @@ const help = `SERA — Search, Extract, Research for Agents
   --version            显示版本
   --stdin              login 从标准输入读取凭据 JSON 或 API Key
   --from-env <变量名>  login 从指定环境变量读取 API Key
+  --setup              install 引导配置本机组件、环境凭据与平台会话
+  --yes                install 无人值守补齐配置，保留待确认项
+  --confirm-free-tier <来源列表> install 明确确认指定账号使用免费档
 
 检索与读取：
   --sources <列表>     逗号分隔的来源；read 按所列顺序尝试
-  --platform <平台>    通过 Agent Reach / OpenCLI 进行站内搜索
+  --platform <平台>    站内查询；install 使用 后端:平台，多个用逗号分隔
   --limit <数量>       每个来源的结果数量，默认 5，最大 20
   --github-type <类型> repositories、code 或 issues
   --domain <域名>      可重复，按提供者支持的域名过滤检索
@@ -173,6 +176,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     domain: { type: 'string', multiple: true }, since: { type: 'string' }, at: { type: 'string' }, 'read-limit': { type: 'string' }, 'read-sources': { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' }, 'skill-dir': { type: 'string' },
     until: { type: 'string' }, operation: { type: 'string' }, params: { type: 'string' }, 'content-type': { type: 'string', multiple: true }, strategy: { type: 'string' }, 'max-sources': { type: 'string' }, locator: { type: 'string' },
     components: { type: 'string' }, python: { type: 'string' }, browser: { type: 'string' }, node: { type: 'string' }, input: { type: 'string' }, 'timeout-ms': { type: 'string' },
+    setup: { type: 'boolean' }, yes: { type: 'boolean' }, 'confirm-free-tier': { type: 'string' },
   } });
   if (values.help || (!positionals.length && !values.version)) { process.stdout.write(help); return; }
   if (values.version) { process.stdout.write(JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version + '\n'); return; }
@@ -182,13 +186,32 @@ async function main(args = process.argv.slice(2)): Promise<void> {
   if (command === 'install') {
     const controller = new AbortController(), cancel = () => controller.abort();
     process.once('SIGINT', cancel);
+    let prompt: import('node:readline/promises').Interface | undefined;
     try {
       const components = values.components === undefined ? undefined : z.array(z.enum(componentNames)).min(1).parse(values.components.split(',').map(value => value.trim()));
       const result = await install({ ...location, skillDir: values['skill-dir'], components, python: values.python, browser: values.browser, node: values.node, signal: controller.signal });
-      process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+      const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY && !values.json && !values.yes);
+      const guided = values.setup || values.yes || values.platform || values['confirm-free-tier'] || interactive;
+      let setup;
+      if (guided) {
+        const { configureSetup } = await import('./setup.js');
+        if (interactive) {
+          const { createInterface } = await import('node:readline/promises');
+          prompt = createInterface({ input: process.stdin, output: process.stderr });
+          prompt.on('SIGINT', cancel);
+          prompt.on('close', cancel);
+        }
+        const split = (value?: string) => value?.split(',').map(item => item.trim()).filter(Boolean);
+        setup = await configureSetup(await loadConfig({ ...location, home: result.home, file: result.config }), {
+          configCreated: result.configCreated, sources: sources(values.sources), platforms: split(values.platform), confirmFreeTier: split(values['confirm-free-tier']), signal: controller.signal,
+          ...(prompt ? { ask: (question: string) => prompt!.question(question, { signal: controller.signal }) } : {}),
+          ...(!values.json ? { progress: (message: string) => process.stderr.write(message + '\n') } : {}),
+        });
+      }
+      process.stdout.write(JSON.stringify({ ...result, ...(setup ? { setup } : {}) }, null, 2) + '\n');
       if (controller.signal.aborted) process.exitCode = 130;
       else if (result.status === 'error') process.exitCode = 1;
-    } finally { process.removeListener('SIGINT', cancel); }
+    } finally { prompt?.removeListener('close', cancel); prompt?.close(); process.removeListener('SIGINT', cancel); }
     return;
   }
   const config = await loadConfig(location);

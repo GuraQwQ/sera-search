@@ -27,13 +27,13 @@ async function enable(config: Config, source: SourceName) {
   await writeAtomic(config.configFile, JSON.stringify(input, null, 2) + '\n');
 }
 
-export async function login(config: Config, source: SourceName, credentials?: SavedCredentials, platform?: string, signal = AbortSignal.timeout(platform ? 300000 : config.timeoutMs)) {
+export async function login(config: Config, source: SourceName, credentials?: SavedCredentials, platform?: string, signal = AbortSignal.timeout(platform ? 300000 : config.timeoutMs), options: { sessionOnly?: boolean } = {}) {
   validate(source, platform);
   if (platform) {
     if (credentials && Object.keys(credentials).length) throw new Error('该平台通过已配置后端的官方登录页面验证；API 账号请使用对应 API 来源');
     const provider = new Engine(config).sources.find(item => item.capability.name === source);
     if (!provider?.login) throw new Error('此来源没有平台登录入口');
-    await provider.login(platform, signal);
+    await provider.login(platform, signal, options);
     const result = await saveCredential(config.home, source, {}, platform);
     await enable(config, source);
     return { ...result, status: '已登录' };
