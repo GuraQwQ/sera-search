@@ -22,11 +22,13 @@ function capability(name: SourceName, config: ApiConfig, requirement: string, mo
 }
 
 function api(config: ApiConfig, fallback: string, name: string) {
+  const configuredAgent = config.userAgent?.trim();
+  const userAgent = configuredAgent && /^[\x20-\x7e]+$/.test(configuredAgent) ? configuredAgent : 'SERA (https://github.com/GuraQwQ/sera-search)';
   return async (path: string, signal: AbortSignal, params: Record<string, string> = {}, body?: Row) => {
     const url = endpoint(config, fallback, path);
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
     return json(url, { signal, method: body ? 'POST' : 'GET', headers: {
-      Accept: 'application/json', 'User-Agent': config.userAgent ?? 'SERA/0.1 (catalog metadata client)',
+      Accept: 'application/json', 'User-Agent': userAgent,
       ...(body ? { 'Content-Type': 'application/json' } : {}),
       ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
     }, ...(body ? { body: JSON.stringify(body) } : {}) }, name);

@@ -399,11 +399,11 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       }
       case 'read': {
         const report = await engine.read(text, read);
-        result = values.full ? report : readReportView(report, !values.raw && values.length === undefined && !values.query && !values.keyword?.length); break;
+        result = values.full ? report : readReportView(report, !values.raw && values.length === undefined && !values.query && !values.keyword?.length, !values.raw); break;
       }
       case 'read-many': {
         const report = await engine.readMany(positionals.slice(1), read);
-        result = values.full ? report : batchReadView(report, !values.raw && values.length === undefined && !values.query && !values.keyword?.length); break;
+        result = values.full ? report : batchReadView(report, !values.raw && values.length === undefined && !values.query && !values.keyword?.length, !values.raw); break;
       }
       case 'record': {
         if (!values.input) throw new Error('record 需要 --input JSON文件');

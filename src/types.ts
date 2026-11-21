@@ -127,7 +127,7 @@ export interface SearchHit {
   snippet: string;
   publishedAt?: string;
   locator?: ContentLocator;
-  metadata?: Record<string, unknown> & { [compactMetadata]?: Record<string, unknown>; relevance?: { status: string; matchedTerms?: string[]; missingTerms?: string[]; score?: number } };
+  metadata?: Record<string, unknown> & { [compactMetadata]?: Record<string, unknown>; relevance?: { status: string; matchedTerms?: string[]; missingTerms?: string[]; score?: number; method?: 'target-id' } };
 }
 
 export type ContentKind = 'page' | 'post' | 'subtitle' | 'metadata';
@@ -148,6 +148,8 @@ export interface DataCoverage {
   observed?: { since?: string; until?: string };
   truncated?: boolean;
   nextCursor?: string;
+  totalMatching?: number;
+  querySummary?: Record<string, number | string>;
   limitations?: string[];
 }
 export interface SourceOperation {

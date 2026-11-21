@@ -24,7 +24,8 @@ import { createForumSources } from './providers/forums.js';
 import { createEntitySources, steamDocumentMatches } from './providers/entities.js';
 import { directTarget, specificSource, taskRoute, preferredSources, materialTypes, webSearchOrder } from './routing.js';
 import { legacyContentTypes, specialistSites, relatedPlatforms, materialMatches } from './provider-catalog.js';
-import { assessRelevance, discoveryTerms } from './providers/relevance.js';
+import { assessRelevance, discoveryTerms, relevancePriority } from './providers/relevance.js';
+import { steamReviewPageUrl } from './providers/steam-reviews.js';
 import { researchStateSchema, subjectSchema, criterionSchema, prepareResearch, inspectResearch, loadResearchEvidence, assessmentKey } from './research.js';
 export { researchStateSchema } from './research.js';
 import { httpTrace, networkReport } from './network.js';
@@ -99,7 +100,8 @@ export function mergeHits(hits: SearchHit[]): AggregatedHit[] {
     if (!item.publishedAt && hit.publishedAt) item.publishedAt = hit.publishedAt;
     merged.set(key, item);
   }
-  return [...merged.values()].sort((a, b) => b.rankScore - a.rankScore || a.url.localeCompare(b.url));
+  const priority = (hit: AggregatedHit) => Math.max(...hit.retrievals.map(item => relevancePriority(item.metadata?.relevance)));
+  return [...merged.values()].sort((a, b) => priority(b) - priority(a) || b.rankScore - a.rankScore || a.url.localeCompare(b.url));
 }
 
 function discoveryTermsMatch(query: string | undefined, ...fields: unknown[]) {
@@ -111,6 +113,10 @@ function discoveryTermsMatch(query: string | undefined, ...fields: unknown[]) {
 
 function discoveryActions(operations?: SourceOperation[]) {
   return operations?.map(({ name, description, contentTypes }) => [name, description, contentTypes]);
+}
+
+function readAddress(url: string) {
+  return steamReviewPageUrl(canonicalUrl(directTarget(url) ?? url));
 }
 
 export class Engine {
@@ -342,7 +348,11 @@ export class Engine {
     }
     const strategy = input.strategy ?? 'fallback';
     const scheduled = matching.slice(0, input.maxSources ?? (strategy === 'cross-check' && !input.sources ? 3 : matching.length));
-    const known = new Set((input.excludeUrls ?? []).map(canonicalUrl)), knownItems = new Set(input.excludeItems ?? []);
+    const known = new Set((input.excludeUrls ?? []).map(url => steamReviewPageUrl(canonicalUrl(url))));
+    const knownItems = new Set((input.excludeItems ?? []).map(key => {
+      const separator = key.indexOf('\n');
+      return separator < 0 ? steamReviewPageUrl(key) : steamReviewPageUrl(key.slice(0, separator)) + key.slice(separator);
+    }));
     const knownPages = new Set([...known, ...[...knownItems].map(key => key.split('\n')[0]!)]);
     const fresh = (hit: SearchHit) => !known.has(canonicalUrl(hit.url)) && !knownItems.has(retrievalKey(hit));
     const run = async (name: SourceName, query = input.query, filter = false) => {
@@ -371,7 +381,7 @@ export class Engine {
         });
         const invalidUrls = returned.length - valid.length, raw = dated.slice(0, input.limit);
         if ((input.since || input.until) && raw.some(hit => !(hit.locator?.occurredAt ?? hit.publishedAt))) coverage = { ...coverage!, limitations: [...(coverage?.limitations ?? []), '部分记录缺少精确时间，时间条件需继续核验'] };
-        const assessed = assessRelevance(query, raw, input.aliases, input.terms);
+        const assessed = assessRelevance(query, raw, input.aliases, input.terms, name === 'steam' && operation === 'reviews');
         if (source.capability.accessMethod === 'api' && (settings.operation || settings.params && Object.keys(settings.params).length)) {
           for (const hit of assessed.annotatedHits) if (hit.metadata?.relevance?.status === 'irrelevant') hit.metadata.relevance.status = 'uncertain';
           assessed.hits = assessed.annotatedHits;
@@ -402,7 +412,16 @@ export class Engine {
       }
     };
     const results: { hits: SearchHit[]; run: SourceRun }[] = [];
-    const enough = () => new Set(results.flatMap(result => result.hits).filter(hit => fresh(hit) && hit.metadata?.relevance?.status !== 'irrelevant').map(retrievalKey)).size >= input.limit;
+    const enough = () => {
+      const candidates = new Set<string>(), confirmed = new Set<string>();
+      for (const result of results) for (const hit of result.hits) {
+        if (hit.metadata?.relevance?.status === 'irrelevant' || !fresh(hit)) continue;
+        const key = retrievalKey(hit);
+        candidates.add(key);
+        if (relevancePriority(hit.metadata?.relevance)) confirmed.add(key);
+      }
+      return candidates.size >= input.limit && confirmed.size >= Math.ceil(input.limit / 2);
+    };
     if (input.sources || input.platform || input.at) {
       let next = 0;
       await Promise.all(Array.from({ length: Math.min(3, scheduled.length) }, async () => {
@@ -489,7 +508,7 @@ export class Engine {
 
   async read(url: string, options: ReadOptions = {}, acceptCached?: (evidence: Evidence) => boolean): Promise<ReadReport> {
     const input = readSchema.parse(options);
-    url = canonicalUrl(directTarget(url) ?? url);
+    url = readAddress(url);
     if (options.signal?.aborted) return { status: 'error', runs: [{ source: input.sources?.[0] ?? 'web', status: 'cancelled', elapsedMs: 0, returned: 0, code: 'CANCELLED', message: '操作已取消' }] };
     const cacheWarnings: string[] = [];
     try {
@@ -586,7 +605,7 @@ export class Engine {
     const inputs = z.array(z.string()).min(1).max(20).parse(urls);
     readSchema.parse(options);
     const addresses = inputs.map(url => {
-      try { return canonicalUrl(directTarget(url) ?? url); }
+      try { return readAddress(url); }
       catch (error) { return { status: 'error' as const, runs: [{ source: options.sources?.[0] ?? 'web', status: 'error' as const, elapsedMs: 0, returned: 0, code: 'BAD_INPUT', message: errorMessage(error, this.config) }] }; }
     });
     const unique = [...new Set(addresses.filter((value): value is string => typeof value === 'string'))], reports = new Map<string, ReadReport>();

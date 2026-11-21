@@ -2,6 +2,7 @@ import type { ConnectorDefinition } from './connectors.js';
 import type { BatchReadReport, Capability, Channel, CommentReport, Document, Evidence, ReadReport, ResearchReport, SearchReport, SourceRun } from './types.js';
 import { compactMetadata } from './types.js';
 import { assessmentKey } from './research.js';
+import { steamReviewPageUrl } from './providers/steam-reviews.js';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value) ?? '');
@@ -86,32 +87,37 @@ export function readView<T extends { content?: string; fragments?: ReadReport['f
     ...(runs?.length ? { runs: runs.map(runView) } : {}) };
 }
 
-export function readReportView(report: ReadReport, leadingPreview = false) {
+export function readReportView(report: ReadReport, leadingPreview = false, focusedWikiPreview = leadingPreview) {
   const { status, evidence, document, ...rest } = readView(report);
   const material = evidence ?? document;
   const view = { status, ...(evidence ? { evidence: evidenceView(evidence) } : {}), ...(document ? { document: evidenceView(document) } : {}), ...rest };
-  if (!leadingPreview || !evidence || report.selection !== 'leading' || !report.content) return view;
+  if (!evidence || !report.content) return view;
   const metadata = material?.metadata;
-  const wiki = material?.source === 'wiki' && metadata?.format === 'wikitext';
-  const steam = material?.source === 'steam' && metadata?.contentScope === 'store-specification';
-  const text = steam ? metadata?.readPreview || metadata?.summary : wiki ? report.content.replace(/\[\[([^\[\]|\n]+)(?:\|([^\[\]\n]+))?\]\]/g, (link, target: string, label: string | undefined) =>
-    /^(?:File|Image|Category|文件|图像|分類|分类):/i.test(target) ? link : label ?? target) : undefined;
+  const leading = report.selection === 'leading' && leadingPreview;
+  const focused = report.selection === 'focused' && focusedWikiPreview;
+  const wiki = (leading || focused) && material?.source === 'wiki' && metadata?.format === 'wikitext';
+  const steam = leading && material?.source === 'steam' && metadata?.contentScope === 'store-specification';
+  const text = steam ? metadata?.readPreview || metadata?.summary : wiki ? report.content
+    .replace(/\[\[(?:Category|分類|分类):[^\[\]\n]*(?:\]{1,2}|(?=\n|$))/gi, '')
+    .replace(/\[\[([^\[\]|\n]+)(?:\|([^\[\]\n]+))?\]\]/g, (link, target: string, label: string | undefined) =>
+      /^(?:File|Image|文件|图像):/i.test(target) ? link : label ?? target)
+    .replace(/\n\s*…\s*$/, '').trim() : undefined;
   if (typeof text !== 'string' || !text || text === report.content) return view;
-  return { ...view, content: undefined, offset: undefined, preview: text, nextOffset: report.offset ?? 0 };
+  return { ...view, content: undefined, offset: undefined, preview: text, nextOffset: focused ? report.nextOffset : report.offset ?? 0 };
 }
 
 export function storedEvidenceView<T extends Omit<Evidence, 'content'> & { content?: string; fragments?: ReadReport['fragments'] }>(value: T) {
   return evidenceView(readView(value));
 }
 
-export function batchReadView(report: BatchReadReport, leadingPreview = false) {
+export function batchReadView(report: BatchReadReport, leadingPreview = false, focusedWikiPreview = leadingPreview) {
   const first = new Map<ReadReport, number>();
   return { ...report, documents: report.documents.map((document, index) => {
     const duplicateOf = first.get(document);
     if (duplicateOf !== undefined) return { status: document.status, duplicateOf, cacheHit: document.cacheHit,
       ...(document.evidence ? { evidence: { id: document.evidence.id, observationId: document.evidence.observationId } } : {}) };
     first.set(document, index);
-    return readReportView(document, leadingPreview);
+    return readReportView(document, leadingPreview, focusedWikiPreview);
   }) };
 }
 
@@ -135,7 +141,8 @@ export function searchView<T extends SearchReport>(report: T, limit: number) {
   let used = 0;
   for (const hit of report.hits.slice(0, limit)) {
     const snippet = preview(hit.snippet, 600);
-    const item = { ...hit, title: preview(hit.title, 240), snippet,
+    const url = hit.retrievals.some(item => item.source === 'steam' && item.metadata?.contentScope === 'review-record') ? steamReviewPageUrl(hit.url, true) : hit.url;
+    const item = { ...hit, url, title: preview(hit.title, 240), snippet,
       retrievals: hit.retrievals.map(({ snippet: original, metadata, ...retrieval }) => {
         const compact = metadata?.[compactMetadata];
         return { ...retrieval, ...(original !== hit.snippet && original !== '' ? { snippet: preview(original, 300) } : {}),

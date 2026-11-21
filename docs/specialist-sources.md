@@ -65,7 +65,7 @@ GitHub `releases` 必填 `repository:owner/repo`，`page` 默认 1；`tag` 与 `
 
 VNDB `releases` 可按 `vnId`、`releaseId`、`steamAppId`、`externalUrl` 选择版本；没有身份参数时按 query 搜索发行标题，另可提供 `languages`、`platforms` 与 `page`。`read https://vndb.org/r...` 回读发行记录；主作品条目与某一发行版本的语言分别核对。
 
-Steam `reviews` 必填字符串 `appId`，query 不作评价正文全文搜索。可选 `languages`（默认 `["all"]`）、`sort:recent|updated|helpful|funny`、`reviewType:all|positive|negative`、`purchaseType:all|steam|non-steam`，以及 `pageSize`、`filterOfftopic`；日期映射到接口评价区间。返回的 `locator` 绑定 recommendationid，`research` 按该定位回读实际评价文本。匿名页可能缓存约十分钟，热门／搞笑排序不能当作完整遍历。
+Steam `reviews` 必填字符串 `appId`，query 不作评价正文全文搜索。可选 `languages`（默认 `["all"]`）、`sort:recent|updated|helpful|funny`、`reviewType:all|positive|negative`、`purchaseType:all|steam|non-steam`，以及 `pageSize`、`filterOfftopic`，日期映射到接口评价区间。页统计放在 `runs[].coverage`，简明链接省略默认分页参数。把返回的 URL 和绑定 recommendationid 的 `locator` 一起传给 `read`，或用 `research` 按该定位回读。匿名页可能缓存约十分钟，热门／搞笑排序不能当作完整遍历。
 
 ```bash
 sera search "Python" --sources wikidata --operation search --params '{"language":"zh"}' --json

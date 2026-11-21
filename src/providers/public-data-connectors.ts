@@ -62,7 +62,8 @@ function eurostatSummary(data: Record<string, any>) {
 
 const worldBankSourceId = z.number().int().positive().max(9999);
 const worldBankPageSize = 2000;
-const worldBankDirectory = new Map<string, { entries: { id: string; title: string }[]; more: boolean; expires: number }>();
+interface IndicatorNote { note: string; unit: unknown }
+const worldBankDirectory = new Map<string, { entries: { id: string; title: string }[]; notes: Map<string, IndicatorNote>; more: boolean; expires: number }>();
 
 function indicatorRank(query: string, id: string, title: string) {
   const name = title.normalize('NFKC').toLowerCase();
@@ -130,10 +131,10 @@ export function createPublicDataSources(config: Config): Source[] {
       return createStructuredSource(config, def, { search: {
         indicators: async (request, p, client) => {
           const query = request.query.normalize('NFKC').trim();
-          const indicatorHit = (code: string, title: string, sourceId: number | undefined, details?: Record<string, unknown>) => hit(id, {
+          const indicatorHit = (code: string, title: string, sourceId: number | undefined, details?: Record<string, unknown>, note?: IndicatorNote) => hit(id, {
             title, url: queryUrl('https://data.worldbank.org/', `indicator/${encodeURIComponent(code)}`, { source: sourceId }),
-            snippet: string(details?.sourceNote) || code, locator: { kind: 'record', id: code },
-            metadata: { record: details, [compactMetadata]: { indicator: code, sourceId, unit: details?.unit } },
+            snippet: note?.note ?? string(details?.sourceNote), locator: { kind: 'record', id: code },
+            metadata: { record: details, [compactMetadata]: { indicator: code, sourceId, unit: note?.unit ?? details?.unit } },
           });
           if (/^[a-z\d_-]+(?:\.[a-z\d_-]+)+$/i.test(query)) {
             const entries = await exactIndicator(query, p.sourceId, request.signal, client);
@@ -155,7 +156,7 @@ export function createPublicDataSources(config: Config): Source[] {
               const code = string(item.id), title = string(item.value);
               return code && title ? [{ id: code, title }] : [];
             });
-            directory = { entries, more: p.page < Number(response.pages), expires: Date.now() + 300_000 };
+            directory = { entries, notes: new Map(), more: p.page < Number(response.pages), expires: Date.now() + 300_000 };
             if (cacheKey !== undefined) {
               worldBankDirectory.delete(cacheKey);
               if (worldBankDirectory.size >= 8) worldBankDirectory.delete(worldBankDirectory.keys().next().value!);
@@ -166,10 +167,24 @@ export function createPublicDataSources(config: Config): Source[] {
             .filter(item => Number.isFinite(item.rank)).sort((a, b) => a.rank - b.rank || a.title.length - b.title.length || a.id.localeCompare(b.id));
           const end = p.resultOffset + request.limit;
           const next = end < matches.length ? { sourceId, page: p.page, resultOffset: end } : directory.more ? { sourceId, page: p.page + 1, resultOffset: 0 } : undefined;
-          return results(request, id, matches.slice(p.resultOffset, end).flatMap(item => indicatorHit(item.id, item.title, sourceId)), 'indicator-directory-page', {
+          const selected = matches.slice(p.resultOffset, end);
+          const first = selected[0];
+          let noteUnavailable = false;
+          if (first && !directory.notes.has(first.id)) {
+            try {
+              const signal = AbortSignal.any([request.signal, AbortSignal.timeout(2500)]);
+              const item = (await exactIndicator(first.id, sourceId, signal, client))[0];
+              const definition = string(item?.sourceNote).replace(/\s+/g, ' ').trim();
+              const characters = Array.from(definition);
+              const note = characters.length > 120 ? characters.slice(0, 119).join('') + '…' : definition;
+              if (directory.notes.size >= 24) directory.notes.delete(directory.notes.keys().next().value!);
+              directory.notes.set(first.id, { note, unit: item?.unit });
+            } catch { noteUnavailable = true; }
+          }
+          return results(request, id, selected.flatMap(item => indicatorHit(item.id, item.title, sourceId, undefined, directory.notes.get(item.id))), 'indicator-directory-page', {
             completeness: !next && p.page === 1 && !p.resultOffset ? 'complete' : 'partial', truncated: Boolean(next),
             nextCursor: next ? JSON.stringify(next) : undefined,
-            limitations: [`仅在数据源 ${sourceId} 的指标名称和代码中匹配；已扫描目录第 ${p.page} 页（${directory.entries.length} 条）`],
+            limitations: [`仅在数据源 ${sourceId} 的指标名称和代码中匹配；已扫描目录第 ${p.page} 页（${directory.entries.length} 条）`, ...(noteUnavailable ? ['首条指标口径暂未取得，可按指标代码读取'] : [])],
           });
         },
         observations: async (request, p, client) => { const indicator = p.indicator ?? request.query, span = request.since || request.until ? `${request.since?.slice(0, 4) ?? '1960'}:${request.until?.slice(0, 4) ?? new Date().getUTCFullYear()}` : undefined; const query = { format: 'json', date: span, page: p.page, per_page: request.limit }, path = `country/${encodeURIComponent(p.country)}/indicator/${encodeURIComponent(indicator)}`, v = await client(path, request.signal, query); if (!Array.isArray(v)) throw new Error('World Bank 未返回统计分页数组'); const url = queryUrl('https://api.worldbank.org/v2/', path, query), more = p.page < Number(v[0]?.pages); return results(request, id, hit(id, { title: `${indicator} · ${p.country}`, url, snippet: `${v[1]?.length ?? 0} 条观测；单位与缺失值见记录`, locator: { kind: 'record', id: url }, metadata: { record: v, indicator, country: p.country, timePrecision: 'year' } }), 'country-indicator-page', { truncated: more, nextCursor: more ? String(p.page + 1) : undefined, limitations: ['日期条件按年映射，年内精度不可由该序列保证'] }); },

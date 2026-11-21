@@ -7,11 +7,26 @@ import { invalidateCredential } from '../credentials.js';
 import { accessState } from '../source-policy.js';
 import { assessRelevance } from './relevance.js';
 
+function bingLocale(query: string, configured?: string) {
+  if (configured) {
+    try { return new Intl.Locale(configured).maximize(); }
+    catch { /* 配置值无法解析时，继续按能够明确识别的文字推断。 */ }
+  }
+  const market = /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(query) ? 'ja-JP' :
+    /\p{Script=Hangul}/u.test(query) ? 'ko-KR' : /\p{Script=Han}/u.test(query) ? 'zh-CN' : undefined;
+  return market ? new Intl.Locale(market) : undefined;
+}
+
 async function bing(config: Config, request: SearchRequest): Promise<SearchHit[]> {
   if (request.since) throw new Error('Bing RSS 不支持统一发布日期过滤');
   const url = endpoint(config.bing ?? {}, 'https://www.bing.com/', 'search');
   url.searchParams.set('format', 'rss');
   url.searchParams.set('q', request.query + (request.domains?.length ? ` (${request.domains.map(domain => `site:${domain}`).join(' OR ')})` : ''));
+  const locale = bingLocale(request.query, config.bing?.languageCode);
+  if (locale?.region) {
+    url.searchParams.set('mkt', `${locale.language}-${locale.region}`);
+    url.searchParams.set('setlang', locale.language);
+  }
   const result = await response(url, { headers: { 'User-Agent': 'SERA search', Accept: 'application/rss+xml' }, signal: request.signal }, 'Bing RSS');
   const xml = await result.text();
   if (!/<rss[\s>]/i.test(xml)) throw new Error('Bing 没有返回 RSS 搜索结果');

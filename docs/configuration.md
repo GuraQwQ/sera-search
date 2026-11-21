@@ -115,6 +115,8 @@ OpenAlex 匿名入口按 `free-quota` 使用免费每日预算；带 Key 的入�
 
 `google-news` 支持 `languageCode`、`country`、`edition` 和可选 `topicId`。默认 `en-US`／`US`／`US:en`；配置 `topicId` 后读取该主题 RSS，查询词不再用于关键词 RSS。`baseUrl` 可替换新闻服务入口。`iptv.baseUrl` 是 M3U 目录的完整 URL，默认读取 [Free-TV/IPTV](https://github.com/Free-TV/IPTV) 的 `playlist.m3u8`。这两个来源直接参与 `capabilities`、`search` 与 `read`，无需安装 Python 组件。
 
+Bing RSS 可用 `bing.languageCode` 指定市场语言，例如 `zh-CN`、`zh-TW` 或 `ja-JP`。省略时，对有汉字、日文假名或韩文的查询发送对应语言和市场提示。
+
 用 `login --from-env` 登记已有环境变量，或用 `login --stdin` 传入纯 Key／凭据 JSON：
 
 ```powershell
@@ -135,7 +137,7 @@ node .\dist\cli.js logout exa --home ./.sera
 
 登录记录是本地 JSON，包含 API Key 或 API 账号，需保管数据目录。读取旧配置时会先备份，再迁移其中的凭据；`migrations/` 备份也可能包含旧凭据。迁移可重复执行，已登记的凭据优先。
 
-Discord 在配置中填写 `guildId`，可选 `channelId`；Instagram 填写专业账号 `accountId`。Twitch 的 `clientId` 可随 Token 登记。MusicBrainz 等有站点调用要求的来源可设置 `userAgent`。网易云使用用户已经部署的 [api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)服务，配置 `netease.baseUrl` 并启用该来源；SERA 负责调用接口。
+Discord 在配置中填写 `guildId`，可选 `channelId`；Instagram 填写专业账号 `accountId`。Twitch 的 `clientId` 可随 Token 登记。MusicBrainz 可设置含项目联系方式的 ASCII `userAgent`，空值或不支持的字符会使用 SERA 的项目地址。网易云使用用户已经部署的 [api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)服务，配置 `netease.baseUrl` 并启用该来源；SERA 负责调用接口。
 
 LinuxDo 可登记 `{apiKey, username}`，分别映射 Discourse 的 `Api-Key` 与 `Api-Username`。小黑盒可将完整网站 Cookie 登记为 `heybox` 的 `apiKey`；公开样本已经返回原生帖子与评论，可选凭据用于站点允许的账号范围。
 

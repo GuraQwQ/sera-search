@@ -16,7 +16,7 @@
   "serpapi": { "engine": "google", "freeTierConfirmed": false },
   "wiki": {},
   "skills": {}, "bangumi": {}, "anilist": {}, "jikan": {}, "mangadex": {}, "vndb": {},
-  "musicbrainz": { "userAgent": "SERA/0.1 (填写项目或联系地址)" }, "lastfm": {}, "listenbrainz": {}, "discogs": {},
+  "musicbrainz": {}, "lastfm": {}, "listenbrainz": {}, "discogs": {},
   "youtube": {}, "netease": { "enabled": false },
   "baidu-images": {}, "sogou-images": {}, "trace-moe": {}, "saucenao": {},
   "twitch": {}, "discord": {}, "instagram": {}, "bing": {}, "sites": {},

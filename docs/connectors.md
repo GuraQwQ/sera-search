@@ -150,7 +150,7 @@ Exa、Tavily、Brave、SerpAPI 等免费与已购余额共用接口的来源，�
 
 ## 专用协议与内置来源
 
-`world-bank` 的 `indicators` 按代码直查，或在指定数据源的指标名称和代码中检索。关键词默认使用世界发展指标（`sourceId:2`），其他数据源可传 `sourceId`。每次读取一页轻量目录，按 `coverage.nextCursor` 中的参数续查；`limit` 只控制返回的命中数。
+`world-bank` 的 `indicators` 按代码直查，或在指定数据源的指标名称和代码中检索。关键词默认使用世界发展指标（`sourceId:2`），其他数据源可传 `sourceId`。每次读取一页轻量目录，按 `coverage.nextCursor` 中的参数续查，`limit` 只控制返回的命中数。关键词首条命中最多补查一次指标口径，并随该目录短暂复用。
 
 `rcsb-pdb` 的 `structures` 在搜索后用一次有时限的批量详情补充结构名称、实验方法、分辨率和物种。部分详情未取得时仍返回原有 PDB ID，可继续按 ID 读取。
 
