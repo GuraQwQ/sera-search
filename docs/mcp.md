@@ -144,7 +144,9 @@ CLI Agent 通过 Skill 与 `--help` 获得调用指引，MCP Agent 还会取得�
 
 ## 首轮调用与续查
 
-`sera_search` 的 `terms` 是发现用词，`excludeUrls` 标记已知链接；默认来源继续取得足量新命中，显式来源保留原始候选。`relevance` 是词面排序诊断，`sera_research` 允许部分匹配取证；`readLimit:0` 可先发现来源。
+`sera_search` 将普通 `query` 转发给通用搜索来源。所推断的材料仅在 `plan.pendingActions` 中提供可选入口；显式 `contentTypes` 或 `operation` 按来源定义核验。`sources` 可指定上游，结果保留源内顺序和原始候选，`relevance` 提供词面诊断。使用 `sera_research` 的 `discoveryQuery` 传递原生查询，例如 GitHub 的 `org:modelcontextprotocol typescript-sdk in:name`，设 `readLimit:0` 先返回候选，再用 `sera_read` 读取选中的地址。
+
+`sera_comments` 按已支持的 URL 平台分发，GitHub Issue 或 PR 讨论使用 `sera_read`。维基的 `sera_evidence` 与 `sera_read` 共用清洗预览，引用坐标按已保存原文计算，`raw:true` 返回原文。
 
 `sera_read`、`sera_read_many` 与 `sera_research` 的 `timeoutMs` 设置单次读取预算，`browser` 传已有 Chromium／Edge 路径，`raw:true` 让 `web` 保留原始 HTML。外部工具取得的内容用 `sera_record` 传 `url/title/content/method/observedAt` 保存，返回 `source:external` 的证据。检索、读取、研究和后端工具支持 `full:true` 展开详细结果。默认投影及回读方式见[证据指南](evidence.md)。
 

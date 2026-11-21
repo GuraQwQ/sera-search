@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFile, readdir, rm, realpath, lstat, mkdir } from 'node:fs/promises';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { serializeFile, writeAtomic } from './files.js';
-import { sourceNames, extensionNames } from './types.js';
+import { sourceNames, extensionNames, wikiPreview } from './types.js';
 import type { Config, Document, Evidence, EvidenceObservation, SourceName, EvidenceSource, ContentLocator } from './types.js';
 
 export function canonicalUrl(value: string): string {
@@ -44,6 +44,19 @@ export function textPage(content: string, offset: number, length: number) {
   const characters = Array.from(content);
   const end = Math.min(offset + length, characters.length);
   return { content: characters.slice(offset, end).join(''), offset, totalCharacters: characters.length, nextOffset: end < characters.length ? end : null };
+}
+
+export function renderWikiPreview(content: string, page: { content: string; offset: number; fragments?: { offset: number; endOffset: number }[] }) {
+  // 按原文遮住引注再截窗，跨页引注的偏移也按原始码点计算。
+  const masked = content.replace(/<ref\b(?:[^>"']|"[^"]*"|'[^']*')*?(?:\/\s*>|>[\s\S]*?<\/ref\s*>)/gi,
+    reference => '\0'.repeat(Array.from(reference).length));
+  const characters = Array.from(masked);
+  const ranges = page.fragments?.length ? page.fragments : [{ offset: page.offset, endOffset: page.offset + Array.from(page.content).length }];
+  return ranges.map(({ offset, endOffset }) => characters.slice(offset, endOffset).join('').replaceAll('\0', '')
+    .replace(/\[\[(?:Category|分類|分类):[^\[\]\n]*(?:\]{1,2}|(?=\n|$))/gi, '')
+    .replace(/\[\[([^\[\]|\n]+)(?:\|([^\[\]\n]+))?\]\]/g, (link, target: string, label: string | undefined) =>
+      /^(?:File|Image|文件|图像):/i.test(target) ? link : label ?? target)
+    .trim()).filter(Boolean).join('\n\n…\n\n');
 }
 
 export interface FocusOptions { query?: string; keywords?: string[] }
@@ -372,11 +385,13 @@ export class EvidenceStore {
     return normalizeEvidence(evidence);
   }
 
-  async get(id: string, offset = 0, length = 4000, focus?: FocusOptions) {
+  async get(id: string, offset = 0, length = 4000, focus?: FocusOptions, preview = false) {
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 1 || length > 20000) throw new Error('分页需要非负 offset 和 1–20000 的 length');
     const evidence = await this.load(id);
     const { content, ...metadata } = evidence;
-    return { ...metadata, ...(focus?.query || focus?.keywords?.length ? focusText(content, focus, length) : textPage(content, offset, length)) };
+    const page = focus?.query || focus?.keywords?.length ? focusText(content, focus, length) : textPage(content, offset, length);
+    return { ...metadata, ...page, ...(preview && evidence.source === 'wiki' && evidence.metadata?.format === 'wikitext'
+      ? { [wikiPreview]: renderWikiPreview(content, page) } : {}) };
   }
 
   async cleanIfDue() {

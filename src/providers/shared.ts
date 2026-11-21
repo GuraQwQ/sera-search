@@ -75,7 +75,16 @@ export async function fetchResponse(url: URL | string, init: RequestInit): Promi
   const settings = useProxy ? { ...init, dispatcher: proxy ??= new EnvHttpProxyAgent() } : init;
   const limits = requestLimits.getStore();
   if (limits?.min_interval_ms) await pace(limits.source + ':' + new URL(url).origin, limits.min_interval_ms, init.signal ?? new AbortController().signal);
-  const result = await fetch(url, settings);
+  let result: Response;
+  try { result = await fetch(url, settings); }
+  catch (error) {
+    const cause = error instanceof Error ? error.cause as { code?: unknown; message?: unknown } | undefined : undefined;
+    if (!init.signal?.aborted && typeof cause?.code === 'string') {
+      const message = typeof cause.message === 'string' ? cause.message : '网络连接失败';
+      throw Object.assign(new Error(message, { cause: error }), { code: cause.code });
+    }
+    throw error;
+  }
   return limits ? boundedResponse(result, limits.max_response_bytes ?? 8 * 1024 * 1024) : result;
 }
 

@@ -5,9 +5,9 @@ import { adaptStructuredSource } from './connectors.js';
 import { createDeclaredSources, configuredSources } from './connector-registry.js';
 import { sourceNameSchema } from './source-schema.js';
 import { z } from 'zod';
-import { sourceNames, platformIdPattern, intents } from './types.js';
+import { sourceNames, platformIdPattern, intents, wikiPreview } from './types.js';
 import type { Channel, Config, Source, SourceName, SearchOptions, SearchReport, SearchHit, AggregatedHit, SourceRun, ReadReport, ResearchReport, Evidence, CommentReport, ImageRequest, ReadOptions, BatchReadReport, ResearchOptions, ResearchState, SearchAttempt, Document, SourceOperation } from './types.js';
-import { canonicalUrl, retrievalKey, publisher, textPage, focusText, wikiLeadOffset, documentObservations, EvidenceStore } from './evidence.js';
+import { canonicalUrl, retrievalKey, publisher, textPage, focusText, wikiLeadOffset, renderWikiPreview, documentObservations, EvidenceStore } from './evidence.js';
 import { errorMessage, validationMessage } from './config.js';
 import { createHttpSources } from './providers/http.js';
 import { createPlatformSources, siteForUrl } from './providers/platform.js';
@@ -100,8 +100,7 @@ export function mergeHits(hits: SearchHit[]): AggregatedHit[] {
     if (!item.publishedAt && hit.publishedAt) item.publishedAt = hit.publishedAt;
     merged.set(key, item);
   }
-  const priority = (hit: AggregatedHit) => Math.max(...hit.retrievals.map(item => relevancePriority(item.metadata?.relevance)));
-  return [...merged.values()].sort((a, b) => priority(b) - priority(a) || b.rankScore - a.rankScore || a.url.localeCompare(b.url));
+  return [...merged.values()];
 }
 
 function discoveryTermsMatch(query: string | undefined, ...fields: unknown[]) {
@@ -118,6 +117,13 @@ function discoveryActions(operations?: SourceOperation[]) {
 function readAddress(url: string) {
   return steamReviewPageUrl(canonicalUrl(directTarget(url) ?? url));
 }
+
+const commentPlatforms: [SourceName, RegExp][] = [
+  ['bilibili', /(?:^|\.)bilibili\.com$|^b23\.tv$/], ['youtube', /(?:^|\.)youtube\.com$|^youtu\.be$/],
+  ['instagram', /(?:^|\.)instagram\.com$/], ['netease', /^music\.163\.com$/],
+  ['linuxdo', /^linux\.do$/], ['heybox', /(?:^|\.)xiaoheihe\.cn$/],
+];
+const generalSearchSources: SourceName[] = [...webSearchOrder, 'github', 'wiki', 'agent-reach'];
 
 export class Engine {
   readonly store: EvidenceStore;
@@ -301,7 +307,8 @@ export class Engine {
     if (input.since && input.until && input.since > input.until) throw new Error('since 不能晚于 until');
     const githubOperation = input.sourceOptions?.github?.operation ?? input.operation;
     if (input.githubType && githubOperation && input.githubType !== githubOperation) throw Object.assign(new Error('githubType 与 GitHub operation 不一致，请选择同一操作'), { code: 'BAD_INPUT' });
-    const material = input.contentTypes ?? materialTypes(input.query);
+    const material = input.contentTypes ?? [];
+    const hintedMaterial = material.length ? material : materialTypes(input.query);
     const inferred = taskRoute(input.query, input.intent), route = material.length ? { ...inferred, reason: `按材料 ${material.join('、')} 匹配来源和动作；时间条件由动作解释` } : inferred;
     const supportsPlatform = (source: Source) => !input.platform || (source.capability.searchPlatforms ?? source.capability.platforms)?.includes(input.platform)
       || ['agent-reach', 'opencli'].includes(source.capability.name) || Boolean(input.sources?.includes(source.capability.name) && source.capability.backend && source.channels && !source.capability.searchPlatforms) || input.platform === 'academic' && source.capability.category === 'academic';
@@ -319,14 +326,19 @@ export class Engine {
     })[0]?.name;
     const pendingActions = this.sources.filter(source => (!input.sources || input.sources.includes(source.capability.name)) && supportsPlatform(source)).flatMap(source => {
       const requested = input.sourceOptions?.[source.capability.name]?.operation ?? input.operation;
-      return (source.capability.operations ?? []).filter(operation => operation.entrypoint !== 'images' && (requested ? operation.name === requested : material.length ? materialMatches(operation.contentTypes, material) : Boolean(input.sources || input.platform) && operation === searchOperations(source)?.[0])).flatMap(operation => {
+      return (source.capability.operations ?? []).filter(operation => operation.entrypoint !== 'images' && (requested ? operation.name === requested : hintedMaterial.length ? materialMatches(operation.contentTypes, hintedMaterial) : Boolean(input.sources || input.platform) && operation === searchOperations(source)?.[0])).flatMap(operation => {
         const required = requiredFor(source, operation.name);
         return operation.entrypoint === 'comments' || operation.entrypoint === 'read' || required.length ? [{ source: source.capability.name, operation: operation.name, entrypoint: operation.entrypoint ?? 'search' as const, required }] : [];
       });
     });
+    const preferred = sourceOrder ?? (input.intent || material.length ? preferredSources(route.intent, input.query, material) : []);
+    const candidates = material.length || input.operation || input.githubType
+      ? this.sources.filter(source => source.search && source.capability.configured).map(source => source.capability.name)
+      : generalSearchSources;
     const selected = input.sources ? [...new Set(input.sources)] : input.at ? ['wayback' as SourceName] : input.platform
       ? this.sources.filter(source => source.capability.configured && source.search && supportsPlatform(source)).map(source => source.capability.name)
-       : [...new Set<SourceName>([...(sourceOrder ?? preferredSources(route.intent, input.query, material)), ...Object.keys(input.sourceOptions ?? {}), ...(material.length || input.operation || input.githubType ? this.sources.filter(source => source.search && source.capability.configured).map(source => source.capability.name) : ['agent-reach' as const])])].filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search && (name !== 'sites' || Boolean(input.platform))));
+      : [...new Set<SourceName>([...Object.keys(input.sourceOptions ?? {}), ...preferred, ...candidates])]
+        .filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search && (name !== 'sites' || Boolean(input.platform))));
     const matching = selected.filter(name => {
       const source = this.sources.find(source => source.capability.name === name);
       if (!source) return Boolean(input.sources);
@@ -347,6 +359,7 @@ export class Engine {
       });
     }
     const strategy = input.strategy ?? 'fallback';
+    const automaticFallback = strategy === 'fallback' && !input.sources && !input.platform && !input.at;
     const scheduled = matching.slice(0, input.maxSources ?? (strategy === 'cross-check' && !input.sources ? 3 : matching.length));
     const known = new Set((input.excludeUrls ?? []).map(url => steamReviewPageUrl(canonicalUrl(url))));
     const knownItems = new Set((input.excludeItems ?? []).map(key => {
@@ -444,13 +457,18 @@ export class Engine {
         }
       }
     }
-    const runs = results.filter(Boolean).map(result => result.run);
-    const hits = mergeHits(results.filter(Boolean).flatMap(result => result.hits));
+    const completed = results.filter(Boolean);
+    const runs = completed.map(result => result.run);
+    // 自动换源按有可用候选的来源交付，来源内部沿用上游返回顺序。
+    const usable = (result: typeof completed[number]) => result.hits.some(hit => relevancePriority(hit.metadata?.relevance) > 0);
+    const ordered = automaticFallback
+      ? [...completed.filter(usable), ...completed.filter(result => !usable(result))] : completed;
+    const hits = mergeHits(ordered.flatMap(result => result.hits));
     const good = runs.some(run => ['ok', 'empty'].includes(run.status));
     const failed = runs.some(run => !['ok', 'empty'].includes(run.status) || run.code === 'PARTIAL_RESULT');
     return { query: input.query, hits, runs, route, plan: { strategy, contentTypes: material, selected: scheduled,
       ...(pendingActions.length ? { pendingActions } : {}),
-      stopReason: options.signal?.aborted ? 'cancelled' : strategy === 'fallback' && enough() ? 'enough-results' : scheduled.length < matching.length ? 'budget' : 'exhausted' }, status: !good ? pendingActions.length ? 'partial' : 'error' : failed ? 'partial' : hits.length ? 'ok' : 'empty' };
+      stopReason: options.signal?.aborted ? 'cancelled' : automaticFallback && enough() ? 'enough-results' : scheduled.length < matching.length ? 'budget' : 'exhausted' }, status: !good ? pendingActions.length ? 'partial' : 'error' : failed ? 'partial' : hits.length ? 'ok' : 'empty' };
   }
 
   async images(options: Omit<ImageRequest, 'signal'> & { sources?: SourceName[]; signal?: AbortSignal }): Promise<SearchReport> {
@@ -482,11 +500,24 @@ export class Engine {
   }
 
   async comments(options: z.input<typeof commentsSchema> & { signal?: AbortSignal }): Promise<CommentReport> {
-    const input = commentsSchema.parse(options), url = canonicalUrl(input.url), host = new URL(url).hostname;
-    const fallback: SourceName = /(^|\.)bilibili\.com$/.test(host) || host === 'b23.tv' ? 'bilibili' : /(^|\.)instagram\.com$/.test(host) ? 'instagram' : host === 'music.163.com' ? 'netease' : host === 'linux.do' ? 'linuxdo' : /(^|\.)xiaoheihe\.cn$/.test(host) ? 'heybox' : 'youtube';
+    const input = commentsSchema.parse(options), url = canonicalUrl(input.url), address = new URL(url);
+    const fallback = commentPlatforms.find(([, hosts]) => hosts.test(address.hostname))?.[0];
+    const names = input.sources ?? (fallback ? [fallback] : []);
+    const supported = names.some(name => name === fallback || !commentPlatforms.some(([native]) => native === name)
+      && this.sources.some(source => source.capability.name === name && source.comments));
+    if (!supported && !fallback) {
+      const issue = address.hostname === 'github.com' && /^\/[^/]+\/[^/]+\/(?:issues|pull)\/\d+\/?$/.test(address.pathname);
+      return { status: 'error', runs: [], code: 'UNSUPPORTED_URL', message: issue
+        ? 'GitHub Issue 或 PR 的讨论请用 read / sera_read 随原文读取'
+        : '此 URL 没有适用的评论入口，请用 channels 查询支持的评论动作' };
+    }
     const runs: SourceRun[] = [];
-    for (const name of input.sources ?? [fallback]) {
+    for (const name of names) {
       const source = this.sources.find(item => item.capability.name === name), started = Date.now(), signal = this.signal(options.signal), requests: NetworkRequest[] = [];
+      if (commentPlatforms.some(([native]) => native === name) && name !== fallback) {
+        runs.push({ source: name, status: 'unavailable', elapsedMs: 0, returned: 0, code: 'UNSUPPORTED_URL', message: `URL 与 ${name} 的评论入口不匹配` });
+        continue;
+      }
       if (!source?.comments || !source.capability.configured) { runs.push(this.unavailable(name, source)); continue; }
       const restricted = this.accessFailure(source, 'comments'); if (restricted) { runs.push(restricted); continue; }
       try {
@@ -522,9 +553,11 @@ export class Engine {
     if (!input.sources) order.sort((a, b) => { if (a === specific) return -1; if (b === specific) return 1; const first = this.sources.find(source => source.capability.name === a), second = this.sources.find(source => source.capability.name === b); return (first ? accessState(this.config, first).priority : 100) - (second ? accessState(this.config, second).priority : 100); });
     const eligible = order.filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.read));
     const view = (document: Document) => {
-      const offset = document.source === 'wiki' && !input.raw && document.metadata?.format === 'wikitext' ? wikiLeadOffset(document.content) : 0;
-      return input.query || input.keywords?.length ? focusText(document.content, input, input.length, offset)
+      const wiki = document.source === 'wiki' && !input.raw && document.metadata?.format === 'wikitext';
+      const offset = wiki ? wikiLeadOffset(document.content) : 0;
+      const page = input.query || input.keywords?.length ? focusText(document.content, input, input.length, offset)
         : { ...textPage(document.content, offset, input.length), selection: 'leading' as const };
+      return { ...page, ...(wiki ? { [wikiPreview]: renderWikiPreview(document.content, page) } : {}) };
     };
     if (!input.refresh) {
       try {
@@ -646,7 +679,7 @@ export class Engine {
       return entry;
     };
     const existing = await loadResearchEvidence(state, loadEvidence);
-    const requestedMaterials = input.contentTypes ?? materialTypes(input.query);
+    const requestedMaterials = input.contentTypes ?? [];
     const readDeclarations = new Map<SourceName, SourceOperation[]>(), readDiscoveryFailures: SourceRun[] = [];
     const addresses = [taskRoute(input.query).directUrl, taskRoute(input.discoveryQuery).directUrl,
       ...state.subjects.flatMap(subject => subject.urls ?? []), ...[...existing.evidence.values()].map(evidence => evidence.url)].filter((url): url is string => Boolean(url));
@@ -725,7 +758,8 @@ export class Engine {
       ? state.nextQuery : input.state && focus ? focusedQuery : input.query);
     if (!structuredSeed && stagnant && state.nextAction === 'change-query' && previous.query === query && input.discoveryQuery === undefined) query = subject?.aliases?.[0] ?? input.aliases?.[0] ?? shortSeed;
     const route = taskRoute(input.discoveryQuery ?? taskRoute(input.query).directUrl ?? query, criterion?.intent ?? input.intent);
-    const preferred = preferredSources(route.intent, query, requestedMaterials).filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search));
+    const preferred = (criterion?.intent || input.intent || requestedMaterials.length ? preferredSources(route.intent, query, requestedMaterials) : generalSearchSources)
+      .filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.search));
     const used = new Set(state.history.filter(round => round.query === query && (round.newItems ?? round.newUrls) + round.newEvidence === 0).flatMap(round => round.sources));
     const suggested = state.nextAction === 'change-source' ? state.nextSources?.filter(name => preferred.includes(name)) ?? [] : [];
     const sourceOrder = [...new Set([...suggested, ...preferred.filter(name => !used.has(name)), ...preferred.filter(name => used.has(name))])];
@@ -775,12 +809,8 @@ export class Engine {
       search = direct ? { ...search, hits: mergeHits([{ source: specificSource(direct, this.config) ?? input.readSources?.[0] ?? 'web', title: direct, url: direct, snippet: '', metadata: { directTarget: true } }]) }
         : await this.search({ ...input, sources: searchSources, query, intent: route.intent, excludeItems: [...new Set([...(input.excludeItems ?? []), ...discoveredItems])], signal: options.signal }, sourceOrder);
       const available = search.hits.filter(hit => !waiting.has(hit.url) && (input.refresh || !examinedItems.has(retrievalKey(hit)))
-        && hit.retrievals.some(item => item.metadata?.relevance?.status !== 'irrelevant'));
-      const score = (hit: AggregatedHit) => Math.max(...hit.retrievals.map(item => item.metadata?.relevance?.score ?? 0));
-      available.sort((a, b) => score(b) - score(a) || b.rankScore - a.rankScore);
-      const selected: AggregatedHit[] = [], publishers = new Set<string>();
-      for (const hit of available) if (!publishers.has(hit.publisher) && selected.length < input.readLimit) { selected.push(hit); publishers.add(hit.publisher); }
-      for (const hit of available) if (selected.length < input.readLimit && !selected.includes(hit)) selected.push(hit);
+        && (searchSources?.length || hit.retrievals.some(item => item.metadata?.relevance?.status !== 'irrelevant')));
+      const selected = available.slice(0, input.readLimit);
       let next = 0;
       const read: ReadReport[] = new Array(selected.length);
       await Promise.all(Array.from({ length: Math.min(3, selected.length) }, async () => {

@@ -4,11 +4,11 @@ CLI 和 MCP 默认返回正文窗口、原文坐标、当前观测和必要的�
 
 结构化来源可在 `snippet` 或 `evidence.metadata.summary` 提供关键值与报告范围。`recordPreview` 和 `externalIdSample` 只提供字段预览或样本，完整记录可继续读取。同一份维基原文的默认阅读窗口会跳过开头的模板，`--raw` 或 `raw:true` 从原文开头读取。维基标题可出现在聚焦结果的 `sections` 和 `contexts` 中，所有坐标保持相对于原文。
 
-Steam 商店与维基的简明首读可用 `preview` 返回清洗后的文字，`nextOffset` 指向证据中的原文起点。维基聚焦也可返回清洗预览，`fragments` 继续给出对应的原文坐标。引用时用证据 ID 和坐标回读，或以 `raw` 或 `full` 取得原文窗口。Wikidata 的 `externalIdCount` 给出声明总数，默认输出对外部 ID 做字节限制，完整列表用 `full` 查看。
+Steam 商店与维基的简明首读可用 `preview` 返回清洗后的文字，`nextOffset` 指向证据中的原文起点。维基的 `read` 和 `evidence` 预览清理内链和引注，`fragments`、分页的 `offset` 与 `nextOffset` 继续使用原文坐标。引用时用证据 ID 和坐标回读，或以 `raw` 或 `full` 取得原文窗口。Wikidata 的 `externalIdCount` 给出声明总数，默认输出对外部 ID 做字节限制，完整列表用 `full` 查看。
 
 长研究默认只展示前 50 条缺口，`coverage.totalGaps` 给出数量。大状态中空白待查单元由对象和判据重建，`implicitPendingAssessments` 给出折叠数量，继续传回 `state` 即可。CLI 使用 `--state` 成功保存大型状态后可直接沿用返回的 `stateFile`。
 
-`search` 保留每个来源的执行结果和命中，合并重复 URL。简明结果按动作保留主要业务字段，`full` 可查看原始命中字段。`rankScore` 用于排序，表示召回位置，不能解释成事实可信度。
+`search` 保留每个来源的执行结果和命中，按上游顺序合并重复 URL 或片段定位。`retrievals[].rank` 保留各来源内名次。简明结果按动作保留主要业务字段，`full` 可查看原始命中字段和名次统计。
 
 `retrievals[].metadata.relevance` 描述查询匹配程度。主题匹配优先进入返回页，混合查询中的独立年份只作为条件，按 AppID 取得的评价标记为 `method:target-id`。默认换源达到结果数且至少一半是高相关的新候选时停止。显式来源保留全部候选及诊断。
 

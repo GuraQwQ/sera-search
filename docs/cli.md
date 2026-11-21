@@ -124,7 +124,9 @@ node dist/cli.js install --home ./.sera --mcp-client codex --json
 
 ## 检索与取证
 
-搜索返回 `retrievals[].metadata.relevance` 的词面诊断，显式来源仍保留原始候选。默认搜索继续取得足量新命中，`--exclude-url` 标记已知 URL，`--term` 单独指定发现用词。`research` 优先充分匹配的候选，也允许部分匹配取证；需要先审阅来源时设 `--read-limit 0`，确认后直接 `read`。
+普通查询走通用搜索来源，关键词推断只提示可选动作。指定 `--content-type` 或动作时按声明检查材料与必填参数。显式来源保留上游名次与候选，`retrievals[].metadata.relevance` 提供词面诊断。需要先审阅来源时用 `research --read-limit 0`，确认后直接 `read`。GitHub 仓库匹配用原生限定词，如 `org:modelcontextprotocol typescript-sdk in:name`，在研究中可通过 `--discovery-query` 单独传递。
+
+`comments` 按 URL 平台调用对应入口。GitHub Issue 或 PR 的讨论使用 `read` 随原文读取。诊断中的 `ECONNRESET` 等底层错误码可用于定位连接失败。
 
 `read`／`read-many`／`research` 可传 `--timeout-ms` 调整本次读取预算、`--browser` 使用已有 Chromium／Edge。`web` 读取公开 JSON、文本与 JS 时直读；`--raw` 跳过 Jina 并保留 HTML，便于定位页面已有的原文、数据和脚本入口。不同取得方式的正文缓存分别匹配，`--refresh` 取得新观察。
 

@@ -132,7 +132,7 @@ const commandHelp: Record<string, [string, string]> = {
   search: ['search <查询> [--sources 来源列表] [--operation 动作] [--params JSON]',
     '--input JSON文件 可提供完整请求；--limit 默认5，--strategy fallback|cross-check。\n--domain、--since、--until、--at 按动作能力筛选；--content-type 选择材料。'],
   comments: ['comments <URL> [--sources 来源列表] [--limit 数量] [--cursor 游标]',
-    '--limit 默认20，上限100；实际单页数量由来源决定。\n--parent 指定回复对象；--order 选择排序。按返回的 page.nextCursor 续页。'],
+    '按 URL 平台选择评论入口；GitHub Issue 和 PR 讨论用 read。\n--limit 默认20，上限100；--parent 指定回复对象；--order 选择排序。按 page.nextCursor 续页。'],
   'image-search': ['image-search <查询> [--sources 来源列表] [--operation 动作] [--limit 数量]', '关键词图片发现；保留图片链接及原始来源页。'],
   'reverse-image': ['reverse-image <图片URL> [--sources 来源列表] [--operation 动作] [--limit 数量]', '反向匹配图片或动画帧；按动作 Schema 选择来源。'],
   research: ['research <查询> [--input JSON文件] [--goal 判据] [--state JSON文件]',
@@ -144,7 +144,7 @@ const commandHelp: Record<string, [string, string]> = {
     '--query、--keyword 定位片段；--length 默认2000。\n--refresh 重新获取；--max-age 限定缓存毫秒数；--raw 保留 HTML 或从原始维基文本开头读起。\n--timeout-ms 设置本次预算；批量地址使用 read-many。'],
   'read-many': ['read-many <URL或ID...> [--sources 来源列表] [--keyword 关键词]', '最多20个地址，三路并行；逐项返回结果，支持 read 的读取选项。'],
   evidence: ['evidence <证据ID> [--offset 数量] [--length 数量] [--query 查询] [--keyword 关键词]',
-    '--offset 从0开始，按 Unicode 码点计数；--length 默认4000。\n分页使用返回的 nextOffset；--query、--keyword 返回匹配片段及原文坐标。'],
+    '--offset 从0开始，按 Unicode 码点计数；--length 默认4000。\n分页使用原文 nextOffset；--query、--keyword 返回匹配片段及原文坐标。\n维基默认提供清洗预览；--raw 或 --full 查看原文。'],
   clean: ['clean', '清理项目管理的证据及组件缓存；保留依赖、凭据、会话和配置。'],
   mcp: ['mcp [--profile full|search] [--mcp-output dual|structured]', '启动 stdio MCP 服务。search 加载查询、读取、证据和后端工具；full 另提供运维工具。dual 兼容文本与结构化响应；structured 可省去重复文本。'],
 };
@@ -185,6 +185,7 @@ function display(value: unknown): string {
     return `${source.name}: 搜索=${source.search ? '支持' : '—'}，读取=${source.read ? '支持' : '—'}${source.backend ? '，扩展工具=支持' : ''}，配置=${source.configured ? '已配置；调用时检查可用性' : source.requirement ?? '待配置'}`;
   }).join('\n');
   const report = value as Record<string, any>;
+  if (report.status === 'error' && report.message) return report.message;
   if (Number.isInteger(report.duplicateOf)) return `与第 ${report.duplicateOf + 1} 项相同`;
   if (report.runs?.length && !report.hits?.length && !report.content && report.runs.every((run: any) => run.code === 'NOT_LOGGED_IN')) return notLoggedIn;
   if (report.channels) return [
@@ -214,7 +215,7 @@ function display(value: unknown): string {
     return lines.join('\n');
   }
   if (report.evidence) return `${report.evidence.title}\n${report.evidence.url}\n类型：${report.evidence.contentKind}\n证据：${report.evidence.id}\n\n${report.evidence.metadata?.summary ? report.evidence.metadata.summary + '\n\n' : ''}${report.preview ?? report.content ?? ''}${report.nextSteps?.length ? '\n\n' + report.nextSteps.join('\n') : ''}${report.cacheWarnings?.length ? '\n\n' + report.cacheWarnings.join('\n') : ''}`;
-  if (report.content !== undefined) return `${report.document?.title ?? report.title}\n${report.document?.url ?? report.url}\n\n${report.content}${report.nextOffset !== null && report.id ? `\n\n下一段：--offset ${report.nextOffset}` : ''}${report.cacheWarnings?.length ? '\n\n' + report.cacheWarnings.join('\n') : ''}`;
+  if (report.content !== undefined || report.preview !== undefined) return `${report.document?.title ?? report.title}\n${report.document?.url ?? report.url}\n\n${report.preview ?? report.content}${report.nextOffset !== null && report.id ? `\n\n下一段：--offset ${report.nextOffset}` : ''}${report.cacheWarnings?.length ? '\n\n' + report.cacheWarnings.join('\n') : ''}`;
   return JSON.stringify(value, null, 2);
 }
 
@@ -411,7 +412,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
         result = values.full ? report : recordView(report); break;
       }
       case 'evidence': {
-        const evidence = await engine.store.get(text, integer(values.offset, 0), integer(values.length, 4000), { query: values.query, keywords: values.keyword });
+        const evidence = await engine.store.get(text, integer(values.offset, 0), integer(values.length, 4000), { query: values.query, keywords: values.keyword }, !values.raw && !values.full);
         result = values.full ? evidence : storedEvidenceView(evidence); break;
       }
       case 'clean': {

@@ -95,7 +95,7 @@ export interface Comment { id: string; parentId?: string; rootId?: string; text:
 export interface CommentRequest { url: string; limit: number; cursor?: string; parentId?: string; order?: string; signal: AbortSignal }
 export interface CommentPage { url: string; comments: Comment[]; nextCursor?: string; scope: string; truncated?: boolean; metadata?: Record<string, unknown> }
 export interface ImageRequest { query?: string; imageUrl?: string; platform?: string; operation?: string; limit: number; signal: AbortSignal }
-export interface CommentReport { status: 'ok' | 'empty' | 'partial' | 'error'; runs: SourceRun[]; page?: CommentPage; evidence?: Omit<Evidence, 'content'>; cacheWarnings?: string[] }
+export interface CommentReport { status: 'ok' | 'empty' | 'partial' | 'error'; runs: SourceRun[]; code?: 'UNSUPPORTED_URL'; message?: string; page?: CommentPage; evidence?: Omit<Evidence, 'content'>; cacheWarnings?: string[] }
 
 export interface SearchRequest {
   query: string;
@@ -119,6 +119,7 @@ export interface SearchAttempt { backend: SourceName; query?: string; status: 'o
 
 // 简明输出的字段投影，完整命中序列化时保留原有结构。
 export const compactMetadata = Symbol('compactMetadata');
+export const wikiPreview = Symbol('wikiPreview');
 
 export interface SearchHit {
   source: SourceName;
@@ -328,6 +329,7 @@ export interface ReadReport {
   evidence?: Omit<Evidence, 'content'>;
   document?: Omit<Document, 'content'>;
   content?: string;
+  [wikiPreview]?: string;
   totalCharacters?: number;
   nextOffset?: number | null;
   offset?: number;
