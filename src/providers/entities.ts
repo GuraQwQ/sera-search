@@ -1,5 +1,6 @@
 import type { ApiConfig, Config, Source, Document } from '../types.js';
-import { date, decoded, document, endpoint, epoch, hit, json, object, permitted, response, rows, string, textResponse } from './shared.js';
+import { date, decoded, document, endpoint, epoch, hit, json, object, permitted, plain, response, rows, string, textResponse } from './shared.js';
+import type { Row } from './shared.js';
 import { z } from 'zod';
 import { describeOperation, reportCoverage, selectOperation } from './operations.js';
 import { readSteamReviews, searchSteamReviews, steamReviewsAppId, steamReviewsOperation } from './steam-reviews.js';
@@ -47,6 +48,17 @@ function steamError(message: string, code: string, fallbackUrl: string) {
   return Object.assign(new Error(message), { code, fallbackUrl });
 }
 
+function storeSummary(item: Row, price: unknown) {
+  const quote = price as Row | undefined, currency = string(quote?.currency), final = quote?.final;
+  const amount = /^[A-Z]{3}$/.test(currency) && typeof final === 'number' && Number.isSafeInteger(final) && final >= 0
+    ? `${currency} ${(final / 100).toFixed(2)}` : undefined;
+  const formatted = string(quote?.final_formatted) || amount;
+  const score = item.metascore ?? (item.metacritic as Row | undefined)?.score;
+  const platforms = item.platforms as Row | undefined;
+  const systems = [['windows', 'Windows'], ['mac', 'macOS'], ['linux', 'Linux']].filter(([key]) => platforms?.[key!] === true).map(([, name]) => name);
+  return [item.is_free === true ? '免费' : formatted, Number(score) > 0 ? `Metascore ${score}` : undefined, systems.join('/')].filter(Boolean).join(' · ');
+}
+
 function steam(config: ApiConfig = {}): Source {
   const headers = { 'User-Agent': 'SERA', Accept: 'application/json' };
   const storeParams = z.strictObject({ region: z.string().regex(/^[A-Za-z]{2}$/).optional(), language: z.string().min(1).optional() });
@@ -82,8 +94,9 @@ function steam(config: ApiConfig = {}): Source {
       url.searchParams.set('term', request.query); url.searchParams.set('l', params.language ?? 'english'); url.searchParams.set('cc', params.region ?? 'us');
       const result = await json(url, { headers, signal: request.signal }, 'Steam 商店搜索');
       return rows(result.items, 'Steam 商店实体').filter(item => /^[1-9]\d*$/.test(String(item.id))).slice(0, request.limit).flatMap(item => hit('steam', {
-        title: string(item.name), url: `https://store.steampowered.com/app/${item.id}/`, snippet: 'Steam 商店候选',
-        metadata: { appId: item.id, imageUrl: item.tiny_image, price: item.price, platforms: item.platforms, metascore: item.metascore, contentScope: 'store-entity' },
+        title: string(item.name), url: `https://store.steampowered.com/app/${item.id}/`, snippet: storeSummary(item, item.price) || 'Steam 商店候选',
+        metadata: { appId: item.id, imageUrl: item.tiny_image, price: item.price, ...(item.price ? { priceScale: 100, region: params.region ?? 'us' } : {}),
+          platforms: item.platforms, metascore: item.metascore, contentScope: 'store-entity' },
       }));
     },
     async read(url, signal, options) {
@@ -136,7 +149,12 @@ function steam(config: ApiConfig = {}): Source {
         return document('steam', url, `Steam ${target.appId} 公告`, JSON.stringify(data, null, 2), { contentKind: 'metadata', metadata: { appId: target.appId, contentScope: 'news-list', returned: items.length, ...(total !== undefined ? { total } : {}), truncated, ...(truncated && dates.length ? { nextEndDate: Math.min(...dates) - 1 } : {}), apiUrl: config.baseUrl ? undefined : api.href } });
       }
       if (data.steam_appid !== undefined && String(data.steam_appid) !== target.appId) throw steamError('Steam 作品AppID与请求不符', 'CONTENT_MISMATCH', url);
-      return document('steam', url, string(data.name), JSON.stringify(data, null, 2), { contentKind: 'metadata', metadata: { appId: target.appId, contentType: 'game', contentScope: 'store-specification', language: api.searchParams.get('l'), region: api.searchParams.get('cc'), releaseDateRaw: data.release_date } });
+      const summary = [storeSummary(data, data.price_overview), (data.release_date as Row | undefined)?.date,
+        Array.from(plain(data.short_description || data.about_the_game)).slice(0, 500).join('')].filter(Boolean).join(' · ');
+      return document('steam', url, string(data.name), JSON.stringify(data, null, 2), { contentKind: 'metadata', metadata: {
+        appId: target.appId, contentType: 'game', contentScope: 'store-specification', language: api.searchParams.get('l'),
+        region: api.searchParams.get('cc'), releaseDateRaw: data.release_date, summary,
+      } });
     },
   };
 }

@@ -48,7 +48,37 @@ export function textPage(content: string, offset: number, length: number) {
 
 export interface FocusOptions { query?: string; keywords?: string[] }
 
-export function focusText(content: string, options: FocusOptions, length = 4000) {
+function sectionHeading(line: string) {
+  const markdown = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+  const wiki = markdown ? undefined : line.match(/^\s*(={2,6})\s*(.+?)\s*\1\s*$/);
+  const heading = markdown ?? wiki;
+  return heading ? { depth: heading[1]!.length, title: heading[2]! } : undefined;
+}
+
+export function wikiLeadOffset(content: string) {
+  let offset = 0;
+  // 只越过首部格式块，保持正文和引用坐标指向同一份 wikitext。
+  while (offset < content.length) {
+    const whitespace = /^\s*/.exec(content.slice(offset))![0].length;
+    const start = offset + whitespace;
+    const marker = /^(?:<!--[\s\S]*?-->|__[A-Z]+__|\[\[(?:File|Image|文件|图像):[^\n]+\]\])\s*/i.exec(content.slice(start));
+    if (marker) { offset = start + marker[0].length; continue; }
+    if (!content.startsWith('{{', start)) break;
+    let depth = 0, end: number | undefined;
+    for (const match of content.slice(start, start + 65536).matchAll(/\{\{|\}\}/g)) {
+      depth += match[0] === '{{' ? 1 : -1;
+      if (!depth) { end = start + match.index + 2; break; }
+    }
+    if (end === undefined) break;
+    const lineEnd = content.indexOf('\n', end);
+    if (content.slice(end, lineEnd === -1 ? undefined : lineEnd).trim()) break;
+    offset = end;
+  }
+  const start = offset + (/^\s*/.exec(content.slice(offset))?.[0].length ?? 0);
+  return start < content.length ? Array.from(content.slice(0, start)).length : 0;
+}
+
+export function focusText(content: string, options: FocusOptions, length = 4000, offset = 0) {
   if (!Number.isSafeInteger(length) || length < 1 || length > 20000) throw new Error('正文长度需要 1–20000 的整数');
   const characters = Array.from(content), unitOffsets = [0];
   for (const character of characters) unitOffsets.push(unitOffsets[unitOffsets.length - 1]! + character.length);
@@ -67,40 +97,66 @@ export function focusText(content: string, options: FocusOptions, length = 4000)
   const terms = [...new Set([...(options.keywords ?? []).map(value => value.trim()).filter(Boolean),
     ...queryTerms.filter(value => Array.from(value).length > 1), ...hanTerms].map(value => value.toLowerCase()).filter(value => !ignored.has(value)))].slice(0, 32);
   const sections: { title: string; offset: number }[] = [];
-  let lineOffset = 0;
-  for (const line of content.split('\n')) {
-    const title = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/)?.[1];
-    if (title && sections.length < 50) sections.push({ title, offset: lineOffset });
-    lineOffset += Array.from(line).length + 1;
+  const lines = content.split('\n'), positions: number[] = [], boilerplate = new Set<number>(), embedded: [number, number][] = [];
+  const links = /!?\[[^\]\n]*\]\([^\n)]*\)/g;
+  let lineOffset = 0, unitOffset = 0;
+  for (const line of lines) {
+    positions.push(lineOffset);
+    const heading = sectionHeading(line);
+    if (heading && sections.length < 50) sections.push({ title: heading.title, offset: lineOffset });
+    const nextOffset = lineOffset + Array.from(line).length + 1;
+    const inlineData = line.length > 1000 && /^\s*\{"/.test(line) && /_jsxs?\(_components\./.test(line);
+    if (inlineData) embedded.push([lineOffset, nextOffset]);
+    if (inlineData || /\]\(/.test(line) && /^[\s#*+>\-\d.)|]*$/.test(line.replace(links, ''))) boilerplate.add(unitOffset);
+    lineOffset = nextOffset;
+    unitOffset += line.length + 1;
   }
-  const candidates: { start: number; end: number; anchor: number; terms: Set<string>; count: number }[] = [];
+  // 替换为等长空白，匹配偏移始终对应保存的原文。
+  const searchable = content.replace(/\]\(https?:\/\/[^\s)]+\)/gi, match => ' '.repeat(match.length));
+  const candidates: { start: number; end: number; anchor: number; terms: Set<string>; prose: Set<string>; count: number }[] = [];
   for (const term of terms) {
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const expression = new RegExp(escaped, 'giu');
-    let count = 0;
-    for (const match of content.matchAll(expression)) {
-      if (count++ >= 100) break;
+    expression.lastIndex = unitOffsets[offset] ?? 0;
+    let count = 0, menuCount = 0, startOfLine = 0, nextLine = boilerplate.size ? content.indexOf('\n') : -1;
+    const searchText = /^https?:\/\//i.test(term) ? content : searchable;
+    for (const match of searchText.matchAll(expression)) {
+      if (nextLine !== -1 && match.index > nextLine) {
+        startOfLine = content.lastIndexOf('\n', match.index - 1) + 1;
+        nextLine = content.indexOf('\n', startOfLine);
+      }
+      const menu = boilerplate.has(startOfLine);
+      if (menu ? menuCount++ >= 20 : count++ >= 100) { if (count > 100) break; continue; }
       const anchor = codePointOffset(match.index), end = codePointOffset(match.index + match[0].length);
-      let start = Math.max(0, anchor - 180), stop = Math.min(characters.length, end + 300);
-      for (let at = start; at > Math.max(0, start - 80); at--) if (characters[at - 1] === '\n') { start = at; break; }
+      let start = Math.max(offset, anchor - 180), stop = Math.min(characters.length, end + 300);
+      for (let at = start; at > Math.max(offset, start - 80); at--) if (characters[at - 1] === '\n') { start = at; break; }
       for (let at = stop; at < Math.min(characters.length, stop + 80); at++) if (characters[at] === '\n') { stop = at + 1; break; }
-      candidates.push({ start, end: stop, anchor, terms: new Set([term]), count: 1 });
+      if (!menu) for (const [first, last] of embedded) {
+        if (first >= stop) break;
+        if (last <= anchor) start = Math.max(start, last);
+        else if (first > anchor) stop = first;
+      }
+      candidates.push({ start, end: stop, anchor, terms: new Set([term]), prose: new Set(menu ? [] : [term]), count: menu ? 0 : 1 });
     }
   }
   candidates.sort((a, b) => a.start - b.start);
   const merged: typeof candidates = [];
   for (const item of candidates) {
     const previous = merged.at(-1);
-    if (previous && item.start <= previous.end && Math.max(previous.end, item.end) - previous.start <= Math.min(1600, length)) {
+    if (previous && Boolean(previous.prose.size) === Boolean(item.prose.size)
+      && item.start <= previous.end && Math.max(previous.end, item.end) - previous.start <= Math.min(1600, length)) {
       previous.end = Math.max(previous.end, item.end); previous.count += item.count;
       for (const term of item.terms) previous.terms.add(term);
+      for (const term of item.prose) previous.prose.add(term);
     } else merged.push(item);
   }
-  if (!merged.length) return { ...textPage(content, 0, length), selection: 'leading' as const, fragments: [], sections };
-  merged.sort((a, b) => b.terms.size - a.terms.size || b.count - a.count || a.start - b.start);
+  if (!merged.length) return { ...textPage(content, offset, length), selection: 'leading' as const, fragments: [], sections };
+  merged.sort((a, b) => b.prose.size - a.prose.size || b.terms.size - a.terms.size || b.count - a.count || a.start - b.start);
   const fragments: { content: string; offset: number; endOffset: number; matchedTerms: string[] }[] = [];
   let used = 0;
+  const proseFound = merged.some(item => item.prose.size);
   for (const candidate of merged) {
+    if (proseFound && !candidate.prose.size) continue;
     if (fragments.length >= 3) break;
     const available = length - used - (fragments.length ? 5 : 0);
     if (available < 1) break;
@@ -114,9 +170,6 @@ export function focusText(content: string, options: FocusOptions, length = 4000)
   }
   fragments.sort((a, b) => a.offset - b.offset);
   const contexts: { content: string; offset: number; endOffset: number; kind: 'heading' | 'table-header' }[] = [];
-  const lines = content.split('\n'), positions: number[] = [];
-  let position = 0;
-  for (const line of lines) { positions.push(position); position += Array.from(line).length + 1; }
   const addContext = (first: number, last: number, kind: 'heading' | 'table-header') => {
     const offset = positions[first]!, endOffset = Math.min(characters.length, positions[last]! + Array.from(lines[last]!).length);
     if (contexts.some(item => item.offset === offset) || fragments.some(item => item.offset <= offset && item.endOffset >= endOffset)
@@ -127,7 +180,7 @@ export function focusText(content: string, options: FocusOptions, length = 4000)
     const start = positions.findLastIndex(offset => offset <= fragment.offset), end = positions.findLastIndex(offset => offset < fragment.endOffset);
     const headings = new Map<number, number>();
     for (let index = 0; index <= start; index++) {
-      const depth = lines[index]!.match(/^\s{0,3}(#{1,6})\s/)?.[1]?.length;
+      const depth = sectionHeading(lines[index]!)?.depth;
       if (depth) { for (const key of headings.keys()) if (key >= depth) headings.delete(key); headings.set(depth, index); }
     }
     for (const index of headings.values()) addContext(index, index, 'heading');

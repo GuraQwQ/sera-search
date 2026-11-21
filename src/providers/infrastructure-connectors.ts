@@ -65,8 +65,23 @@ export const infrastructureDefinitions: ConnectorDefinition[] = [
 
 const definitions = new Map(infrastructureDefinitions.map(item => [item.id, item]));
 function accepted(request: SearchRequest, target: string): boolean { return permitted(request.domains, new URL(target).hostname); }
-function valueHit(source: string, url: string, title: string, value: unknown, type: string, id = url): SearchHit[] {
-  return hit(source, { url, title, snippet: '', locator: { kind: 'record', id }, metadata: { record: value, contentType: type, contentScope: 'structured-record' } });
+function valueHit(source: string, url: string, title: string, value: unknown, type: string, summary: string, id = url): SearchHit[] {
+  return hit(source, { url, title, snippet: summary || '结构化记录可按链接回读', locator: { kind: 'record', id },
+    metadata: { record: value, contentType: type, contentScope: 'structured-record' } });
+}
+
+function packageSummary(value: Row, operation: string) {
+  if (operation === 'package') {
+    const versions = rows(value.versions ?? [], 'deps.dev 版本');
+    const selected = versions.find(item => item.isDefault === true)?.versionKey as Row | undefined;
+    return [`${versions.length} 个版本记录`, selected?.version && `默认版本 ${selected.version}`].filter(Boolean).join(' · ');
+  }
+  if (operation === 'dependencies') {
+    return [Array.isArray(value.nodes) && `${value.nodes.length} 个节点`, Array.isArray(value.edges) && `${value.edges.length} 条依赖边`].filter(Boolean).join(' · ');
+  }
+  const key = value.versionKey as Row | undefined;
+  return [key?.version && `版本 ${key.version}`, value.publishedAt && `发布 ${value.publishedAt}`,
+    Array.isArray(value.licenses) && value.licenses.length ? `许可证 ${value.licenses.slice(0, 4).join('、')}` : undefined].filter(Boolean).join(' · ');
 }
 function dated(request: SearchRequest) {
   if (request.since || request.until) throw Object.assign(new Error('此操作不提供任意时间范围过滤；请使用有日期契约的操作'), { code: 'UNSUPPORTED_FILTER' });
@@ -247,7 +262,9 @@ function wikiAnalytics(config: Config): Source {
     const path = `metrics/pageviews/${operation === 'pageviews' ? 'per-article' : 'aggregate'}/${encodeURIComponent(params.project)}/${params.access}/${params.agent}/${operation === 'pageviews' ? encodeURIComponent(article.replaceAll(' ', '_')) + '/' : ''}${params.granularity}/${since.replaceAll('-', '')}00/${until.replaceAll('-', '')}00`;
     const value = await client(path, request.signal), items = rows(object(value, 'Wikimedia').items, 'Wikimedia 时间序列'), target = new URL(path, definition.base_url).href;
     reportCoverage(request, 'wikimedia-selected-time-series', { completeness: 'partial', truncated: false, observed: { since: items.length ? captureTime(string(items[0]!.timestamp).padEnd(14, '0')) : undefined, until: items.length ? captureTime(string(items.at(-1)!.timestamp).padEnd(14, '0')) : undefined }, limitations: definition.limitations });
-    return accepted(request, 'https://wikimedia.org/') ? valueHit(definition.id, target, `${params.project} · ${operation === 'pageviews' ? article : '项目阅读量'}`, value, 'pageview-timeseries') : [];
+    const valid = items.filter(item => typeof item.views === 'number' && Number.isFinite(item.views));
+    const summary = valid.length ? `${params.granularity === 'daily' ? '日' : '月'}粒度 · ${valid.length} 个有效点 · 返回区间合计 ${valid.reduce((sum, item) => sum + Number(item.views), 0)} 次阅读 · 末期 ${valid.at(-1)!.views} 次（${valid.at(-1)!.timestamp} UTC）` : '本次未返回有效阅读量';
+    return accepted(request, 'https://wikimedia.org/') ? valueHit(definition.id, target, `${params.project} · ${operation === 'pageviews' ? article : '项目阅读量'}`, value, 'pageview-timeseries', summary) : [];
   };
   return createStructuredSource(config, definition, hooks);
 }
@@ -269,7 +286,11 @@ function ecosystem(config: Config): Source {
     return values.slice(0, request.limit).flatMap(item => {
       const version = string(item.number), target = new URL(path + (operation === 'versions' && version ? '/' + encodeURIComponent(version) : ''), definition.base_url).href;
       if (!accepted(request, target)) return [];
-      return valueHit(definition.id, target, `${name}${version ? '@' + version : ''}`, item, operation === 'versions' ? 'package-version' : 'package-metadata', `${params.registry}:${name}:${version}`);
+      const summary = [version && `版本 ${version}`, item.latest_release_number && `最新发布 ${item.latest_release_number}`,
+        typeof item.versions_count === 'number' && `${item.versions_count} 个版本记录`, item.published_at && `发布 ${item.published_at}`,
+        typeof item.description === 'string' ? item.description.slice(0, 300) : undefined].filter(Boolean).join(' · ');
+      return valueHit(definition.id, target, `${name}${version ? '@' + version : ''}`, item,
+        operation === 'versions' ? 'package-version' : 'package-metadata', summary, `${params.registry}:${name}:${version}`);
     });
   };
   return createStructuredSource(config, definition, hooks);
@@ -287,7 +308,8 @@ function depsDev(config: Config): Source {
     const path = `systems/${params.system}/packages/${encodeURIComponent(name)}${operation === 'package' ? '' : `/versions/${encodeURIComponent(params.version)}${operation === 'dependencies' ? ':dependencies' : ''}`}`;
     const value = await client(path, request.signal), target = new URL(path, definition.base_url).href;
     reportCoverage(request, `deps-dev:${operation}`, { completeness: 'partial', truncated: false, limitations: definition.limitations });
-    return accepted(request, target) ? valueHit(definition.id, target, `${params.system}:${name}${params.version ? '@' + params.version : ''} · ${operation}`, value, operation === 'dependencies' ? 'dependency-graph' : operation === 'version' ? 'package-version' : 'package-metadata') : [];
+    return accepted(request, target) ? valueHit(definition.id, target, `${params.system}:${name}${params.version ? '@' + params.version : ''} · ${operation}`,
+      value, operation === 'dependencies' ? 'dependency-graph' : operation === 'version' ? 'package-version' : 'package-metadata', packageSummary(value, operation)) : [];
   };
   return createStructuredSource(config, definition, hooks);
 }
@@ -310,7 +332,13 @@ function ripeStat(config: Config): Source {
     if (value.status !== 'ok') throw new Error(`RIPEstat 查询失败：${JSON.stringify(value.messages ?? value.status)}`);
     const target = new URL(`${endpoint}/data.json`, definition.base_url); for (const [key, value] of Object.entries(query)) target.searchParams.set(key, value);
     reportCoverage(request, `ripestat:${endpoint}`, { completeness: 'partial', truncated: false, limitations: definition.limitations });
-    return accepted(request, target.href) ? valueHit(definition.id, target.href, `${resource} · ${endpoint}`, value, operation === 'routing-history' ? 'routing-history' : 'network-record') : [];
+    const data = value.data as Row | undefined;
+    const summary = [data?.holder, data?.prefix && `前缀 ${data.prefix}`,
+      Array.isArray(data?.asns) && data.asns.length ? `ASN ${data.asns.slice(0, 5).map(item => typeof item === 'object' && item ? (item as Row).asn : item).filter(Boolean).join('、')}` : undefined,
+      typeof data?.announced === 'boolean' && (data.announced ? '已通告' : '未通告'),
+      Array.isArray(data?.by_origin) && `${data.by_origin.length} 个来源 AS 记录`].filter(Boolean).join(' · ');
+    return accepted(request, target.href) ? valueHit(definition.id, target.href, `${resource} · ${endpoint}`, value,
+      operation === 'routing-history' ? 'routing-history' : 'network-record', summary) : [];
   };
   return createStructuredSource(config, definition, hooks);
 }

@@ -130,11 +130,31 @@ function openLibrary(config: ApiConfig): Source {
         ...(request.since || request.until ? { first_publish_year: `[${request.since?.slice(0, 4) ?? '*'} TO ${request.until?.slice(0, 4) ?? '*'}]` } : {}) }), 'Open Library');
       const items = rows(data.docs, 'Open Library');
       return finish(request, items.flatMap(item => hit('open-library', { title: string(item.title), url: `https://openlibrary.org${string(item.key)}`, snippet: [Array.isArray(item.author_name) ? item.author_name.join('、') : '', item.first_publish_year].filter(Boolean).join(' · '),
-        metadata: { record: item, publicationYear: item.first_publish_year, contentScope: 'bibliography' } })), 'book-catalog', { truncated: Number(data.numFound ?? data.num_found) > p.page * request.limit,
+        metadata: { publicationYear: item.first_publish_year, editionCount: item.edition_count, coverId: item.cover_i, contentScope: 'bibliography' } })), 'book-catalog', { truncated: Number(data.numFound ?? data.num_found) > p.page * request.limit,
         nextCursor: Number(data.numFound ?? data.num_found) > p.page * request.limit ? String(p.page + 1) : undefined, limitations: ['出版时间过滤精度为年，不代表书内全文检索'] }); },
     async read(url, signal) { const parsed = new URL(url); if (parsed.hostname !== 'openlibrary.org' || !/^\/(?:works|books)\/OL\d+[WM]\/?$/.test(parsed.pathname)) throw new Error('Open Library 读取需要作品或版本记录链接');
       const data = object(await call(`${parsed.pathname.replace(/^\//, '').replace(/\/$/, '')}.json`, signal), 'Open Library'); return record('open-library', url, string(data.title), data, { contentScope: 'bibliography' }); },
   };
+}
+
+function weatherSummary(data: Row) {
+  const hourly = data.hourly as Row | undefined, units = data.hourly_units as Row | undefined;
+  const times: unknown[] = Array.isArray(hourly?.time) ? hourly.time : [];
+  const start = string(times[0]), end = string(times.at(-1));
+  const timezone = data.utc_offset_seconds === 0 ? 'UTC' : string(data.timezone);
+  const variables = Object.entries(hourly ?? {}).flatMap(([key, values]) => {
+    if (key === 'time' || !Array.isArray(values)) return [];
+    let count = 0, sum = 0, min = Infinity, max = -Infinity, last: number | undefined;
+    for (const item of values) {
+      if (typeof item !== 'number' || !Number.isFinite(item)) continue;
+      count++; sum += item; min = Math.min(min, item); max = Math.max(max, item); last = item;
+    }
+    const unit = string(units?.[key]);
+    if (!count) return [`${key} 无有效值`];
+    if (key === 'weather_code' || key.startsWith('wind_direction')) return [`${key} 末个有效值 ${last}${unit ? ' ' + unit : ''}（n=${count}）`];
+    return [`${key} ${min}–${max}${unit ? ' ' + unit : ''}，均值 ${Number((sum / count).toFixed(2))}（n=${count}）`];
+  });
+  return { start, end, timezone, summary: [start && end && [`${start} 至 ${end}`, timezone].filter(Boolean).join(' '), ...variables].filter(Boolean).join(' · ') || '本次未返回有效逐小时数据' };
 }
 
 function weather(config: ApiConfig): Source {
@@ -148,11 +168,15 @@ function weather(config: ApiConfig): Source {
       const url = new URL(op === 'historical-weather' ? 'https://archive-api.open-meteo.com/v1/archive' : 'https://api.open-meteo.com/v1/forecast');
       for (const [key, value] of Object.entries({ latitude: p.latitude, longitude: p.longitude, hourly: p.variables.join(','), timezone: 'UTC', ...(start ? { start_date: start } : {}), ...(end ? { end_date: end } : {}) })) url.searchParams.set(key, String(value));
       const call = client(config, url.origin, 'Open-Meteo'), data = object(await call(url.pathname.slice(1), request.signal, Object.fromEntries(url.searchParams)), 'Open-Meteo');
-      const coverage = reportCoverage(request, op, { observed: { since: start, until: end }, limitations: ['序列采用 UTC；变量单位由 hourly_units 给出；历史数据为气象再分析'] });
-      return hit('open-meteo', { title: `${request.query}：${p.latitude},${p.longitude} 天气`, url: url.href, snippet: JSON.stringify(data.hourly_units ?? {}), metadata: { record: data, coverage, contentScope: op } }).filter(item => permitted(request.domains, new URL(item.url).hostname));
+      const observed = weatherSummary(data);
+      reportCoverage(request, op, { observed: { since: observed.start || undefined, until: observed.end || undefined }, limitations: ['序列采用 UTC；变量单位由 hourly_units 给出；历史数据为气象再分析'] });
+      return hit('open-meteo', { title: `${request.query}：${p.latitude},${p.longitude} 天气`, url: url.href, snippet: observed.summary,
+        metadata: { record: data, contentScope: op } }).filter(item => permitted(request.domains, new URL(item.url).hostname));
     },
     async read(url, signal) { const parsed = new URL(url); if (!['archive-api.open-meteo.com', 'api.open-meteo.com'].includes(parsed.hostname) || !['/v1/archive', '/v1/forecast'].includes(parsed.pathname)) throw new Error('Open-Meteo 读取需要天气 API 链接');
-      const data = await client(config, parsed.origin, 'Open-Meteo')(parsed.pathname.slice(1), signal, Object.fromEntries(parsed.searchParams)); return record('open-meteo', url, 'Open-Meteo 天气序列', data, { contentScope: parsed.pathname.endsWith('archive') ? 'historical-reanalysis' : 'forecast', timezone: 'UTC' }); },
+      const data = object(await client(config, parsed.origin, 'Open-Meteo')(parsed.pathname.slice(1), signal, Object.fromEntries(parsed.searchParams)), 'Open-Meteo');
+      const { summary, timezone } = weatherSummary(data);
+      return record('open-meteo', url, 'Open-Meteo 天气序列', data, { summary, contentScope: parsed.pathname.endsWith('archive') ? 'historical-reanalysis' : 'forecast', timezone: timezone || undefined }); },
   };
 }
 
@@ -222,7 +246,10 @@ function hackernews(config: ApiConfig): Source {
       const data = object(await call('search', request.signal, { query: request.query, tags: p.tags, page: p.page, hitsPerPage: request.limit, numericFilters: numericFilters || undefined }), 'Hacker News');
       const entries = rows(data.hits, 'Hacker News'), more = p.page + 1 < Number(data.nbPages);
       return finish(request, entries.flatMap(item => hit('hackernews', { title: string(item.title) || string(item.story_title) || `HN ${item.objectID}`, url: `https://news.ycombinator.com/item?id=${item.objectID}`, snippet: plain(item.comment_text) || string(item.url),
-        publishedAt: date(item.created_at), locator: { kind: 'record', id: string(item.objectID) }, metadata: { record: item, originalUrl: item.url, parentId: item.parent_id } })), 'hn-search', { truncated: more, nextCursor: more ? String(p.page + 1) : undefined }); },
+        publishedAt: date(item.created_at), locator: { kind: 'record', id: string(item.objectID) }, metadata: {
+          author: item.author, points: item.points, numComments: item.num_comments, originalUrl: item.url ?? item.story_url,
+          parentId: item.parent_id, storyId: item.story_id,
+        } })), 'hn-search', { truncated: more, nextCursor: more ? String(p.page + 1) : undefined }); },
     async read(url, signal) { const parsed = new URL(url), id = parsed.hostname === 'news.ycombinator.com' && parsed.pathname === '/item' ? parsed.searchParams.get('id') : undefined; if (!id || !/^\d+$/.test(id)) throw new Error('Hacker News 读取需要 item?id= 链接');
       const data = object(await call(`items/${id}`, signal), 'Hacker News'); return { ...record('hackernews', url, string(data.title) || `HN ${id}`, data, { contentScope: 'discussion-tree', originalUrl: data.url }), locator: { kind: 'record' as const, id: String(data.id ?? id) } }; },
   };

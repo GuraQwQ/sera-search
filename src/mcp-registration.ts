@@ -14,7 +14,9 @@ const execute = promisify(execFile), root = fileURLToPath(new URL('../', import.
 export const mcpClientNames = ['codex', 'pi', 'omp', 'claude-code', 'hermes', 'openclaw', 'antigravity'] as const;
 export type McpClientName = typeof mcpClientNames[number];
 export interface McpServerLauncher { command: string; args: string[] }
-export interface McpRegistrationOptions { client: McpClientName; command?: string; configFile?: string; signal?: AbortSignal }
+export interface McpLaunchOptions { profile?: 'full' | 'search'; output?: 'dual' | 'structured' }
+export interface McpRegistrationOptions extends McpLaunchOptions { client: McpClientName; command?: string; configFile?: string; signal?: AbortSignal }
+export type PrepareMcpServer = (previousArgs?: unknown) => Promise<{ server: McpServerLauncher; toolCount: number }>;
 export interface McpRegistration extends McpServerLauncher {
   name: 'sera'; client: McpClientName; status: 'registered' | 'unchanged' | 'pending'; verified: boolean; toolCount: number; configFile?: string; nextSteps?: string[];
 }
@@ -109,20 +111,36 @@ export async function verifyMcpServer(launcher: McpServerLauncher, signal: Abort
   }
 }
 
-export async function createMcpServer(config: Config): Promise<McpServerLauncher> {
+export async function createMcpServer(config: Config, { profile, output }: McpLaunchOptions = {}): Promise<McpServerLauncher> {
   const portable = await exists(join(root, 'bundle.json')) && await exists(join(root, 'portable.mjs'));
-  return { command: process.execPath, args: [join(root, portable ? 'portable.mjs' : 'dist/cli.js'), 'mcp', '--home', resolve(config.home), ...(config.configFile ? ['--config', resolve(config.configFile)] : [])] };
+  return { command: process.execPath, args: [join(root, portable ? 'portable.mjs' : 'dist/cli.js'), 'mcp', '--home', resolve(config.home),
+    ...(config.configFile ? ['--config', resolve(config.configFile)] : []), ...(profile ? ['--profile', profile] : []), ...(output ? ['--mcp-output', output] : [])] };
 }
 
-export async function updateMcpJsonConfig(file: string, patch: (input: Record<string, any>) => void, signal: AbortSignal): Promise<boolean> {
+function previousOption<T extends string>(args: unknown, flag: string, allowed: readonly T[]): T | undefined {
+  if (!Array.isArray(args)) return;
+  for (let i = args.length - 1; i >= 0; i--) {
+    const arg = args[i];
+    const value = arg === flag ? args[i + 1] : typeof arg === 'string' && arg.startsWith(flag + '=') ? arg.slice(flag.length + 1) : undefined;
+    if (allowed.includes(value)) return value as T;
+  }
+}
+
+export async function updateMcpJsonConfig(file: string, patch: (input: Record<string, any>) => void | Promise<void>, signal: AbortSignal): Promise<boolean> {
   signal.throwIfAborted();
+  const read = () => readFile(file, 'utf8').catch(error => {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return undefined;
+  });
+  const original = await read();
   let input: unknown;
-  try { input = JSON.parse((await readFile(file, 'utf8')).replace(/^\uFEFF/, '')); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('MCP 配置需要有效 UTF-8 JSON，请修正后重试'); input = {}; }
+  try { input = original === undefined ? {} : JSON.parse(original.replace(/^\uFEFF/, '')); }
+  catch { throw new Error('MCP 配置需要有效 UTF-8 JSON，请修正后重试'); }
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('MCP 配置需要 JSON 对象');
   const before = JSON.stringify(input);
-  patch(input as Record<string, any>);
+  await patch(input as Record<string, any>);
   if (JSON.stringify(input) === before) return false;
+  if (await read() !== original) throw new Error('验证期间 MCP 配置已变化，请重新运行注册');
   signal.throwIfAborted();
   await writeAtomic(file, JSON.stringify(input, null, 2) + '\n');
   return true;
@@ -138,9 +156,11 @@ async function onSystemDrive(file: string): Promise<boolean> {
   }
 }
 
-async function registerCodex(server: McpServerLauncher, command: string | undefined, signal: AbortSignal, toolCount: number): Promise<McpRegistration> {
+async function registerCodex(prepare: PrepareMcpServer, command: string | undefined, signal: AbortSignal): Promise<McpRegistration> {
   const codex = await resolveMcpClientCommand('codex', command, ['@openai/codex']);
-  const existing = await readServer(codex, signal), unchanged = matches(existing, server);
+  const existing = await readServer(codex, signal);
+  const { server, toolCount } = await prepare(existing?.transport?.args);
+  const unchanged = matches(existing, server);
   if (!unchanged) {
     if (await onSystemDrive(join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'config.toml'))) return { name: 'sera', client: 'codex', status: 'pending', verified: true, toolCount, ...server, nextSteps: ['请先将 CODEX_HOME 指向选定的数据目录，再重试注册。'] };
     await runMcpClient(codex, ['mcp', 'add', 'sera', '--', server.command, ...server.args], signal);
@@ -159,24 +179,26 @@ function agentConfigFile(client: 'pi' | 'omp'): string {
   return join(resolve(process.env.PI_CODING_AGENT_DIR ?? join(base, 'agent')), 'mcp.json');
 }
 
-async function registerPiOrOmp(options: McpRegistrationOptions, server: McpServerLauncher, signal: AbortSignal, toolCount: number): Promise<McpRegistration> {
+async function registerPiOrOmp(options: McpRegistrationOptions, prepare: PrepareMcpServer, signal: AbortSignal): Promise<McpRegistration> {
   const client = options.client as 'pi' | 'omp', file = resolve(options.configFile ?? agentConfigFile(client));
-  const report = { name: 'sera' as const, client, verified: true, toolCount, ...server, configFile: file };
-  if (!options.configFile && await onSystemDrive(file)) return { ...report, status: 'pending', nextSteps: ['使用 --mcp-config 指定已选定的 MCP 配置文件位置，或设置客户端的数据目录后重试。'] };
+  const report = ({ server, toolCount }: Awaited<ReturnType<PrepareMcpServer>>) => ({ name: 'sera' as const, client, verified: true, toolCount, ...server, configFile: file });
+  if (!options.configFile && await onSystemDrive(file)) return { ...report(await prepare()), status: 'pending', nextSteps: ['使用 --mcp-config 指定已选定的 MCP 配置文件位置，或设置客户端的数据目录后重试。'] };
   if (!options.configFile || options.command) {
     let launcher: McpServerLauncher;
     try { launcher = await resolveMcpClientCommand(client, options.command, [client === 'pi' ? '@earendil-works/pi-coding-agent' : '@oh-my-pi/pi-coding-agent']); }
-    catch { return { ...report, status: 'pending', nextSteps: ['请提供已有原生客户端入口，或使用 --mcp-config 指定该客户端实际读取的 MCP 配置文件。'] }; }
+    catch { return { ...report(await prepare()), status: 'pending', nextSteps: ['请提供已有原生客户端入口，或使用 --mcp-config 指定该客户端实际读取的 MCP 配置文件。'] }; }
     let help: string;
     try { help = await runMcpClient(launcher, client === 'pi' ? ['mcp', '--help'] : ['--version'], signal); }
-    catch (error) { signal.throwIfAborted(); if (client !== 'pi') throw error; return { ...report, status: 'pending', nextSteps: ['当前 pi 入口未通过 MCP 帮助探测；请检查入口版本，或指定已配置 MCP 扩展实际读取的配置文件。'] }; }
-    if (client === 'pi' && !/mcp add/.test(help)) return { ...report, status: 'pending', nextSteps: ['当前 pi 入口未声明原生 MCP 支持；请更新客户端，或指定已配置 MCP 扩展实际读取的配置文件。'] };
+    catch (error) { signal.throwIfAborted(); if (client !== 'pi') throw error; return { ...report(await prepare()), status: 'pending', nextSteps: ['当前 pi 入口未通过 MCP 帮助探测；请检查入口版本，或指定已配置 MCP 扩展实际读取的配置文件。'] }; }
+    if (client === 'pi' && !/mcp add/.test(help)) return { ...report(await prepare()), status: 'pending', nextSteps: ['当前 pi 入口未声明原生 MCP 支持；请更新客户端，或指定已配置 MCP 扩展实际读取的配置文件。'] };
   }
-  const changed = await updateMcpJsonConfig(file, input => {
+  let prepared!: Awaited<ReturnType<PrepareMcpServer>>;
+  const changed = await updateMcpJsonConfig(file, async input => {
     if (input.mcpServers !== undefined && (!input.mcpServers || typeof input.mcpServers !== 'object' || Array.isArray(input.mcpServers))) throw new Error('MCP 配置的 mcpServers 需要 JSON 对象');
     const previous = input.mcpServers?.sera;
     if (previous !== undefined && (!previous || typeof previous !== 'object' || Array.isArray(previous))) throw new Error('sera MCP 配置需要 JSON 对象，原配置已保留');
-    const entry = { ...previous, type: 'stdio', ...server, enabled: true };
+    prepared = await prepare(previous?.args);
+    const entry = { ...previous, type: 'stdio', ...prepared.server, enabled: true };
     for (const key of ['url', 'serverUrl', 'httpUrl', 'headers', 'httpHeaders', 'transport', 'auth', 'oauth', 'disabled']) delete entry[key];
     input.mcpServers = { ...input.mcpServers, sera: entry };
     if (client === 'omp') {
@@ -185,9 +207,10 @@ async function registerPiOrOmp(options: McpRegistrationOptions, server: McpServe
       if (Array.isArray(input.disabledServers)) input.disabledServers = input.disabledServers.filter((name: unknown) => name !== 'sera');
     }
   }, signal);
+  const { server } = prepared;
   const saved = JSON.parse(await readFile(file, 'utf8')), entry = saved.mcpServers?.sera;
   if (!entry || entry.type !== 'stdio' || entry.command !== server.command || JSON.stringify(entry.args) !== JSON.stringify(server.args) || entry.enabled !== true || entry.disabled === true || client === 'omp' && saved.disabledServers?.includes('sera')) throw new Error('客户端的 sera MCP 配置回读不一致，请检查配置后重试');
-  return { ...report, status: changed ? 'registered' : 'unchanged', nextSteps: [client === 'pi' ? '在 pi 会话运行 /reload 后使用 /mcp 查看 sera；替代 MCP 扩展启用时，请确认它读取此配置文件。' : '在 OMP 会话运行 /mcp reload 后用 /mcp test sera 验证。'] };
+  return { ...report(prepared), status: changed ? 'registered' : 'unchanged', nextSteps: [client === 'pi' ? '在 pi 会话运行 /reload 后使用 /mcp 查看 sera；替代 MCP 扩展启用时，请确认它读取此配置文件。' : '在 OMP 会话运行 /mcp reload 后用 /mcp test sera 验证。'] };
 }
 
 export async function registerMcp(config: Config, options: McpRegistrationOptions): Promise<McpRegistration> {
@@ -195,9 +218,15 @@ export async function registerMcp(config: Config, options: McpRegistrationOption
   if (options.client === 'codex' && options.configFile) throw new Error('Codex 使用 CODEX_HOME 定位配置；请设置 CODEX_HOME 后重试');
   const signal = AbortSignal.any([AbortSignal.timeout(60000), ...(options.signal ? [options.signal] : [])]);
   signal.throwIfAborted();
-  const server = await createMcpServer(config), toolCount = await verifyMcpServer(server, signal);
-  if (options.client === 'codex') return registerCodex(server, options.command, signal, toolCount);
-  if (options.client === 'pi' || options.client === 'omp') return registerPiOrOmp(options, server, signal, toolCount);
+  const prepare: PrepareMcpServer = async previous => {
+    const server = await createMcpServer(config, {
+      profile: options.profile ?? previousOption(previous, '--profile', ['full', 'search']),
+      output: options.output ?? previousOption(previous, '--mcp-output', ['dual', 'structured']),
+    });
+    return { server, toolCount: await verifyMcpServer(server, signal) };
+  };
+  if (options.client === 'codex') return registerCodex(prepare, options.command, signal);
+  if (options.client === 'pi' || options.client === 'omp') return registerPiOrOmp(options, prepare, signal);
   const { registerAgentClient } = await import('./mcp-agent-clients.js');
-  return registerAgentClient(config, options, server, signal, toolCount);
+  return registerAgentClient(options, prepare, signal);
 }

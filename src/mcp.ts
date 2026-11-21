@@ -10,24 +10,24 @@ import { credentialsSchema, notLoggedIn } from './credentials.js';
 import { platformIdPattern, catalogGroups } from './types.js';
 import type { Config, CatalogGroup, SavedCredentials } from './types.js';
 import { BackendPool, backendSchema } from './backends.js';
-import { migrateResearchState } from './research.js';
+import { migrateResearchState, researchStateSchema } from './research.js';
 import { configureSetup } from './setup.js';
 import { componentNames } from './components.js';
 import { configurationInputSchema, configureSources } from './configuration.js';
 
 import { backendView, batchReadView, capabilityView, channelView, commentView, connectorView, readReportView, recordView, researchView, searchView, storedEvidenceView } from './output.js';
 
-function inputSchema<T extends z.ZodType>(schema: T) {
+function inputSchema<T extends z.ZodType>(schema: T, advertised: z.ZodType = schema) {
   const standard = schema['~standard'];
   return { '~standard': { ...standard, jsonSchema: {
     ...standard.jsonSchema,
-    input: () => { const { $schema, ...definition } = z.toJSONSchema(schema, { io: 'input' }); return definition; },
+    input: () => { const { $schema, ...definition } = z.toJSONSchema(advertised, { io: 'input' }); return definition; },
   } } };
 }
 
-export async function startMcp(config: Config, profile: 'full' | 'search' = 'full') {
+export async function startMcp(config: Config, profile: 'full' | 'search' = 'full', output: 'dual' | 'structured' = 'dual') {
   const admin = profile === 'full';
-  const structuredOnly = process.env.SERA_MCP_OUTPUT === 'structured';
+  const structuredOnly = output === 'structured';
   const version = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
   const server = new McpServer({ name: 'sera-search', version });
   const backends = new BackendPool();
@@ -77,7 +77,7 @@ export async function startMcp(config: Config, profile: 'full' | 'search' = 'ful
     const report = await (await fresh(input.group)).channels({ ...input, live: detailed || Boolean(input.platform || input.sources), signal: context.mcpReq.signal });
     return detailed ? report : channelView(report, Boolean(input.platform));
   }));
-  server.registerTool('sera_backend', { description: '只传 source 查看工具 Schema，再传 tool 与 arguments。扩展大结果可按证据 ID 回读，图片保持原内容。', inputSchema: inputSchema(backendSchema.extend({ full })) }, async (input, context) => {
+  server.registerTool('sera_backend', { description: '只传 source 查看工具 Schema，再传 tool 与 arguments。扩展大结果可按证据 ID 回读，图片保持原内容。', inputSchema: inputSchema(backendSchema.extend({ full })), annotations: { openWorldHint: true } }, async (input, context) => {
     try {
       const response = await backends.run((await fresh()).config, input, context.mcpReq.signal);
       return input.full ? response : backendView(response);
@@ -91,7 +91,12 @@ export async function startMcp(config: Config, profile: 'full' | 'search' = 'ful
       return input.full ? report : commentView(report);
     }));
   server.registerTool('sera_images', { description: '关键词图片检索或反向识图，使用 query 或 imageUrl；operation 按 channels 的 images 动作选择，SerpAPI 支持 google_images、bing_images、google_lens。保留图片、来源页和匹配类型。', inputSchema: inputSchema(imagesSchema.extend({ full })), annotations }, (input, context) => result(async () => ((await fresh()).images({ ...input, signal: context.mcpReq.signal })).then(report => input.full ? report : searchView(report, input.limit))));
-  server.registerTool('sera_research', { description: '按subjects与criteria取证，kind区分必需条件和偏好，targetCount检查数量。先复用已有证据，再补缺口；discoveryQuery独立于任务。更新state.assessments的结论、outcome、适用scope及citations原文坐标后续查。coverage检查覆盖与引用，nextAction/nextSources由进展和重试状态驱动。', inputSchema: inputSchema(researchSchema.extend({ group, full, raw: z.boolean().optional() })), annotations }, (input, context) => result(async () => ((await fresh(input.group)).research({ ...input, signal: context.mcpReq.signal })).then(report => input.full ? report : researchView(report, hitLimit(input)))));
+  const researchInput = researchSchema.extend({ group, full, raw: z.boolean().optional() });
+  const researchWire = researchInput.extend({
+    state: researchStateSchema.pick({ version: true, subjects: true, criteria: true, assessments: true })
+      .loose().describe('续查时传回上轮 state，保留已有字段，按需更新 assessments').optional(),
+  });
+  server.registerTool('sera_research', { description: '按subjects与criteria取证，kind区分必需条件和偏好，targetCount检查数量。先复用已有证据，再补缺口；discoveryQuery独立于任务。更新state.assessments的结论、outcome、适用scope及citations原文坐标后续查。coverage检查覆盖与引用，nextAction/nextSources由进展和重试状态驱动。', inputSchema: inputSchema(researchInput, researchWire), annotations }, (input, context) => result(async () => ((await fresh(input.group)).research({ ...input, signal: context.mcpReq.signal })).then(report => input.full ? report : researchView(report, hitLimit(input)))));
   if (admin) server.registerTool('sera_migrate_state', { description: '将旧fields研究状态一次性转换为version:2，保留原结论与证据ID；返回新state，不写调用方文件。', inputSchema: inputSchema(z.object({ state: z.record(z.string(), z.unknown()) })), annotations: { ...annotations, openWorldHint: false } }, input => result(() => migrateResearchState(input.state)));
   server.registerTool('sera_read', { description: '按URL/ID读取原文或公开数据；contentTypes要求实际材料，operation/params选择channels的read动作，例如OpenCLI transcript及lang。query/keywords定位片段，全文保留ID。raw让web保留HTML；browser选择已有浏览器，timeoutMs设置单次预算。部分材料不足时按nextSteps换路，refresh取得新观察。', inputSchema: inputSchema(readSchema.extend({ url: z.string().min(1), group, full })), annotations }, (input, context) => result(async () => ((await fresh(input.group)).read(input.url, { ...input, signal: context.mcpReq.signal })).then(report => input.full ? report : readReportView(report))));
   server.registerTool('sera_read_many', { description: '一次读取最多20个 URL/已知 ID，三路并行并合并重复请求；逐项返回证据、相关片段和失败，使用同一组读取参数。', inputSchema: inputSchema(readSchema.extend({ urls: z.array(z.string().min(1)).min(1).max(20), group, full })), annotations }, (input, context) => result(async () => ((await fresh(input.group)).readMany(input.urls, { ...input, signal: context.mcpReq.signal })).then(report => input.full ? report : batchReadView(report))));

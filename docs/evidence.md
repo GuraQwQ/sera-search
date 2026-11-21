@@ -2,6 +2,8 @@
 
 CLI 和 MCP 默认返回正文窗口、原文坐标、当前观测和必要的来源诊断。可用 `--full` 或 `full:true` 查看观测历史、片段正文及完整诊断。聚焦结果的 `content` 按原文顺序拼接，各片段在 `fragments` 中保留原文坐标。批读中 `duplicateOf` 指向相同结果首次出现的输入位置，从 0 开始计数。`metadataTruncated` 提示摘要省略了元数据字段。`hitsTruncated` 和 `totalHits` 提示候选输出达到预算。完整证据可用同一 ID 继续回读。
 
+结构化来源可在 `snippet` 或 `evidence.metadata.summary` 提供关键值与报告范围。`recordPreview` 和 `externalIdSample` 只提供字段预览或样本，完整记录可继续读取。同一份维基原文的默认阅读窗口会跳过开头的模板，`--raw` 或 `raw:true` 从原文开头读取。维基标题可出现在聚焦结果的 `sections` 和 `contexts` 中，所有坐标保持相对于原文。
+
 长研究默认只展示前 50 条缺口，`coverage.totalGaps` 给出数量。大状态中空白待查单元由对象和判据重建，`implicitPendingAssessments` 给出折叠数量，继续传回 `state` 即可。CLI 使用 `--state` 成功保存大型状态后可直接沿用返回的 `stateFile`。
 
 `search` 保留每个来源的执行结果和命中，合并重复 URL。`rankScore` 用于排序，表示召回位置，不能解释成事实可信度。

@@ -31,6 +31,14 @@ function abstract(value: unknown): string {
   return words.sort((a, b) => a.position - b.position).map(item => item.word).join(' ');
 }
 
+function openLocation(value: unknown) {
+  if (!value || typeof value !== 'object') return undefined;
+  const location = value as Row, source = location.source as Row | undefined;
+  return { venue: string(source?.display_name) || undefined, pdfUrl: string(location.pdf_url) || undefined,
+    landingUrl: string(location.landing_page_url) || undefined, license: string(location.license) || undefined,
+    version: string(location.version) || undefined };
+}
+
 function crossref(config: ApiConfig): Source {
   const get = (path: string, signal: AbortSignal) => json(endpoint(config, 'https://api.crossref.org/', path), { headers, signal }, 'Crossref');
   return {
@@ -92,7 +100,7 @@ function openalex(config: ApiConfig): Source {
       return rows(result.results, 'OpenAlex').flatMap(item => {
         const target = string(item.id);
         if (!target || !accepted(request, target)) return [];
-        return hit('openalex', { title: string(item.display_name) || string(item.title), url: target, snippet: abstract(item.abstract_inverted_index), publishedAt: date(item.publication_date), metadata: { doi: item.doi, citedByCount: item.cited_by_count, openAccess: item.open_access, bestLocation: item.best_oa_location } });
+        return hit('openalex', { title: string(item.display_name) || string(item.title), url: target, snippet: abstract(item.abstract_inverted_index), publishedAt: date(item.publication_date), metadata: { doi: item.doi, citedByCount: item.cited_by_count, openAccess: item.open_access, bestLocation: openLocation(item.best_oa_location) } });
       });
     },
     async read(url, signal) {
@@ -101,8 +109,12 @@ function openalex(config: ApiConfig): Source {
       if (!id) throw new Error('OpenAlex 读取需要 W 开头的论文记录链接');
       const value = await json(address(`works/${id}`), { headers, signal }, 'OpenAlex');
       if (!string(value.id)) throw new Error('OpenAlex 未返回论文记录');
+      const location = openLocation(value.best_oa_location);
+      const excerpt = Array.from(abstract(value.abstract_inverted_index)).slice(0, 400).join('');
+      const summary = [value.publication_date, location?.venue, value.doi, typeof value.cited_by_count === 'number' ? `被引 ${value.cited_by_count} 次` : undefined,
+        excerpt].filter(Boolean).join(' · ');
       return document('openalex', string(value.id), string(value.display_name) || string(value.title), JSON.stringify(value, null, 2), {
-        contentKind: 'metadata', publishedAt: date(value.publication_date), metadata: { doi: value.doi, bestLocation: value.best_oa_location, format: 'openalex-json' },
+        contentKind: 'metadata', publishedAt: date(value.publication_date), metadata: { doi: value.doi, bestLocation: location, summary, format: 'openalex-json' },
       });
     },
   };

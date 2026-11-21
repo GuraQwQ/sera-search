@@ -153,7 +153,8 @@ function archive(config: ApiConfig): Source {
         if (!id) throw new Error('Internet Archive 搜索结果缺少馆藏标识');
         return hit('archive', { title: metadataText(item.title) || id, url: `https://archive.org/details/${encodeURIComponent(id)}`,
           snippet: [metadataText(item.creator), string(item.mediatype), metadataText(item.description)].filter(Boolean).join(' · '), publishedAt: itemDate(item.date),
-          metadata: { id, platform: 'archive', operation, record: item, contentScope: 'item-catalog', fullContentVerified: false } });
+          metadata: { id, platform: 'archive', operation, mediaType: item.mediatype, collection: item.collection, rights: item.rights,
+            licenseUrl: item.licenseurl, accessRestricted: item['access-restricted-item'], contentScope: 'item-catalog', fullContentVerified: false } });
       });
     },
     async read(url, signal) {

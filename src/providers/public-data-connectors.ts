@@ -21,6 +21,44 @@ function record(source: string, url: string, id: string, title: string, data: un
 function pathId(url: string, hosts: string[], pattern: RegExp): string { const p = new URL(url), match = hosts.includes(p.hostname) ? p.pathname.match(pattern) : undefined; if (!match?.[1]) throw new Error('链接不属于此数据来源'); return decodeURIComponent(match[1]); }
 function queryUrl(origin: string, path: string, params: Record<string, unknown>): string { const url = new URL(path, origin); for (const [key, v] of Object.entries(params)) if (v !== undefined) url.searchParams.set(key, String(v)); return url.href; }
 
+function tradeSummary(entries: ReturnType<typeof rows>) {
+  const examples: string[] = [];
+  for (const item of entries) {
+    const values = [Number.isFinite(item.primaryValue) ? `${item.primaryValue} USD` : '', Number.isFinite(item.netWgt) ? `净重字段 ${item.netWgt} kg` : ''].filter(Boolean);
+    if (!values.length) continue;
+    const label = [item.period, item.cmdCode, item.flowCode].filter(Boolean).join(' ');
+    examples.push([label, values.join(' / ')].filter(Boolean).join(' '));
+    if (examples.length === 2) break;
+  }
+  return [`本页 ${entries.length} 条贸易记录`, examples.length ? `样本 ${examples.join('；')}` : '本页未提供可用金额或净重'].join(' · ');
+}
+
+function eurostatSummary(data: Record<string, any>) {
+  const dimensions: string[] = Array.isArray(data.id) ? data.id : [];
+  const title = dimensions.join(' × ');
+  for (const index in data.value ?? {}) {
+    const value = data.value[index];
+    if (!Number.isFinite(value)) continue;
+    let cell = Number(index);
+    const labels: string[] = [];
+    for (let i = dimensions.length - 1; i >= 0; i--) {
+      const key = dimensions[i]!, size = data.size?.[i];
+      if (!Number.isSafeInteger(size) || size <= 0 || !Number.isSafeInteger(cell) || cell < 0) break;
+      const category = data.dimension?.[key]?.category, categories = category?.index;
+      const position = cell % size;
+      const code = Array.isArray(categories) ? categories[position] : Object.keys(categories ?? {}).find(code => categories[code] === position);
+      if (typeof code !== 'string') break;
+      const name = category.label?.[code];
+      labels.push(`${key}=${code}${name && name !== code ? ` (${name})` : ''}`);
+      cell = Math.floor(cell / size);
+    }
+    const location = labels.length && labels.length === dimensions.length && cell === 0 ? labels.reverse().join(', ') : `索引 ${index}`;
+    const status = Array.isArray(data.status) || typeof data.status === 'object' ? data.status?.[index] : undefined;
+    return `观测样本 ${location}：${value}${status ? ` [${status}]` : ''}`;
+  }
+  return [title, '响应无数值观测'].filter(Boolean).join(' · ');
+}
+
 const tradeParams = z.strictObject({ period: z.string().regex(/^\d{4}(?:\d{2})?$/), reporter: z.number().int().nonnegative(), partner: z.number().int().nonnegative().default(0), commodity: z.string().regex(/^(?:TOTAL|\d{2,6})$/).default('TOTAL'), flow: z.enum(['M', 'X', 'RM', 'RX']).default('X'), frequency: z.enum(['A', 'M']).default('A') });
 export const publicDataDefinitions: ConnectorDefinition[] = [
   definition('fred', 'https://api.stlouisfed.org/', 'FRED 指标、观测值与历史修订', 'https://fred.stlouisfed.org/docs/api/fred/', {
@@ -73,10 +111,43 @@ export function createPublicDataSources(config: Config): Source[] {
         if (parsed.hostname !== 'api.worldbank.org' || !/^\/v2\/country\/[^/]+\/indicator\/[^/]+$/.test(parsed.pathname)) throw new Error('需要 World Bank 指标或序列链接'); const v = await client(parsed.pathname.slice(4), signal, Object.fromEntries(parsed.searchParams)); return record(id, url, url, 'World Bank 统计序列', v, { contentScope: 'indicator-observation-page' }); } });
     }
     if (id === 'un-comtrade') {
-      const search = async (request: SearchRequest, p: Record<string, any>, client: StructuredClient) => { const full = request.operation === 'data'; if (full && !settings.apiKey) throw Object.assign(new Error('免费注册数据动作需要UN Comtrade API Key'), { code: 'NOT_LOGGED_IN' }); const path = `${full ? 'data/v1/get' : 'public/v1/preview'}/C/${p.frequency}/HS`, query = { period: p.period, reporterCode: p.reporter, partnerCode: p.partner, partner2Code: 0, cmdCode: p.commodity, flowCode: p.flow, customsCode: 'C00', motCode: 0, maxRecords: request.limit, includeDesc: true }; const v = await client(path, request.signal, query), entries = rows(v.data ?? [], 'UN Comtrade'); if (v.error) throw new Error(`UN Comtrade 查询失败：${JSON.stringify(v.error)}`); const url = queryUrl('https://comtradeapi.un.org/', path, query); return results(request, id, hit(id, { title: `${p.period} ${p.reporter}→${p.partner} ${p.commodity} ${p.flow}`, url, snippet: `${entries.length}条贸易记录；金额、数量、净重与原始单位见记录`, locator: { kind: 'record', id: url }, metadata: { record: entries, units: { primaryValue: 'USD', netWgt: 'kg', qty: 'qtyUnitAbbr字段' }, query, count: v.count } }), 'trade-statistics-query', { truncated: entries.length >= request.limit, limitations: ['返回截断时请缩小商品、国家或时期，不把首批记录当完整贸易总额'] }); };
-      return createStructuredSource(config, def, { search: { preview: search, data: search }, read: async (url, signal, _options, client) => { const parsed = new URL(url); if (parsed.hostname !== 'comtradeapi.un.org' || !/^\/(public\/v1\/preview|data\/v1\/get)\/C\/[AM]\/HS$/.test(parsed.pathname)) throw new Error('需要免费Comtrade预览或数据查询链接'); if (parsed.pathname.startsWith('/data/') && !settings.apiKey) throw Object.assign(new Error('数据读取需要免费注册Key'), { code: 'NOT_LOGGED_IN' }); const v = await client(parsed.pathname.slice(1), signal, Object.fromEntries([...parsed.searchParams].filter(([key]) => key !== 'subscription-key'))); return record(id, url, url, 'UN Comtrade 贸易记录', v, { contentScope: 'trade-query-page', units: { primaryValue: 'USD', netWgt: 'kg' } }); } });
+      const search = async (request: SearchRequest, p: Record<string, any>, client: StructuredClient) => {
+        const full = request.operation === 'data';
+        if (full && !settings.apiKey) throw Object.assign(new Error('免费注册数据动作需要UN Comtrade API Key'), { code: 'NOT_LOGGED_IN' });
+        const path = `${full ? 'data/v1/get' : 'public/v1/preview'}/C/${p.frequency}/HS`;
+        const query = { period: p.period, reporterCode: p.reporter, partnerCode: p.partner, partner2Code: 0, cmdCode: p.commodity, flowCode: p.flow, customsCode: 'C00', motCode: 0, maxRecords: request.limit, includeDesc: true };
+        const v = await client(path, request.signal, query);
+        if (v.error) throw new Error(`UN Comtrade 查询失败：${JSON.stringify(v.error)}`);
+        const entries = rows(v.data ?? [], 'UN Comtrade'), url = queryUrl(def.base_url, path, query);
+        return results(request, id, hit(id, { title: `${p.period} ${p.reporter}→${p.partner} ${p.commodity} ${p.flow}`, url,
+          snippet: tradeSummary(entries), locator: { kind: 'record', id: url },
+          metadata: { record: entries, units: { primaryValue: 'USD', netWgt: 'kg', qty: 'qtyUnitAbbr字段' }, query, count: v.count },
+        }), 'trade-statistics-query', { truncated: entries.length >= request.limit, limitations: ['返回截断时请缩小商品、国家或时期，不把首批记录当完整贸易总额'] });
+      };
+      return createStructuredSource(config, def, { search: { preview: search, data: search }, read: async (url, signal, _options, client) => {
+        const parsed = new URL(url);
+        if (parsed.hostname !== 'comtradeapi.un.org' || !/^\/(public\/v1\/preview|data\/v1\/get)\/C\/[AM]\/HS$/.test(parsed.pathname)) throw new Error('需要免费Comtrade预览或数据查询链接');
+        if (parsed.pathname.startsWith('/data/') && !settings.apiKey) throw Object.assign(new Error('数据读取需要免费注册Key'), { code: 'NOT_LOGGED_IN' });
+        const v = await client(parsed.pathname.slice(1), signal, Object.fromEntries([...parsed.searchParams].filter(([key]) => key !== 'subscription-key')));
+        if (v.error) throw new Error(`UN Comtrade 读取失败：${JSON.stringify(v.error)}`);
+        return record(id, url, url, 'UN Comtrade 贸易记录', v, { contentScope: 'trade-query-page', summary: tradeSummary(rows(v.data ?? [], 'UN Comtrade')), units: { primaryValue: 'USD', netWgt: 'kg' } });
+      } });
     }
-    if (id === 'eurostat') return createStructuredSource(config, def, { search: { dataset: async (request, p, client) => { const dataset = p.dataset ?? request.query; if (!/^[a-z][a-z\d_]+$/i.test(dataset)) throw new Error('Eurostat需要数据集代码，如nama_10_gdp'); const query = { ...p.dimensions, lang: p.language, sinceTimePeriod: request.since?.slice(0, 4), untilTimePeriod: request.until?.slice(0, 4) }, path = `data/${dataset}`, v = await client(path, request.signal, query), url = queryUrl(def.base_url, path, query); if (v.error) throw new Error('Eurostat维度或数据集查询失败'); return results(request, id, hit(id, { title: string(v.label) || dataset, url, snippet: `${(v.id ?? []).join(' × ')}；维度标签、单位和缺失值见JSON-stat`, locator: { kind: 'record', id: url }, metadata: { record: v, updatedAt: v.updated, dimensionOrder: v.id, dimensions: v.dimension, size: v.size } }), 'json-stat-dataset', { limitations: ['时间参数按年限制；月度/季度序列需要按返回time维度核验', '维度索引顺序与value/status一起保留，不猜测缺失值为零'] }); } }, read: async (url, signal, _options, client) => { const parsed = new URL(url), dataset = pathId(url, ['ec.europa.eu'], /^\/eurostat\/api\/dissemination\/statistics\/1\.0\/data\/([\w]+)$/), v = await client(`data/${dataset}`, signal, Object.fromEntries(parsed.searchParams)); return record(id, url, url, string(v.label) || dataset, v, { contentScope: 'json-stat-dataset', updatedAt: v.updated }); } });
+    if (id === 'eurostat') return createStructuredSource(config, def, { search: { dataset: async (request, p, client) => {
+      const dataset = p.dataset ?? request.query;
+      if (!/^[a-z][a-z\d_]+$/i.test(dataset)) throw new Error('Eurostat需要数据集代码，如nama_10_gdp');
+      const query = { ...p.dimensions, lang: p.language, sinceTimePeriod: request.since?.slice(0, 4), untilTimePeriod: request.until?.slice(0, 4) };
+      const path = `data/${dataset}`, v = await client(path, request.signal, query), url = queryUrl(def.base_url, path, query);
+      if (v.error) throw new Error('Eurostat维度或数据集查询失败');
+      return results(request, id, hit(id, { title: string(v.label) || dataset, url, snippet: eurostatSummary(v), locator: { kind: 'record', id: url },
+        metadata: { record: v, updatedAt: v.updated, dimensionOrder: v.id, size: v.size },
+      }), 'json-stat-dataset', { limitations: ['时间参数按年限制；月度/季度序列需要按返回time维度核验', '维度索引顺序与value/status一起保留，不猜测缺失值为零'] });
+    } }, read: async (url, signal, _options, client) => {
+      const parsed = new URL(url), dataset = pathId(url, ['ec.europa.eu'], /^\/eurostat\/api\/dissemination\/statistics\/1\.0\/data\/([\w]+)$/);
+      const v = await client(`data/${dataset}`, signal, Object.fromEntries(parsed.searchParams));
+      if (v.error) throw new Error('Eurostat维度或数据集读取失败');
+      return record(id, url, url, string(v.label) || dataset, v, { contentScope: 'json-stat-dataset', summary: eurostatSummary(v), updatedAt: v.updated });
+    } });
     if (id === 'courtlistener') {
       const headers = { Authorization: `Token ${settings.apiKey ?? ''}` };
       return createStructuredSource(config, def, { search: { opinions: async (request, p, client) => {

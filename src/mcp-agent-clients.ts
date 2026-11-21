@@ -2,8 +2,7 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { resolveMcpClientCommand, runMcpClient, updateMcpJsonConfig } from './mcp-registration.js';
-import type { McpRegistrationOptions, McpServerLauncher } from './mcp-registration.js';
-import type { Config } from './types.js';
+import type { McpRegistrationOptions, McpServerLauncher, PrepareMcpServer } from './mcp-registration.js';
 
 type Entry = Record<string, unknown>;
 const transportFields = ['url', 'serverUrl', 'httpUrl', 'headers', 'httpHeaders', 'transport', 'auth', 'oauth', 'sslVerify', 'clientCert', 'clientKey', 'ssl_verify', 'client_cert', 'client_key'];
@@ -49,21 +48,23 @@ function matches(entry: Entry, server: McpServerLauncher, client: string): boole
     && !transportFields.some(key => key in entry && !(key === 'transport' && entry[key] === 'stdio'));
 }
 
-export async function registerAgentClient(_config: Config, options: McpRegistrationOptions, server: McpServerLauncher, signal: AbortSignal, toolCount: number) {
+export async function registerAgentClient(options: McpRegistrationOptions, prepare: PrepareMcpServer, signal: AbortSignal) {
   const client = options.client;
   signal.throwIfAborted();
   let changed = false, configFile: string | undefined;
+  let prepared!: Awaited<ReturnType<PrepareMcpServer>>;
   if (client === 'claude-code' || client === 'antigravity') {
     if (options.command) throw new Error(`${client} 通过官方 JSON 配置注册，请用 --mcp-config 指定配置文件`);
     const target = options.configFile ?? (client === 'claude-code' ? join(process.env.CLAUDE_CONFIG_DIR ?? homedir(), '.claude.json') : join(homedir(), '.gemini', 'config', 'mcp_config.json'));
     configFile = await writableLocation(target, Boolean(options.configFile));
-    changed = await updateMcpJsonConfig(configFile, raw => {
+    changed = await updateMcpJsonConfig(configFile, async raw => {
       const servers = raw.mcpServers === undefined ? {} : object(raw.mcpServers, 'mcpServers');
       const previous = servers.sera === undefined ? {} : object(servers.sera, 'sera MCP 配置');
-      raw.mcpServers = { ...servers, sera: stdioEntry(previous, server, client) };
+      prepared = await prepare(previous.args);
+      raw.mcpServers = { ...servers, sera: stdioEntry(previous, prepared.server, client) };
     }, signal);
     const saved = parse(await readFile(configFile, 'utf8'), '客户端配置');
-    if (!matches(object(object(saved.mcpServers, 'mcpServers').sera, 'sera MCP 配置'), server, client)) throw new Error('客户端的 SERA MCP 配置回读不一致，请检查配置后重试');
+    if (!matches(object(object(saved.mcpServers, 'mcpServers').sera, 'sera MCP 配置'), prepared.server, client)) throw new Error('客户端的 SERA MCP 配置回读不一致，请检查配置后重试');
   } else if (client === 'hermes' || client === 'openclaw') {
     if (options.configFile) throw new Error(`${client} 使用原生 CLI 管理配置；请通过客户端环境变量或 profile 选择位置`);
     const guess = client === 'hermes'
@@ -85,6 +86,8 @@ export async function registerAgentClient(_config: Config, options: McpRegistrat
       const servers = parse(await runMcpClient(launcher, ['mcp', 'list', '--json'], signal), 'OpenClaw MCP 清单');
       if (servers.sera !== undefined) existing = object(servers.sera, 'OpenClaw sera MCP 配置');
     }
+    prepared = await prepare(existing?.args);
+    const { server } = prepared;
     if (!existing || !matches(existing, server, client)) {
       // 客户端的查看接口会脱敏并展开环境引用；只写本次运行字段，保留原始 env 与超时设置。
       if (client === 'hermes' && existing) {
@@ -101,5 +104,6 @@ export async function registerAgentClient(_config: Config, options: McpRegistrat
       if (!matches(parse(output, `${client} sera MCP 配置`), server, client)) throw new Error(`${client} 的 SERA MCP 配置回读不一致，请检查客户端配置后重试`);
     }
   } else throw new Error('此客户端没有对应的注册入口');
-  return { name: 'sera' as const, client, status: changed ? 'registered' as const : 'unchanged' as const, verified: true, toolCount, ...server, ...(configFile ? { configFile } : {}) };
+  return { name: 'sera' as const, client, status: changed ? 'registered' as const : 'unchanged' as const, verified: true,
+    toolCount: prepared.toolCount, ...prepared.server, ...(configFile ? { configFile } : {}) };
 }

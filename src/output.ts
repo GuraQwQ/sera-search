@@ -11,18 +11,36 @@ function preview(value: string, limit: number) {
   return points.length > limit ? points.slice(0, limit - 1).join('') + '…' : value;
 }
 
-function metadataView(metadata: Document['metadata'], maximum: number) {
+function metadataView(metadata: Document['metadata'], maximum: number, showPreview = false) {
   if (!metadata) return {};
   // 优先保留检索、回读和继续分页所需的字段，按完整字段投影。
-  const priority = /^(?:relevance|raw|readRequest|bodyAvailable|partial|contentType|contentScope|originSource|acquisition|captureAt|requestedTimestamp|imageUrl|thumbnail|nextCursor|nextOffset|totalResults|platform|operation|scope|truncated)$/;
+  const priority = /^(?:summary|externalIdCount|recordUrl|relevance|raw|readRequest|bodyAvailable|partial|contentType|contentScope|originSource|acquisition|captureAt|requestedTimestamp|imageUrl|thumbnail|nextCursor|nextOffset|totalResults|platform|operation|scope|truncated)$/;
   const entries = Object.entries(metadata).sort(([a], [b]) => Number(priority.test(b)) - Number(priority.test(a)));
   const fields: [string, unknown][] = [];
   let used = 2, truncated = false;
+  const omitted: Record<string, unknown> = {};
+  const keep = (key: string, value: unknown) => {
+    const size = bytes(key) + 1 + bytes(value) + Number(fields.length > 0);
+    if (used + size > maximum) return false;
+    fields.push([key, value]); used += size;
+    return true;
+  };
   for (const [key, value] of entries) {
     if (value === undefined) continue;
-    const size = bytes(key) + 1 + bytes(value) + Number(fields.length > 0);
-    if (used + size > maximum) { truncated = true; continue; }
-    fields.push([key, value]); used += size;
+    if (!keep(key, value)) {
+      truncated = true;
+      if (key === 'record' || key === 'externalIds') omitted[key] = value;
+    }
+  }
+  if (Array.isArray(omitted.externalIds)) keep('externalIdSample', omitted.externalIds.slice(0, 3));
+  const omittedRecord = omitted.record;
+  if (showPreview && !metadata.summary && omittedRecord && typeof omittedRecord === 'object') {
+    const sample = Array.isArray(omittedRecord) ? omittedRecord[0] : omittedRecord;
+    if (sample && typeof sample === 'object') {
+      const values = Object.fromEntries(Object.entries(sample).filter(([, value]) =>
+        typeof value === 'string' && value.length <= 100 || typeof value === 'number' && Number.isFinite(value) || typeof value === 'boolean').slice(0, 5));
+      keep('recordPreview', Array.isArray(omittedRecord) ? { items: omittedRecord.length, first: values } : { fields: Object.keys(sample).slice(0, 8), values });
+    }
   }
   return { metadata: Object.fromEntries(fields), ...(truncated ? { metadataTruncated: true as const } : {}) };
 }
@@ -35,11 +53,16 @@ function evidenceView<T extends Omit<Document, 'content'> & Partial<Pick<Evidenc
 export function runView(run: SourceRun) {
   const { network, attempts, coverage, ...rest } = run;
   const { requested, ...range } = coverage ?? {};
+  const redundantError = attempts?.length === 1 && attempts[0]?.code === run.code && attempts[0]?.reason === run.message
+    && attempts[0]?.status === run.status && (run.status === 'error' || run.status === 'cancelled');
+  const undetermined = coverage?.completeness === 'unknown' && coverage.scope === '本次检索返回范围'
+    && coverage.nextCursor === undefined && coverage.observed === undefined && !coverage.truncated
+    && coverage.limitations?.length === 1 && coverage.limitations[0] === '检索命中数量不表示数据收录完整';
   return { ...rest,
     ...(network?.requestCount ? { network: { requestCount: network.requestCount, ...(network.redirectResponseCount ? { redirectResponseCount: network.redirectResponseCount } : {}) } } : {}),
-    ...(attempts && (attempts.length > 1 || attempts.some(item => item.reason && item.reason !== 'EMPTY_RESULTS')
+    ...(attempts && !redundantError && (attempts.length > 1 || attempts.some(item => item.reason && item.reason !== 'EMPTY_RESULTS')
       || (run.status !== 'ok' && run.status !== 'empty')) ? { attempts } : {}),
-    ...(coverage ? { coverage: { ...range, ...(requested && Object.values(requested).some(value => value !== undefined) ? { requested } : {}) } } : {}),
+    ...(coverage && !(undetermined && (run.status === 'error' || run.status === 'cancelled')) ? { coverage: { ...range, ...(requested && Object.values(requested).some(value => value !== undefined) ? { requested } : {}) } } : {}),
   };
 }
 
@@ -50,8 +73,8 @@ export function readView<T extends { content?: string; fragments?: ReadReport['f
 }
 
 export function readReportView(report: ReadReport) {
-  const { evidence, document, ...rest } = readView(report);
-  return { ...rest, ...(evidence ? { evidence: evidenceView(evidence) } : {}), ...(document ? { document: evidenceView(document) } : {}) };
+  const { status, evidence, document, ...rest } = readView(report);
+  return { status, ...(evidence ? { evidence: evidenceView(evidence) } : {}), ...(document ? { document: evidenceView(document) } : {}), ...rest };
 }
 
 export function storedEvidenceView<T extends Omit<Evidence, 'content'> & { content?: string; fragments?: ReadReport['fragments'] }>(value: T) {
@@ -92,7 +115,7 @@ export function searchView<T extends SearchReport>(report: T, limit: number) {
     const item = { ...hit, title: preview(hit.title, 240), snippet,
       retrievals: hit.retrievals.map(({ snippet: original, metadata, ...retrieval }) => ({
         ...retrieval, ...(original !== hit.snippet && original !== '' ? { snippet: preview(original, 300) } : {}),
-        ...metadataView(metadata, Math.min(2048, Math.floor(32768 / hit.retrievals.length))),
+        ...metadataView(metadata, Math.min(2048, Math.floor(32768 / hit.retrievals.length)), !original.trim()),
       })) };
     const size = bytes(item);
     if (size > 64 * 1024) continue;
@@ -133,19 +156,21 @@ function operationList(item: { operations?: Capability['operations'] }) {
 
 export function capabilityView(item: Capability & { status?: string }) {
   const { name, platforms, configured, status, search, read, comments, images, backend, automatic } = item;
-  return { name, platforms, configured, status, search, read, comments, images, backend, automatic,
+  return { name, platforms, configured, status: status === '可调用' ? undefined : status, search: search || undefined, read: read || undefined,
+    comments: comments || undefined, images: images || undefined, backend: backend || undefined, automatic,
     operationNames: item.operations?.map(operation => operation.name) };
 }
 
 export function channelView(report: { channels: Channel[]; runs: SourceRun[]; status: string }, scoped = false) {
   return { ...report, channels: report.channels.map(({ source, platform, configured, status, search, read, comments, images, browser, automatic, operations }) =>
-    ({ source, platform, configured, status, search, read, comments, images, browser, automatic,
+    ({ source, platform, configured, status: status === '可调用' ? undefined : status, search: search || undefined, read: read || undefined,
+      comments: comments || undefined, images: images || undefined, browser, automatic,
       ...(scoped ? { operations: operationList({ operations }) } : { operationNames: operations?.map(operation => operation.name) }) })),
     runs: report.runs.filter(run => (run.status !== 'ok' && run.status !== 'empty') || run.network?.requestCount).map(runView) };
 }
 
 export function connectorView({ id, label, type, platforms, operations, read }: ConnectorDefinition) {
-  return { id, label, type, platforms, operations: Object.keys(operations), read: Boolean(read) };
+  return { id, label, type, platforms, operations: Object.keys(operations), read: read ? true : undefined };
 }
 
 export function backendView(result: CallToolResult): CallToolResult {

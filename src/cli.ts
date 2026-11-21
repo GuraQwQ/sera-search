@@ -62,6 +62,8 @@ const help = `SERA — Search, Extract, Research for Agents
   --mcp-client <列表>  install 注册 codex、pi、omp、claude-code、hermes、openclaw、antigravity
   --mcp-command <路径> 单客户端注册使用指定的已有 CLI 入口
   --mcp-config <文件>  单客户端注册使用指定的 MCP JSON 配置文件
+  --profile <模式>     MCP 的 full 或 search，可在注册时指定
+  --mcp-output <模式>  MCP 的 dual 或 structured，可在注册时指定
 
 检索与读取：
   --sources <列表>     逗号分隔的来源；read 按所列顺序尝试
@@ -115,7 +117,7 @@ const help = `SERA — Search, Extract, Research for Agents
 
 const commandHelp: Record<string, [string, string]> = {
   install: ['install [--skill-dir 目录] [--components 组件列表] [--mcp-client 客户端列表]',
-    '创建配置、链接 Skill 或注册 MCP。\n--yes 非交互补齐已有入口；--sources 限定配置范围。\n--components 显式安装组件；--python、--node、--browser 指定已有程序。'],
+    '创建配置、链接 Skill 或注册 MCP。\n--yes 非交互补齐已有入口；--sources 限定配置范围。\n--components 显式安装组件；--python、--node、--browser 指定已有程序。\n注册时用 --profile full|search 和 --mcp-output dual|structured 选择模式。'],
   config: ['config [--sources 来源列表] [--input JSON文件]',
     '省略 --input 查看配置；传文件时先校验再更新。JSON 可包含 updates、backends、connectors、connectorFiles。\n--sources 筛选展示的来源。'],
   login: ['login <来源> [--from-env 变量名 | --stdin] [--platform 平台]',
@@ -139,12 +141,12 @@ const commandHelp: Record<string, [string, string]> = {
   record: ['record --input JSON文件',
     '必填：url、title、content、method、observedAt（ISO 时间）。\n可选：publishedAt、contentKind、metadata。\n示例：{"url":"https://example.org/","title":"示例","content":"原始内容","method":"实际读取方式","observedAt":"2026-01-01T00:00:00Z"}'],
   read: ['read <URL或ID> [--sources 来源列表] [--operation 动作] [--params JSON]',
-    '--query、--keyword 定位片段；--length 默认2000。\n--refresh 重新获取；--max-age 限定缓存毫秒数；--raw 保留 HTML。\n--timeout-ms 设置本次预算；批量地址使用 read-many。'],
+    '--query、--keyword 定位片段；--length 默认2000。\n--refresh 重新获取；--max-age 限定缓存毫秒数；--raw 保留 HTML 或从原始维基文本开头读起。\n--timeout-ms 设置本次预算；批量地址使用 read-many。'],
   'read-many': ['read-many <URL或ID...> [--sources 来源列表] [--keyword 关键词]', '最多20个地址，三路并行；逐项返回结果，支持 read 的读取选项。'],
   evidence: ['evidence <证据ID> [--offset 数量] [--length 数量] [--query 查询] [--keyword 关键词]',
     '--offset 从0开始，按 Unicode 码点计数；--length 默认4000。\n分页使用返回的 nextOffset；--query、--keyword 返回匹配片段及原文坐标。'],
   clean: ['clean', '清理项目管理的证据及组件缓存；保留依赖、凭据、会话和配置。'],
-  mcp: ['mcp [--profile full|search]', '启动 stdio MCP 服务。search 仅加载查询、读取、证据和后端工具；full 另提供运维工具。注册已有客户端使用 install --mcp-client。'],
+  mcp: ['mcp [--profile full|search] [--mcp-output dual|structured]', '启动 stdio MCP 服务。search 加载查询、读取、证据和后端工具；full 另提供运维工具。dual 兼容文本与结构化响应；structured 可省去重复文本。'],
 };
 
 function usage(command?: string): string {
@@ -211,7 +213,7 @@ function display(value: unknown): string {
     }
     return lines.join('\n');
   }
-  if (report.evidence) return `${report.evidence.title}\n${report.evidence.url}\n类型：${report.evidence.contentKind}\n证据：${report.evidence.id}\n\n${report.content ?? ''}${report.nextSteps?.length ? '\n\n' + report.nextSteps.join('\n') : ''}${report.cacheWarnings?.length ? '\n\n' + report.cacheWarnings.join('\n') : ''}`;
+  if (report.evidence) return `${report.evidence.title}\n${report.evidence.url}\n类型：${report.evidence.contentKind}\n证据：${report.evidence.id}\n\n${report.evidence.metadata?.summary ? report.evidence.metadata.summary + '\n\n' : ''}${report.content ?? ''}${report.nextSteps?.length ? '\n\n' + report.nextSteps.join('\n') : ''}${report.cacheWarnings?.length ? '\n\n' + report.cacheWarnings.join('\n') : ''}`;
   if (report.content !== undefined) return `${report.document?.title ?? report.title}\n${report.document?.url ?? report.url}\n\n${report.content}${report.nextOffset !== null && report.id ? `\n\n下一段：--offset ${report.nextOffset}` : ''}${report.cacheWarnings?.length ? '\n\n' + report.cacheWarnings.join('\n') : ''}`;
   return JSON.stringify(value, null, 2);
 }
@@ -228,11 +230,13 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     components: { type: 'string' }, python: { type: 'string' }, browser: { type: 'string' }, node: { type: 'string' }, input: { type: 'string' }, 'timeout-ms': { type: 'string' },
     setup: { type: 'boolean' }, yes: { type: 'boolean' }, 'confirm-free-tier': { type: 'string' },
     'mcp-client': { type: 'string' }, 'mcp-command': { type: 'string' }, 'mcp-config': { type: 'string' },
-    'session-only': { type: 'boolean' }, profile: { type: 'string' },
+    'session-only': { type: 'boolean' }, profile: { type: 'string' }, 'mcp-output': { type: 'string' },
   } });
   if (values.help || (!positionals.length && !values.version)) { process.stdout.write(usage(positionals[0])); return; }
   if (values.version) { process.stdout.write(JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version + '\n'); return; }
   const command = positionals[0], text = positionals.slice(1).join(' ');
+  const profile = z.enum(['full', 'search']).optional().parse(values.profile);
+  const mcpOutput = z.enum(['dual', 'structured']).optional().parse(values['mcp-output']);
   if (command === 'backend' && values.params !== undefined) throw new Error('backend 使用 --input JSON文件 传递工具参数；先运行 backend 来源 查看工具 Schema');
   if (command === 'read' && positionals.length !== 2) throw new Error('read 需要一个 URL；批量读取请使用 read-many');
   const location = { home: values.home, file: values.config, catalog: values.catalog, group: values.group === undefined ? undefined : z.enum(catalogGroups).parse(values.group) };
@@ -270,7 +274,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
         const config = await loadConfig({ ...location, home: result.home, file: result.config });
         for (const client of clients) {
           if (controller.signal.aborted) break;
-          try { registrations.push(await registerMcp(config, { client, command: values['mcp-command'], configFile: values['mcp-config'], signal: controller.signal })); }
+          try { registrations.push(await registerMcp(config, { client, command: values['mcp-command'], configFile: values['mcp-config'], profile, output: mcpOutput, signal: controller.signal })); }
           catch (error) { registrations.push({ client, status: controller.signal.aborted ? 'cancelled' : 'pending', verified: false, message: errorMessage(error, config) }); }
         }
         mcp = { registrations, status: controller.signal.aborted ? 'cancelled' : registrations.some(item => item.status === 'pending') ? 'partial' : 'ready' };
@@ -284,7 +288,8 @@ async function main(args = process.argv.slice(2)): Promise<void> {
   const config = await (command === 'mcp' || command === 'config' ? loadConfigBootstrap(location) : loadConfig(location));
   if (command === 'mcp') {
     const { startMcp } = await import('./mcp.js');
-    await startMcp(config, z.enum(['full', 'search']).parse(values.profile ?? process.env.SERA_MCP_PROFILE ?? 'full')); return;
+    await startMcp(config, profile ?? z.enum(['full', 'search']).parse(process.env.SERA_MCP_PROFILE ?? 'full'),
+      mcpOutput ?? (process.env.SERA_MCP_OUTPUT === 'structured' ? 'structured' : 'dual')); return;
   }
   if (command === 'config') {
     try {

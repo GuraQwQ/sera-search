@@ -4,6 +4,11 @@ const genericTerms = new Set(['search', 'find', 'please', 'latest', 'official', 
 const normalized = (value: string) => value.normalize('NFKC').toLowerCase();
 const segmenter = new Intl.Segmenter('zh', { granularity: 'word' });
 const technicalTerms = new Set(['api', 'mcp', 'llm', 'rag', 'sql', 'vue', 'sdk', 'cli', 'css', 'xml', 'rss', 'doi', 'npm', 'git', 'gpu', 'cpu', 'url', 'ux', 'ui']);
+const expansions = new Map([
+  ['mcp', /\bmodel[\s_-]*context[\s_-]*protocol\b/],
+  ['llm', /\blarge[\s_-]+language[\s_-]+models?\b/],
+  ['rag', /\bretrieval[\s_-]+augmented[\s_-]+generation\b/],
+]);
 
 export function discoveryTerms(query: string): string[] {
   const quoted = [...query.matchAll(/["“「『]([^"”」』]+)["”」』]/g)].map(match => normalized(match[1]!));
@@ -35,7 +40,8 @@ export function assessRelevance(query: string, hits: SearchHit[], aliases: strin
   const ambiguous = !terms.length;
   const assessed = hits.map(item => {
     const text = normalized(`${item.title}\n${item.snippet}\n${item.url}`);
-    const matches = (term: string) => (versionTerms.get(term) ?? exactTerms.get(term))?.test(text) ?? text.includes(term);
+    const matches = (term: string) => ((versionTerms.get(term) ?? exactTerms.get(term))?.test(text) ?? text.includes(term))
+      || expansions.get(term)?.test(text) === true;
     const matchedTerms = terms.filter(matches);
     const missingTerms = queryTerms.filter(term => !matches(term) && !(term === entity && aliases.some(alias => matches(normalized(alias)))));
     const status = ambiguous ? 'uncertain' : !matchedTerms.length ? 'irrelevant'

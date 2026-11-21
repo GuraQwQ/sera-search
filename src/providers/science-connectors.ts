@@ -95,7 +95,15 @@ export function createScienceSources(config: Config): Source[] {
       return results(request, id, entries.flatMap(item => hit(id, { title: string((item.proteinDescription as any)?.recommendedName?.fullName?.value) || string(item.uniProtkbId), url: `https://www.uniprot.org/uniprotkb/${item.primaryAccession}`,
         snippet: `${item.uniProtkbId ?? ''} · ${(item.organism as any)?.scientificName ?? ''}`, locator: { kind: 'record', id: string(item.primaryAccession) },
         metadata: { accession: item.primaryAccession, length: (item.sequence as { length?: number } | undefined)?.length, entryType: item.entryType, release: r.headers.get('x-uniprot-release') } })), 'protein-records', { truncated: Boolean(cursor), nextCursor: cursor });
-    } }, read: async (url, signal, _options, client) => { const key = pathId(url, ['www.uniprot.org', 'uniprot.org'], /^\/uniprotkb\/([a-z\d]+)(?:\/entry)?\/?$/i), v = await client(`uniprotkb/${encodeURIComponent(key)}.json`, signal); return record(id, url, key, string(v.uniProtkbId), v, { contentType: 'protein', citation: v.references, sequence: v.sequence, license: 'CC BY 4.0' }); } });
+    } }, read: async (url, signal, _options, client) => {
+      const key = pathId(url, ['www.uniprot.org', 'uniprot.org'], /^\/uniprotkb\/([a-z\d]+)(?:\/entry)?\/?$/i);
+      const v = await client(`uniprotkb/${encodeURIComponent(key)}.json`, signal);
+      const length = v.sequence?.length, referenceCount = Array.isArray(v.references) ? v.references.length : undefined;
+      const summary = [v.proteinDescription?.recommendedName?.fullName?.value, v.organism?.scientificName,
+        typeof length === 'number' ? `${length} aa` : undefined, v.entryType].filter(Boolean).join(' · ');
+      return record(id, url, key, string(v.uniProtkbId), v, { contentType: 'protein', accession: v.primaryAccession, sequenceLength: length,
+        referenceCount, summary, license: 'CC BY 4.0' });
+    } });
     if (id === 'chembl') {
       const search = async (request: SearchRequest, p: Record<string, any>, client: StructuredClient) => {
         const op = request.operation ?? 'molecules', resource = op === 'molecules' ? 'molecule' : op === 'targets' ? 'target' : 'activity';

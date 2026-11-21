@@ -50,7 +50,8 @@ function metadata(value: Row) {
       if (snak.datatype === 'external-id' && snak.datavalue) externalIds.push({ property, value: object(snak.datavalue, 'Wikidata 值').value, rank: statement.rank, statementId: statement.id });
     }
   }
-  return { contentType: 'entity-metadata', contentScope: 'wikidata-entity', revisionId: value.lastrevid, externalIds, license: 'CC0' };
+  return { contentType: 'entity-metadata', contentScope: 'wikidata-entity', revisionId: value.lastrevid,
+    externalIdCount: externalIds.length, externalIds, license: 'CC0' };
 }
 
 function label(value: Row, field: string, lang: string) {
@@ -88,6 +89,10 @@ export function createWikidataSource(config: Config): Source {
     const selected = target(url);
     if (options?.locator && (options.locator.kind !== 'record' || options.locator.id !== selected.id)) throw Object.assign(new Error('实体链接与定位 ID 不一致'), { code: 'CONTENT_MISMATCH' });
     const value = await entity(client, selected.id, selected.language, signal, selected.revision);
-    return document('wikidata', url, label(value, 'labels', selected.language) || selected.id, JSON.stringify(value, null, 2), { contentKind: 'metadata', locator: { kind: 'record', id: selected.id }, metadata: metadata(value) });
+    const detail = metadata(value);
+    const summary = [selected.id, label(value, 'descriptions', selected.language), detail.revisionId && `修订 ${detail.revisionId}`,
+      `${detail.externalIdCount} 条外部 ID 声明`].filter(Boolean).join(' · ');
+    return document('wikidata', url, label(value, 'labels', selected.language) || selected.id, JSON.stringify(value, null, 2),
+      { contentKind: 'metadata', locator: { kind: 'record', id: selected.id }, metadata: { ...detail, summary } });
   } });
 }

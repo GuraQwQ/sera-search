@@ -7,7 +7,7 @@ import { sourceNameSchema } from './source-schema.js';
 import { z } from 'zod';
 import { sourceNames, platformIdPattern, intents } from './types.js';
 import type { Channel, Config, Source, SourceName, SearchOptions, SearchReport, SearchHit, AggregatedHit, SourceRun, ReadReport, ResearchReport, Evidence, CommentReport, ImageRequest, ReadOptions, BatchReadReport, ResearchOptions, ResearchState, SearchAttempt, Document, SourceOperation } from './types.js';
-import { canonicalUrl, retrievalKey, publisher, textPage, focusText, documentObservations, EvidenceStore } from './evidence.js';
+import { canonicalUrl, retrievalKey, publisher, textPage, focusText, wikiLeadOffset, documentObservations, EvidenceStore } from './evidence.js';
 import { errorMessage } from './config.js';
 import { createHttpSources } from './providers/http.js';
 import { createPlatformSources, siteForUrl } from './providers/platform.js';
@@ -186,7 +186,9 @@ export class Engine {
   private unavailable(name: SourceName, source?: Source): SourceRun {
     const login = source?.capability.requiresLogin && !source.capability.loggedIn || ['agent-reach', 'opencli'].includes(name);
     const disabled = name === 'agent-reach' ? this.config.agentReach?.enabled === false : sourceConfig(this.config, name).enabled === false;
-    return { source: name, status: 'unavailable', elapsedMs: 0, returned: 0, message: login ? notLoggedIn : disabled ? '来源已停用' : source?.capability.requirement ?? '此来源不支持该操作', ...(login ? { code: 'NOT_LOGGED_IN' } : {}) };
+    return { source: name, status: 'unavailable', elapsedMs: 0, returned: 0, message: login ? notLoggedIn : disabled ? '来源已停用'
+      : !source && name === 'steam-reviews' ? 'Steam 作品评价使用来源 steam、动作 reviews 和 params.appId'
+      : source?.capability.requirement ?? (source ? '此来源不支持该操作' : '来源不存在，请查看 capabilities'), ...(login ? { code: 'NOT_LOGGED_IN' } : {}) };
   }
 
   private accessFailure(source: Source, operation?: string): SourceRun | undefined {
@@ -334,7 +336,10 @@ export class Engine {
       let coverage: SourceRun['coverage'] = { scope: '本次检索返回范围', completeness: 'unknown', requested: { since: input.since, until: input.until }, limitations: ['检索命中数量不表示数据收录完整'] };
       try {
         signal.throwIfAborted();
-        if (settings.operation && !searchOperations(source)?.some(operation => operation.name === settings.operation)) throw Object.assign(new Error('此动作不能通过 search 执行，请查看 channels 的 entrypoint'), { code: 'UNSUPPORTED_OPERATION' });
+        if (settings.operation && !searchOperations(source)?.some(operation => operation.name === settings.operation)) {
+          const available = source.capability.operations?.map(item => `${item.name}（${item.entrypoint ?? 'search'}）`).join('、');
+          throw Object.assign(new Error(`动作 ${settings.operation} 不能通过 search 执行；${available ? `此来源的动作与入口：${available}` : '请查看 channels 的 entrypoint'}`), { code: 'UNSUPPORTED_OPERATION' });
+        }
         if (settings.params && Object.keys(settings.params).length && !source.capability.operations?.length) throw Object.assign(new Error('来源未声明结构化参数，请查看 channels'), { code: 'UNSUPPORTED_PARAMETERS' });
         const operation = operationFor(source);
         const returned = await httpTrace.run(requests, () => source.search!({ ...input, ...settings, query, operation, signal, onAttempt: attempt => attempts.push(attempt), onCoverage: value => { coverage = value; } }));
@@ -463,7 +468,11 @@ export class Engine {
     ])];
     if (!input.sources) order.sort((a, b) => { if (a === specific) return -1; if (b === specific) return 1; const first = this.sources.find(source => source.capability.name === a), second = this.sources.find(source => source.capability.name === b); return (first ? accessState(this.config, first).priority : 100) - (second ? accessState(this.config, second).priority : 100); });
     const eligible = order.filter(name => this.sources.some(source => source.capability.name === name && source.capability.configured && source.read));
-    const view = (content: string) => input.query || input.keywords?.length ? focusText(content, input, input.length) : { ...textPage(content, 0, input.length), selection: 'leading' as const };
+    const view = (document: Document) => {
+      const offset = document.source === 'wiki' && !input.raw && document.metadata?.format === 'wikitext' ? wikiLeadOffset(document.content) : 0;
+      return input.query || input.keywords?.length ? focusText(document.content, input, input.length, offset)
+        : { ...textPage(document.content, offset, input.length), selection: 'leading' as const };
+    };
     if (!input.refresh) {
       try {
         const cached = await this.store.find(url, eligible, input.maxAgeMs, evidence => {
@@ -475,8 +484,8 @@ export class Engine {
         }, input.locator);
         if (cached && cached.source !== 'external') {
           if (input.operation) await this.readOperation(this.sources.find(source => source.capability.name === cached.source)!, url, input, this.signal(options.signal, input.timeoutMs));
-          const { content, ...metadata } = cached;
-          return { status: cached.metadata?.partial ? 'partial' : 'ok', evidence: metadata, ...view(content), cacheHit: true, cacheAgeMs: Date.now() - Date.parse(cached.retrievedAt),
+          const { content: _content, ...metadata } = cached;
+          return { status: cached.metadata?.partial ? 'partial' : 'ok', evidence: metadata, ...view(cached), cacheHit: true, cacheAgeMs: Date.now() - Date.parse(cached.retrievedAt),
             runs: [{ source: cached.source, status: 'ok', elapsedMs: 0, returned: 1, cacheHit: true, network: networkReport([], this.config) }], ...(cacheWarnings.length ? { cacheWarnings } : {}) };
         }
       } catch (error) { cacheWarnings.push(`URL 缓存未读取：${errorMessage(error, this.config)}`); }
@@ -514,18 +523,18 @@ export class Engine {
           }
           const { content: _content, ...metadata } = evidence;
           if (!bodyAvailable || !materialAvailable) {
-            partial = { status: 'partial', evidence: metadata, ...view(document.content), cacheHit: false, runs, nextSteps: [!bodyAvailable ? '页面框架已保存，继续使用公开结构化 API、原始正文入口或其他允许的读取来源。' : '已取得材料已保存，请继续选择提供目标材料类型的读取入口。'], ...(cacheWarnings.length ? { cacheWarnings } : {}) };
+            partial = { status: 'partial', evidence: metadata, ...view(document), cacheHit: false, runs, nextSteps: [!bodyAvailable ? '页面框架已保存，继续使用公开结构化 API、原始正文入口或其他允许的读取来源。' : '已取得材料已保存，请继续选择提供目标材料类型的读取入口。'], ...(cacheWarnings.length ? { cacheWarnings } : {}) };
             continue;
           }
-          return { status: document.metadata?.partial ? 'partial' : 'ok', evidence: metadata, ...view(document.content), cacheHit: false, runs, ...(cacheWarnings.length ? { cacheWarnings } : {}) };
+          return { status: document.metadata?.partial ? 'partial' : 'ok', evidence: metadata, ...view(document), cacheHit: false, runs, ...(cacheWarnings.length ? { cacheWarnings } : {}) };
         } catch (error) {
           cacheWarnings.push(`证据保存未完成：${errorMessage(error, this.config)}`);
-          const { content, ...metadata } = document;
+          const { content: _content, ...metadata } = document;
           if (!bodyAvailable || !materialAvailable) {
-            partial = { status: 'partial', document: metadata, ...view(content), cacheHit: false, runs, cacheWarnings, nextSteps: ['目标正文尚未取得，请继续使用其他允许的入口。'] };
+            partial = { status: 'partial', document: metadata, ...view(document), cacheHit: false, runs, cacheWarnings, nextSteps: ['目标正文尚未取得，请继续使用其他允许的入口。'] };
             continue;
           }
-          return { status: 'partial', document: metadata, ...view(content), cacheHit: false, runs, cacheWarnings };
+          return { status: 'partial', document: metadata, ...view(document), cacheHit: false, runs, cacheWarnings };
         }
       } catch (error) {
         runs.push({ ...await this.failure(name, error, started, signal), network: networkReport(requests, this.config) });

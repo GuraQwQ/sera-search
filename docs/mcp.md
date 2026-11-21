@@ -20,6 +20,14 @@ node dist/cli.js install --home ./.sera --mcp-client codex --json
 
 单客户端调用可用 `--mcp-command` 指定已有 CLI 路径；JSON 客户端还可用 `--mcp-config` 指定实际目标文件。注册固定绝对 Node、包入口、`home` 和 SERA 配置文件路径，Key 保留在 SERA 数据目录。注册后开启新会话或刷新对应客户端工具清单。
 
+日常检索可用 `--profile search` 注册 12 个查询、证据与后端工具。默认 `full` 还提供配置、登录和状态迁移，共 18 个工具。
+
+```bash
+node dist/cli.js install --home ./.sera --mcp-client codex --profile search --json
+```
+
+默认 `--mcp-output dual` 兼容读取文本或结构化结果的宿主。确认当前宿主会把 `structuredContent` 交给模型后，可用 `--mcp-output structured` 注册，省去成功结果中重复的文本载荷。重复安装保留已注册的模式，显式传入 `--profile full` 或 `--mcp-output dual` 可切回完整工具面或双份输出。
+
 ### 客户端适配
 
 | 客户端 ID | 注册入口与配置格式 | 官方依据 |
@@ -62,7 +70,7 @@ MCP 提供 18 个工具：`sera_setup`、`sera_config`、`sera_connectors`、`se
 
 ## 配置与会话
 
-常用检索客户端可以在 MCP 启动参数加 `--profile search`，只加载 12 个查询、证据与后端工具。默认 `full` 模式同时提供设置、登录和状态迁移。已确认宿主会读取 `structuredContent` 时，可为该服务设置 `SERA_MCP_OUTPUT=structured`，成功结果可省去重复的文本载荷。
+手动配置 stdio 客户端时，也可在 `mcp` 的启动参数中指定 `--profile` 和 `--mcp-output`。省略 `--mcp-output` 时可通过环境变量 `SERA_MCP_OUTPUT=structured` 启用结构化模式。
 
 先按任务查看 `sera_capabilities`，需要入口或账号设置时查看 `sera_config`。`sera_setup` 在服务器固定的 `home/config` 中执行非交互配置：探测已有本地入口、从服务器环境补齐 Key、验证已有平台会话，缺项返回待办。例如：
 
