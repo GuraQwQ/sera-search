@@ -150,6 +150,10 @@ Exa、Tavily、Brave、SerpAPI 等免费与已购余额共用接口的来源，�
 
 ## 专用协议与内置来源
 
+`world-bank` 的 `indicators` 按代码直查，或在指定数据源的指标名称和代码中检索。关键词默认使用世界发展指标（`sourceId:2`），其他数据源可传 `sourceId`。每次读取一页轻量目录，按 `coverage.nextCursor` 中的参数续查；`limit` 只控制返回的命中数。
+
+`rcsb-pdb` 的 `structures` 在搜索后用一次有时限的批量详情补充结构名称、实验方法、分辨率和物种。部分详情未取得时仍返回原有 PDB ID，可继续按 ID 读取。
+
 `type` 支持 `rest`、`graphql`、`sdmx`、`mediawiki`、`custom`。标准 JSON 请求可由声明直接执行；SDMX 维度解释、MediaWiki 多站点、XML、WARC、流式压缩和浏览器交互由 `ConnectorHooks` 保留协议语义。导出中缺少 `request`／`output` 的内置动作依赖已注册处理器，不能当作独立的通用 HTTP 声明运行。
 
 开发者可从包导入 `createStructuredSource`、`connectorClient`、`connectorDefinitionSchema` 及相应类型。特殊处理函数接收经校验的参数与共享客户端，返回统一命中／文档；继承证据、定位、研究续查与费用策略。

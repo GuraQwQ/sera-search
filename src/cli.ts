@@ -213,7 +213,7 @@ function display(value: unknown): string {
     }
     return lines.join('\n');
   }
-  if (report.evidence) return `${report.evidence.title}\n${report.evidence.url}\n类型：${report.evidence.contentKind}\n证据：${report.evidence.id}\n\n${report.evidence.metadata?.summary ? report.evidence.metadata.summary + '\n\n' : ''}${report.content ?? ''}${report.nextSteps?.length ? '\n\n' + report.nextSteps.join('\n') : ''}${report.cacheWarnings?.length ? '\n\n' + report.cacheWarnings.join('\n') : ''}`;
+  if (report.evidence) return `${report.evidence.title}\n${report.evidence.url}\n类型：${report.evidence.contentKind}\n证据：${report.evidence.id}\n\n${report.evidence.metadata?.summary ? report.evidence.metadata.summary + '\n\n' : ''}${report.preview ?? report.content ?? ''}${report.nextSteps?.length ? '\n\n' + report.nextSteps.join('\n') : ''}${report.cacheWarnings?.length ? '\n\n' + report.cacheWarnings.join('\n') : ''}`;
   if (report.content !== undefined) return `${report.document?.title ?? report.title}\n${report.document?.url ?? report.url}\n\n${report.content}${report.nextOffset !== null && report.id ? `\n\n下一段：--offset ${report.nextOffset}` : ''}${report.cacheWarnings?.length ? '\n\n' + report.cacheWarnings.join('\n') : ''}`;
   return JSON.stringify(value, null, 2);
 }
@@ -335,11 +335,11 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       case 'logout': result = await logout(config, sourceNameSchema.parse(text), values.platform, controller.signal); break;
       case 'auth': result = await authStatus(config, text ? sourceNameSchema.parse(text) : undefined, values.platform); break;
       case 'capabilities': {
-        const capabilities = engine.capabilities(selected);
+        const capabilities = engine.capabilities(selected, values.query);
         result = detailedDiscovery ? capabilities : capabilities.map(capabilityView); break;
       }
       case 'connectors': {
-        const connectors = engine.connectors(selected);
+        const connectors = engine.connectors(selected, values.query);
         result = { connectors: detailedDiscovery ? connectors : connectors.map(connectorView) }; break;
       }
       case 'backend': {
@@ -350,7 +350,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
         break;
       }
       case 'channels': {
-        const report = await engine.channels({ sources: selected, platform: values.platform, live: detailedDiscovery || Boolean(values.platform), signal: controller.signal });
+        const report = await engine.channels({ sources: selected, platform: values.platform, query: values.query, live: detailedDiscovery || Boolean(values.platform), signal: controller.signal });
         result = detailedDiscovery ? report : channelView(report, Boolean(values.platform)); break;
       }
       case 'search': {
@@ -399,11 +399,11 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       }
       case 'read': {
         const report = await engine.read(text, read);
-        result = values.full ? report : readReportView(report); break;
+        result = values.full ? report : readReportView(report, !values.raw && values.length === undefined && !values.query && !values.keyword?.length); break;
       }
       case 'read-many': {
         const report = await engine.readMany(positionals.slice(1), read);
-        result = values.full ? report : batchReadView(report); break;
+        result = values.full ? report : batchReadView(report, !values.raw && values.length === undefined && !values.query && !values.keyword?.length); break;
       }
       case 'record': {
         if (!values.input) throw new Error('record 需要 --input JSON文件');

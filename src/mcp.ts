@@ -36,7 +36,7 @@ export async function startMcp(config: Config, profile: 'full' | 'search' = 'ful
   const configuration = () => loadConfigBootstrap({ home: config.home, file: config.configFile, group: config.group, catalog: config.catalogOverride });
   const fresh = async (group?: CatalogGroup) => new Engine(await current(group), undefined, backends);
   const group = z.enum(catalogGroups).optional(), full = z.boolean().optional().describe('展开完整数据与诊断');
-  const discovery = z.object({ sources: z.array(sourceNameSchema).min(1).optional(), group, full });
+  const discovery = z.object({ sources: z.array(sourceNameSchema).min(1).optional(), query: z.string().trim().min(1).max(256).optional().describe('按来源、平台、材料或动作筛选'), group, full });
   const hitLimit = (input: { limit?: number; sources?: string[] }) => Math.min(100, (input.limit ?? 5) * (input.sources?.length ?? 1));
   const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
   const failure = async (error: unknown, sensitive?: SavedCredentials) => {
@@ -65,11 +65,11 @@ export async function startMcp(config: Config, profile: 'full' | 'search' = 'ful
   if (admin) server.registerTool('sera_config', { description: '查看或更新当前服务器的来源配置，固定使用当前 home/config；返回脱敏设置与保存结果。凭据通过 sera_login 登记。', inputSchema: inputSchema(configurationInputSchema),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, input => result(async () => configureSources(await configuration(), input)));
   server.registerTool('sera_connectors', { description: '连接器清单。指定 sources 或 full:true 导出协议、动作、认证与映射。', inputSchema: inputSchema(discovery), annotations: { ...annotations, openWorldHint: false } }, input => result(async () => {
-    const connectors = (await fresh(input.group)).connectors(input.sources);
+    const connectors = (await fresh(input.group)).connectors(input.sources, input.query);
     return { connectors: (input.full ?? Boolean(input.sources)) ? connectors : connectors.map(connectorView) };
   }));
   server.registerTool('sera_capabilities', { description: '来源与状态。指定 sources 或 full:true 查看完整操作定义。', inputSchema: inputSchema(discovery), annotations }, input => result(async () => {
-    const sources = (await fresh(input.group)).capabilities(input.sources);
+    const sources = (await fresh(input.group)).capabilities(input.sources, input.query);
     return (input.full ?? Boolean(input.sources)) ? sources : sources.map(capabilityView);
   }));
   server.registerTool('sera_channels', { description: '按 platform 查来源和动作。指定 sources 或 full:true 查看参数 Schema。无筛选时列静态渠道。', inputSchema: inputSchema(discovery.extend({ platform: z.string().optional() })), annotations }, (input, context) => result(async () => {
@@ -98,8 +98,10 @@ export async function startMcp(config: Config, profile: 'full' | 'search' = 'ful
   });
   server.registerTool('sera_research', { description: '按subjects与criteria取证，kind区分必需条件和偏好，targetCount检查数量。先复用已有证据，再补缺口；discoveryQuery独立于任务。更新state.assessments的结论、outcome、适用scope及citations原文坐标后续查。coverage检查覆盖与引用，nextAction/nextSources由进展和重试状态驱动。', inputSchema: inputSchema(researchInput, researchWire), annotations }, (input, context) => result(async () => ((await fresh(input.group)).research({ ...input, signal: context.mcpReq.signal })).then(report => input.full ? report : researchView(report, hitLimit(input)))));
   if (admin) server.registerTool('sera_migrate_state', { description: '将旧fields研究状态一次性转换为version:2，保留原结论与证据ID；返回新state，不写调用方文件。', inputSchema: inputSchema(z.object({ state: z.record(z.string(), z.unknown()) })), annotations: { ...annotations, openWorldHint: false } }, input => result(() => migrateResearchState(input.state)));
-  server.registerTool('sera_read', { description: '按URL/ID读取原文或公开数据；contentTypes要求实际材料，operation/params选择channels的read动作，例如OpenCLI transcript及lang。query/keywords定位片段，全文保留ID。raw让web保留HTML；browser选择已有浏览器，timeoutMs设置单次预算。部分材料不足时按nextSteps换路，refresh取得新观察。', inputSchema: inputSchema(readSchema.extend({ url: z.string().min(1), group, full })), annotations }, (input, context) => result(async () => ((await fresh(input.group)).read(input.url, { ...input, signal: context.mcpReq.signal })).then(report => input.full ? report : readReportView(report))));
-  server.registerTool('sera_read_many', { description: '一次读取最多20个 URL/已知 ID，三路并行并合并重复请求；逐项返回证据、相关片段和失败，使用同一组读取参数。', inputSchema: inputSchema(readSchema.extend({ urls: z.array(z.string().min(1)).min(1).max(20), group, full })), annotations }, (input, context) => result(async () => ((await fresh(input.group)).readMany(input.urls, { ...input, signal: context.mcpReq.signal })).then(report => input.full ? report : batchReadView(report))));
+  const readInput = readSchema.extend({ length: focusSchema.shape.length.unwrap().optional(), group, full });
+  const wantsPreview = (input: z.infer<typeof readInput>) => !input.raw && input.length === undefined && !input.query && !input.keywords?.length;
+  server.registerTool('sera_read', { description: '按URL/ID读取原文或公开数据；contentTypes要求实际材料，operation/params选择channels的read动作。query/keywords定位片段，length指定原文窗口，raw保留原始格式。Steam商店和维基默认可返回清洗预览；用证据ID回读原文。refresh取得新观察，timeoutMs设置单次预算。', inputSchema: inputSchema(readInput.extend({ url: z.string().min(1) })), annotations }, (input, context) => result(async () => ((await fresh(input.group)).read(input.url, { ...input, signal: context.mcpReq.signal })).then(report => input.full ? report : readReportView(report, wantsPreview(input)))));
+  server.registerTool('sera_read_many', { description: '一次读取最多20个 URL/已知 ID，三路并行并合并重复请求；逐项返回证据、相关片段和失败，使用同一组读取参数。', inputSchema: inputSchema(readInput.extend({ urls: z.array(z.string().min(1)).min(1).max(20) })), annotations }, (input, context) => result(async () => ((await fresh(input.group)).readMany(input.urls, { ...input, signal: context.mcpReq.signal })).then(report => input.full ? report : batchReadView(report, wantsPreview(input)))));
   server.registerTool('sera_evidence', { description: '从已保存全文按 query/keywords 定位证据，或用 offset/length 按 Unicode 字符续读，保留时间与版本元数据。', inputSchema: inputSchema(focusSchema.extend({ id: z.string().regex(/^[a-f0-9]{64}$/), offset: z.number().int().min(0).default(0), length: z.number().int().min(1).max(20000).default(4000), full })), annotations: { ...annotations, openWorldHint: false } }, input => result(async () => ((await fresh()).store.get(input.id, input.offset, input.length, input)).then(report => input.full ? report : storedEvidenceView(report))));
   const authSchema = z.strictObject({ source: sourceNameSchema, platform: z.string().regex(platformIdPattern).optional() });
   const loginSchema = authSchema.extend({ credentials: credentialsSchema.strict().refine(value => Object.keys(value).length > 0, '凭据需要至少一个字段').optional(), fromEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(), sessionOnly: z.boolean().optional() }).superRefine((input, context) => {

@@ -70,6 +70,8 @@ MCP 提供 18 个工具：`sera_setup`、`sera_config`、`sera_connectors`、`se
 
 ## 配置与会话
 
+`sera_channels`、`sera_capabilities`、`sera_connectors` 的可选 `query` 用于筛选来源、平台、类别、动作或材料。例如 `{"query":"statistical-indicator"}` 可先找到相关入口，再指定 `sources` 展开动作参数。
+
 手动配置 stdio 客户端时，也可在 `mcp` 的启动参数中指定 `--profile` 和 `--mcp-output`。省略 `--mcp-output` 时可通过环境变量 `SERA_MCP_OUTPUT=structured` 启用结构化模式。
 
 先按任务查看 `sera_capabilities`，需要入口或账号设置时查看 `sera_config`。`sera_setup` 在服务器固定的 `home/config` 中执行非交互配置：探测已有本地入口、从服务器环境补齐 Key、验证已有平台会话，缺项返回待办。例如：

@@ -173,7 +173,7 @@ export async function install(options: ConfigLocation & { skillDir?: string; com
 
 export function errorMessage(error: unknown, config: Config): string {
   if (['NOT_LOGGED_IN', 'NEED_LOGIN', 'AUTH_REQUIRED'].includes(String((error as { code?: unknown })?.code))) return notLoggedIn;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = error instanceof z.ZodError ? validationMessage(error) : error instanceof Error ? error.message : String(error);
   const secrets = Object.values(config.credentials ?? {}).flatMap(record => Object.values(record.credentials));
   for (const settings of Object.values(config.sources ?? {})) secrets.push(settings.apiKey, settings.username, settings.password);
   for (const name of apiSources) secrets.push(config[name]?.apiKey, config[name]?.username, config[name]?.password);
@@ -182,4 +182,14 @@ export function errorMessage(error: unknown, config: Config): string {
     return key.length < 4 ? `(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])` : escaped;
   });
   return patterns.length ? message.replace(new RegExp(patterns.join('|'), 'gu'), '[已隐藏]') : message;
+}
+
+export function validationMessage(error: z.ZodError): string {
+  const issues = error.issues.slice(0, 4).map(issue => {
+    const path = issue.path.map(String).join('.').slice(0, 100);
+    const reason = issue.code === 'unrecognized_keys' ? `不支持字段 ${issue.keys.slice(0, 8).map(key => key.slice(0, 60)).join('、')}` : issue.message.replace(/\s+/g, ' ').slice(0, 180);
+    return path ? `${path}：${reason}` : reason;
+  });
+  if (error.issues.length > issues.length) issues.push(`还有 ${error.issues.length - issues.length} 项`);
+  return issues.join('；');
 }

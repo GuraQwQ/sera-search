@@ -117,6 +117,9 @@ export interface SearchRequest {
 }
 export interface SearchAttempt { backend: SourceName; query?: string; status: 'ok' | 'empty' | 'irrelevant' | 'error' | 'cancelled'; elapsedMs: number; returned: number; reason?: string; code?: string; retryAfterSeconds?: number }
 
+// 简明输出的字段投影，完整命中序列化时保留原有结构。
+export const compactMetadata = Symbol('compactMetadata');
+
 export interface SearchHit {
   source: SourceName;
   title: string;
@@ -124,7 +127,7 @@ export interface SearchHit {
   snippet: string;
   publishedAt?: string;
   locator?: ContentLocator;
-  metadata?: Record<string, unknown> & { relevance?: { status: string; matchedTerms?: string[]; missingTerms?: string[]; score?: number } };
+  metadata?: Record<string, unknown> & { [compactMetadata]?: Record<string, unknown>; relevance?: { status: string; matchedTerms?: string[]; missingTerms?: string[]; score?: number } };
 }
 
 export type ContentKind = 'page' | 'post' | 'subtitle' | 'metadata';

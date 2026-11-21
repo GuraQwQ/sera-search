@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { compactMetadata } from '../types.js';
 import type { AccessPolicy, Config, Document, ReadOptions, SearchHit, SearchRequest, Source } from '../types.js';
 import { createStructuredSource } from '../connectors.js';
 import type { ConnectorDefinition, ConnectorOperation, StructuredClient } from '../connectors.js';
@@ -146,13 +147,24 @@ function createItad(config: Config, definition: ConnectorDefinition): Source {
 }
 
 function createModrinth(config: Config, definition: ConnectorDefinition): Source {
+  const compatibility = (item: Row, versions: unknown) => ({
+    gameVersions: Array.isArray(versions) ? versions.slice(0, 20) : undefined,
+    gameVersionCount: Array.isArray(versions) ? versions.length : undefined,
+    loaders: Array.isArray(item.loaders) ? item.loaders.slice(0, 12) : undefined,
+  });
   return createStructuredSource(config, definition, { search: {
     projects: async (request, params, client) => { const result = object(await client('search', request.signal, { query: request.query, limit: request.limit, offset: params.offset, facets: params.facets ? JSON.stringify(params.facets) : undefined }), 'Modrinth');
       const values = rows(result.hits, 'Modrinth 项目'), more = params.offset + values.length < Number(result.total_hits);
-      return finish(request, values.flatMap(item => hit(definition.id, { title: string(item.title), url: `https://modrinth.com/${['mod', 'modpack', 'plugin', 'resourcepack', 'shader', 'datapack'].includes(string(item.project_type)) ? item.project_type : 'mod'}/${item.slug ?? item.project_id}`, snippet: string(item.description), publishedAt: date(item.date_created), locator: { kind: 'record', id: String(item.project_id) }, metadata: { record: item, contentType: 'mod-metadata' } })), 'modrinth:projects', more ? JSON.stringify({ ...params, offset: params.offset + values.length }) : undefined, definition.limitations); },
+      return finish(request, values.flatMap(item => hit(definition.id, { title: string(item.title), url: `https://modrinth.com/${['mod', 'modpack', 'plugin', 'resourcepack', 'shader', 'datapack'].includes(string(item.project_type)) ? item.project_type : 'mod'}/${item.slug ?? item.project_id}`, snippet: string(item.description), publishedAt: date(item.date_created), locator: { kind: 'record', id: String(item.project_id) }, metadata: { record: item, contentType: 'mod-metadata', [compactMetadata]: {
+        contentType: 'mod-metadata', projectType: item.project_type, author: item.author, downloads: item.downloads, follows: item.follows,
+        license: item.license, categories: item.categories, clientSide: item.client_side, serverSide: item.server_side, ...compatibility(item, item.versions),
+      } } })), 'modrinth:projects', more ? JSON.stringify({ ...params, offset: params.offset + values.length }) : undefined, definition.limitations); },
     versions: async (request, params, client) => { const items = rows(await client(`project/${encodeURIComponent(params.projectId)}/version`, request.signal, { game_versions: params.gameVersions ? JSON.stringify(params.gameVersions) : undefined, loaders: params.loaders ? JSON.stringify(params.loaders) : undefined }), 'Modrinth 版本');
       const value = pageOf(items, params.resultOffset, request, params);
-      return finish(request, value.values.flatMap(item => hit(definition.id, { title: string(item.name) || string(item.version_number), url: `https://modrinth.com/mod/${item.project_id}/version/${item.id}`, snippet: plain(item.changelog), publishedAt: date(item.date_published), locator: { kind: 'record', id: String(item.id) }, metadata: { record: item, contentType: 'mod-version' } })), 'modrinth:versions', value.next, definition.limitations); },
+      return finish(request, value.values.flatMap(item => hit(definition.id, { title: string(item.name) || string(item.version_number), url: `https://modrinth.com/mod/${item.project_id}/version/${item.id}`, snippet: plain(item.changelog), publishedAt: date(item.date_published), locator: { kind: 'record', id: String(item.id) }, metadata: { record: item, contentType: 'mod-version', [compactMetadata]: {
+        contentType: 'mod-version', projectId: item.project_id, version: item.version_number, channel: item.version_type, downloads: item.downloads,
+        dependencyCount: Array.isArray(item.dependencies) ? item.dependencies.length : undefined, ...compatibility(item, item.game_versions),
+      } } })), 'modrinth:versions', value.next, definition.limitations); },
   }, read: async (url, signal, options, client) => { const parsed = new URL(url), parts = parsed.pathname.split('/').filter(Boolean);
     if (parsed.hostname !== 'modrinth.com' || parts.length < 2) throw new Error('Modrinth 读取需要项目或版本链接');
     const isVersion = parts[2] === 'version', identity = options?.locator?.id ?? (isVersion ? parts[3] : parts[1]);

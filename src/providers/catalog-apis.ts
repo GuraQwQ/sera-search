@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import type { ApiConfig, Config, SearchHit, SearchRequest, Source, SourceName } from '../types.js';
+import { compactMetadata } from '../types.js';
 import { NotLoggedInError } from '../credentials.js';
 import { document, endpoint, hit, json, object, permitted, plain, rows, string } from './shared.js';
 import type { Row } from './shared.js';
@@ -98,7 +99,10 @@ function bangumi(config: ApiConfig): Source {
       });
       return results('bangumi', request, rows(value.data, 'Bangumi').map(item => ({
         title: string(item.name_cn) || string(item.name), url: `https://bgm.tv/subject/${item.id}`, snippet: plain(item.summary),
-        publishedAt: published(item.date), metadata: { id: item.id, record: item },
+        publishedAt: published(item.date), metadata: { id: item.id, record: item, [compactMetadata]: {
+          id: item.id, type: item.type, released: item.date, score: (item.rating as Row | undefined)?.score,
+          rank: (item.rating as Row | undefined)?.rank, ratingCount: (item.rating as Row | undefined)?.total,
+        } },
       })));
     },
     async read(url, signal) {
@@ -173,7 +177,9 @@ function mangadex(config: ApiConfig): Source {
       const value = await get('manga', request.signal, { title: request.query, limit: String(Math.min(100, request.limit)), 'order[relevance]': 'desc' });
       return results('mangadex', request, rows(value.data, 'MangaDex').map(item => {
         const attributes = object(item.attributes, 'MangaDex 属性'), description = object(attributes.description ?? {}, 'MangaDex 简介');
-        return { title: title(item), url: `https://mangadex.org/title/${item.id}`, snippet: string(description.en) || string(Object.values(description)[0]), metadata: { id: item.id, record: item } };
+        return { title: title(item), url: `https://mangadex.org/title/${item.id}`, snippet: string(description.en) || string(Object.values(description)[0]), metadata: { id: item.id, record: item, [compactMetadata]: {
+          id: item.id, status: attributes.status, year: attributes.year, originalLanguage: attributes.originalLanguage, contentRating: attributes.contentRating, publicationDemographic: attributes.publicationDemographic,
+        } } };
       }));
     },
     async read(url, signal) {
@@ -187,6 +193,7 @@ function mangadex(config: ApiConfig): Source {
 function vndb(config: ApiConfig): Source {
   const get = api(config, 'https://api.vndb.org/kana/', 'VNDB');
   const fields = 'id,title,alttitle,description,released,rating,length_minutes,image.url';
+  const description = (value: unknown) => plain(value).replace(/\[\/?(?:b|i|u|s|quote|spoiler|url|ruby)(?:=[^\]\r\n]*)?\]/gi, '');
   const releaseFields = 'id,title,alttitle,released,languages.lang,languages.title,languages.latin,languages.main,languages.mtl,platforms,vns.id,vns.title,vns.rtype,notes,patch,official,freeware,extlinks.url,extlinks.name,extlinks.id,extlinks.label';
   const page = z.number().int().min(1).max(10000).default(1), searchParams = z.strictObject({ page });
   const releaseParams = z.strictObject({ vnId: z.string().regex(/^v[1-9]\d*$/).optional(), steamAppId: z.string().regex(/^[1-9]\d*$/).optional(),
@@ -220,14 +227,17 @@ function vndb(config: ApiConfig): Source {
       if (request.since) filters.push(['released', '>=', request.since]);
       if (request.until) filters.push(['released', '<=', request.until]);
       const value = await get(operation === 'releases' ? 'release' : 'vn', request.signal, {}, { filters: filters.length === 1 ? filters[0] : ['and', ...filters],
-        fields: operation === 'releases' ? releaseFields : fields, sort: titleSearch ? 'searchrank' : 'id', results: Math.min(100, request.limit), page: params.page });
+        fields: operation === 'releases' ? releaseFields : fields + ',votecount,languages,platforms', sort: titleSearch ? 'searchrank' : 'id', results: Math.min(100, request.limit), page: params.page });
       reportCoverage(request, `vndb:${operation}`, { completeness: 'partial', truncated: value.more === true, ...(value.more === true ? { nextCursor: JSON.stringify({ ...params, page: params.page + 1 }) } : {}),
         limitations: ['数据库条目与发行日期可能不完整，语言、商店及版本关系按当前条目分别核对。'] });
       if (operation === 'releases') return rows(value.results, 'VNDB 发行版本').filter(item => /^r[1-9]\d*$/.test(string(item.id))).flatMap(item => hit('vndb', {
         title: string(item.alttitle) || string(item.title), url: `https://vndb.org/${item.id}`, snippet: [string(item.title), string(item.released), Array.isArray(item.platforms) ? item.platforms.join('、') : '', plain(item.notes)].filter(Boolean).join(' · '),
         publishedAt: published(item.released), locator: { kind: 'record', id: string(item.id) }, metadata: { contentType: 'game-release', contentScope: 'release-metadata', record: releaseRecord(item) } }));
       return results('vndb', request, rows(value.results, 'VNDB').map(item => ({ title: string(item.title), url: `https://vndb.org/${item.id}`,
-        snippet: plain(item.description), publishedAt: published(item.released), metadata: { id: item.id, record: item },
+        snippet: description(item.description), publishedAt: published(item.released), metadata: { id: item.id, record: item, [compactMetadata]: {
+          id: item.id, originalTitle: item.alttitle !== item.title ? item.alttitle : undefined, released: item.released, rating: item.rating, votecount: item.votecount,
+          languages: item.languages, platforms: item.platforms, lengthMinutes: item.length_minutes, imageUrl: (item.image as Row | undefined)?.url,
+        } },
       })));
     },
     async read(url, signal) {
@@ -260,11 +270,19 @@ function musicbrainz(config: ApiConfig): Source {
     async search(request) {
       const platform = selection(request, config, ['recording', 'artist', 'release'], 'recording');
       const value = await get(platform, request.signal, { query: request.query, limit: String(Math.min(100, request.limit)) });
-      return results('musicbrainz', request, rows(value[platform === 'release' ? 'releases' : `${platform}s`], 'MusicBrainz').map(item => ({
-        title: string(item.title) || string(item.name), url: `https://musicbrainz.org/${platform}/${item.id}`,
-        snippet: string(item.disambiguation) || [string(item.type), string(item.country)].filter(Boolean).join(' · '),
-        publishedAt: published(item['first-release-date'] ?? item.date), metadata: { id: item.id, platform: 'musicbrainz', operation: platform, record: item },
-      })));
+      return results('musicbrainz', request, rows(value[platform === 'release' ? 'releases' : `${platform}s`], 'MusicBrainz').map(item => {
+        const credits = Array.isArray(item['artist-credit']) ? item['artist-credit'].slice(0, 4) as Row[] : [];
+        const artist = credits.map(credit => (string(credit.name) || string((credit.artist as Row | undefined)?.name)) + string(credit.joinphrase)).join('').trim();
+        const releases = Array.isArray(item.releases) ? item.releases.slice(0, 3).map((release: Row) => ({ id: release.id, title: release.title, date: release.date })) : undefined;
+        const released = item['first-release-date'] ?? item.date, type = item.type ?? (item['release-group'] as Row | undefined)?.['primary-type'];
+        return { title: string(item.title) || string(item.name), url: `https://musicbrainz.org/${platform}/${item.id}`,
+          snippet: [artist, releases?.[0]?.title, released, type, item.country, item.disambiguation].filter(Boolean).join(' · '),
+          publishedAt: published(released), metadata: { id: item.id, platform: 'musicbrainz', operation: platform, record: item, [compactMetadata]: {
+            id: item.id, platform: 'musicbrainz', operation: platform, artistIds: credits.map(credit => (credit.artist as Row | undefined)?.id).filter(Boolean), releases, released, type,
+            country: item.country, durationMs: item.length, status: item.status, lifeSpan: item['life-span'],
+          } },
+        };
+      }));
     },
     async read(url, signal) {
       const parsed = new URL(url), match = parsed.hostname === 'musicbrainz.org' ? parsed.pathname.match(/^\/(recording|artist|release)\/([\da-f-]{36})\/?$/i) : null;

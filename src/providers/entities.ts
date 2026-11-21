@@ -151,9 +151,13 @@ function steam(config: ApiConfig = {}): Source {
       if (data.steam_appid !== undefined && String(data.steam_appid) !== target.appId) throw steamError('Steam 作品AppID与请求不符', 'CONTENT_MISMATCH', url);
       const summary = [storeSummary(data, data.price_overview), (data.release_date as Row | undefined)?.date,
         Array.from(plain(data.short_description || data.about_the_game)).slice(0, 500).join('')].filter(Boolean).join(' · ');
+      const description = string(data.about_the_game || data.detailed_description)
+        .replace(/<(script|style|video|iframe)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+        .replace(/<(?:br|\/p|\/li|\/div|\/h[1-6])\b[^>]*>/gi, '\n');
+      const readPreview = Array.from(plain(description).replace(/[^\S\n]+/g, ' ').replace(/\n +/g, '\n').replace(/\n{3,}/g, '\n\n')).slice(0, 1200).join('');
       return document('steam', url, string(data.name), JSON.stringify(data, null, 2), { contentKind: 'metadata', metadata: {
         appId: target.appId, contentType: 'game', contentScope: 'store-specification', language: api.searchParams.get('l'),
-        region: api.searchParams.get('cc'), releaseDateRaw: data.release_date, summary,
+        region: api.searchParams.get('cc'), releaseDateRaw: data.release_date, summary, readPreview: readPreview || undefined,
       } });
     },
   };

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { compactMetadata } from '../types.js';
 import type { ApiConfig, Config, DataCoverage, SearchHit, SearchRequest, Source, SourceName, SourceOperation } from '../types.js';
 import { date, decoded, document, endpoint, hit, object, permitted, plain, response, rows, string } from './shared.js';
 import type { Row } from './shared.js';
@@ -44,6 +45,37 @@ function idFrom(url: string, hosts: string[], pattern: RegExp, name: string) {
   return match[1];
 }
 
+function relevantPackages(entries: Row[], packageName?: string, ecosystem?: string) {
+  if (!packageName) return entries;
+  const matches = (entry: Row) => {
+    const pkg = entry.package as Row | undefined;
+    return string(pkg?.name).toLowerCase() === packageName.toLowerCase()
+      && (!ecosystem || string(pkg?.ecosystem).toLowerCase() === ecosystem.toLowerCase());
+  };
+  return [...entries].sort((a, b) => Number(matches(b)) - Number(matches(a)));
+}
+
+function osvAffected(item: Row, packageName?: string, ecosystem?: string) {
+  const affected: Row[] = Array.isArray(item.affected) ? item.affected : [];
+  const severity: Row[] = Array.isArray(item.severity) ? item.severity : [];
+  return {
+    affectedCount: affected.length,
+    affected: relevantPackages(affected, packageName, ecosystem).slice(0, 4).map(entry => {
+      const pkg = entry.package as Row | undefined;
+      const ranges: Row[] = Array.isArray(entry.ranges) ? entry.ranges : [];
+      return { package: pkg?.name, ecosystem: pkg?.ecosystem,
+        ranges: ranges.slice(0, 2).map(range => {
+          const events: unknown[] = Array.isArray(range.events) ? range.events : [];
+          return { type: range.type, ...(events.length <= 4 ? { events } : { eventCount: events.length }) };
+        }),
+        rangeCount: ranges.length, versions: Array.isArray(entry.versions) ? entry.versions.slice(0, 3) : undefined,
+        versionCount: Array.isArray(entry.versions) ? entry.versions.length : undefined };
+    }),
+    severity: severity.slice(0, 2).map(entry => ({ type: entry.type, score: entry.score })),
+    databaseSeverity: (item.database_specific as Row | undefined)?.severity,
+  };
+}
+
 function osv(config: ApiConfig): Source {
   const schema = z.strictObject({ ecosystem: text.optional(), package: text.optional(), version: text.optional(), commit: z.string().regex(/^[a-f\d]{7,64}$/i).optional(), cursor: text.optional(), resultOffset: z.number().int().nonnegative().default(0) });
   const operations = [describeOperation('package', '按软件包、生态和版本或 commit 查询漏洞', ['vulnerability'], schema)];
@@ -59,7 +91,10 @@ function osv(config: ApiConfig): Source {
       const moreOnPage = p.resultOffset + request.limit < items.length;
       const nextCursor = moreOnPage ? JSON.stringify({ cursor: p.cursor, resultOffset: p.resultOffset + request.limit }) : data.next_page_token ? JSON.stringify({ cursor: string(data.next_page_token), resultOffset: 0 }) : undefined;
       return finish(request, items.slice(p.resultOffset, p.resultOffset + request.limit).flatMap(item => hit('osv', { title: string(item.summary) || string(item.id), url: `https://osv.dev/vulnerability/${encodeURIComponent(string(item.id))}`,
-        snippet: string(item.details), publishedAt: date(item.published), metadata: { id: item.id, aliases: item.aliases, modifiedAt: item.modified, record: item } })), 'package-vulnerabilities',
+        snippet: string(item.details), publishedAt: date(item.published), metadata: { id: item.id, aliases: item.aliases, modifiedAt: item.modified, record: item, [compactMetadata]: {
+          id: item.id, aliases: Array.isArray(item.aliases) ? item.aliases.slice(0, 8) : undefined, modifiedAt: item.modified, withdrawnAt: item.withdrawn,
+          ...osvAffected(item, p.commit ? undefined : p.package ?? request.query, p.ecosystem),
+        } } })), 'package-vulnerabilities',
       { nextCursor, truncated: Boolean(nextCursor), limitations: ['无命中只表示当前数据库没有匹配公告，不证明软件无漏洞'] });
     },
     async read(url, signal) { const id = idFrom(url, ['osv.dev'], /^\/vulnerability\/([^/]+)\/?$/, 'OSV'); const data = object(await call(`v1/vulns/${encodeURIComponent(decodeURIComponent(id))}`, signal), 'OSV'); return record('osv', url, string(data.summary) || string(data.id), data); },
@@ -86,7 +121,14 @@ function advisories(config: ApiConfig): Source {
       const items = rows(await result.json(), 'GitHub Advisory'), nextLink = result.headers.get('link')?.match(/<([^>]+)>;\s*rel="next"/)?.[1];
       const nextCursor = nextLink ? new URL(nextLink).searchParams.get('after') ?? undefined : undefined;
       return finish(request, items.flatMap(item => hit('github-advisory', { title: string(item.summary), url: string(item.html_url) || `https://github.com/advisories/${item.ghsa_id}`,
-        snippet: string(item.description), publishedAt: date(item.published_at), metadata: { id: item.ghsa_id, cve: item.cve_id, record: item } })), 'advisory-page',
+        snippet: string(item.description), publishedAt: date(item.published_at), metadata: { id: item.ghsa_id, cve: item.cve_id, record: item, [compactMetadata]: {
+          id: item.ghsa_id, cve: item.cve_id, severity: item.severity, withdrawnAt: item.withdrawn_at,
+          affectedCount: Array.isArray(item.vulnerabilities) ? item.vulnerabilities.length : undefined,
+          affected: Array.isArray(item.vulnerabilities) ? relevantPackages(item.vulnerabilities, packageName, p.ecosystem).slice(0, 5).map(entry => ({
+            package: (entry.package as Row | undefined)?.name, ecosystem: (entry.package as Row | undefined)?.ecosystem,
+            range: entry.vulnerable_version_range, firstPatchedVersion: typeof entry.first_patched_version === 'string' ? entry.first_patched_version : (entry.first_patched_version as Row | undefined)?.identifier,
+          })) : undefined,
+        } } })), 'advisory-page',
       { truncated: Boolean(nextCursor), nextCursor, limitations: ['默认查询已审核公告；包名和版本采用 GitHub affects 原生条件'] });
     },
     async read(url, signal) { const id = idFrom(url, ['github.com'], /^\/advisories\/(GHSA-[\w-]+)\/?$/, 'GitHub Advisory'); const data = object(await call(`advisories/${id}`, signal), 'GitHub Advisory'); return record('github-advisory', url, string(data.summary), data); },

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { compactMetadata } from '../types.js';
 import type { ApiConfig, Capability, Config, SearchRequest, Source, SourceName, SourceOperation } from '../types.js';
 import { date, document, endpoint, hit, json, object, permitted, plain, response, rows, string } from './shared.js';
 import type { Row } from './shared.js';
@@ -95,7 +96,11 @@ function openReview(config: ApiConfig): Source {
         const id = string(item.id), content = object(item.content, 'OpenReview note 内容'), target = `https://openreview.net/forum?id=${encodeURIComponent(string(item.forum) || id)}&noteId=${encodeURIComponent(id)}`;
         if (!id || !accepted(request, target)) return [];
         return hit('openreview', { title: string(noteValue(content, 'title')) || string(noteValue(content, 'summary')) || id, url: target,
-          snippet: plain(noteValue(content, 'abstract')) || plain(noteValue(content, 'review')) || plain(noteValue(content, 'comment')), publishedAt: noteTime(item), locator: { kind: 'record', id, parentUrl: `https://openreview.net/forum?id=${encodeURIComponent(string(item.forum) || id)}` }, metadata: { noteId: id, forumId: item.forum, replyTo: item.replyto, contentType: item.replyto ? 'review' : 'paper', content: item.content, signatures: item.signatures } });
+          snippet: plain(noteValue(content, 'abstract')) || plain(noteValue(content, 'review')) || plain(noteValue(content, 'comment')), publishedAt: noteTime(item), locator: { kind: 'record', id, parentUrl: `https://openreview.net/forum?id=${encodeURIComponent(string(item.forum) || id)}` }, metadata: { noteId: id, forumId: item.forum, replyTo: item.replyto, contentType: item.replyto ? 'review' : 'paper', content: item.content, signatures: item.signatures, [compactMetadata]: {
+            noteId: id, forumId: item.forum, replyTo: item.replyto, contentType: item.replyto ? 'review' : 'paper',
+            venue: noteValue(content, 'venue'), venueId: noteValue(content, 'venueid'), rating: noteValue(content, 'rating'), confidence: noteValue(content, 'confidence'),
+            invitation: Array.isArray(item.invitations) ? item.invitations[0] : item.invitation,
+          } } });
       });
     },
     async read(url, signal) {
@@ -128,7 +133,11 @@ function huggingFace(config: ApiConfig): Source {
       return values.flatMap(item => {
         const id = string(item.id) || string(item.modelId), target = `https://huggingface.co/${operation === 'models' ? '' : operation + '/'}${encodedPath(id)}`;
         if (!id || !accepted(request, target)) return [];
-        return hit('huggingface', { title: id, url: target, snippet: Array.isArray(item.tags) ? item.tags.map(string).join(' · ') : '', locator: { kind: 'record', id: `${operation}:${id}` }, metadata: { ...item, updatedAt: item.lastModified, contentType: operation === 'models' ? 'model' : operation === 'datasets' ? 'dataset' : 'space' } });
+        const contentType = operation === 'models' ? 'model' : operation === 'datasets' ? 'dataset' : 'space';
+        return hit('huggingface', { title: id, url: target, snippet: Array.isArray(item.tags) ? item.tags.map(string).join(' · ') : '', locator: { kind: 'record', id: `${operation}:${id}` }, metadata: { ...item, updatedAt: item.lastModified, contentType, [compactMetadata]: {
+          contentType, updatedAt: item.lastModified, likes: item.likes, downloads: item.downloads, pipelineTag: item.pipeline_tag, library: item.library_name,
+          sdk: item.sdk, revision: item.sha, gated: item.gated, private: item.private,
+        } } });
       });
     },
     async read(url, signal) {
@@ -261,7 +270,12 @@ function zenodo(config: ApiConfig): Source {
       return values.flatMap(item => {
         const id = numericId(item.id), metadata = object(item.metadata, 'Zenodo metadata'), target = `https://zenodo.org/records/${encodeURIComponent(id)}`;
         if (!id || !accepted(request, target)) return [];
-        return hit('zenodo', { title: string(metadata.title), url: target, snippet: plain(metadata.description), publishedAt: date(metadata.publication_date), locator: { kind: 'record', id }, metadata: { ...metadata, files: item.files, conceptrecid: item.conceptrecid, contentType: 'research-record' } });
+        return hit('zenodo', { title: string(metadata.title), url: target, snippet: plain(metadata.description), publishedAt: date(metadata.publication_date), locator: { kind: 'record', id }, metadata: { ...metadata, files: item.files, conceptrecid: item.conceptrecid, contentType: 'research-record', [compactMetadata]: {
+          contentType: 'research-record', doi: metadata.doi ?? item.doi, version: metadata.version, conceptrecid: item.conceptrecid,
+          resourceType: (metadata.resource_type as Row | undefined)?.type, license: (metadata.license as Row | undefined)?.id, accessRight: metadata.access_right,
+          creators: Array.isArray(metadata.creators) ? metadata.creators.slice(0, 4).map((creator: Row) => creator.name) : undefined,
+          creatorCount: Array.isArray(metadata.creators) ? metadata.creators.length : undefined, fileCount: Array.isArray(item.files) ? item.files.length : undefined,
+        } } });
       });
     },
     async read(url, signal) {

@@ -1,9 +1,11 @@
 import { z } from 'zod';
+import { compactMetadata } from '../types.js';
 import { connectorClient, createStructuredSource } from '../connectors.js';
 import type { ConnectorDefinition, ConnectorOperation, StructuredClient } from '../connectors.js';
 import { sourceConfig } from '../source-config.js';
 import type { Config, DataCoverage, Document, ReadOptions, SearchHit, SearchRequest, Source } from '../types.js';
 import { date, document, hit, object, permitted, plain, rows, string } from './shared.js';
+import type { Row } from './shared.js';
 import { reportCoverage } from './operations.js';
 
 const value = z.string().trim().min(1).max(2000), offset = z.number().int().min(0).max(100000).default(0);
@@ -84,7 +86,38 @@ export function createScienceSources(config: Config): Source[] {
         const raw = response.status === 204 ? { result_set: [], total_count: 0 } : await response.json();
         const entries = rows(raw.result_set ?? [], 'RCSB');
         const more = Number(raw.total_count) > p.offset + entries.length;
-        return results(request, id, entries.flatMap(item => hit(id, { title: `PDB ${item.identifier}`, url: `https://www.rcsb.org/structure/${encodeURIComponent(string(item.identifier))}`, snippet: `结构检索分数 ${item.score ?? ''}`, locator: { kind: 'record', id: string(item.identifier) }, metadata: { record: item } })), 'structure-search', { truncated: more, nextCursor: more ? String(p.offset + entries.length) : undefined });
+        const details = new Map<string, Row>();
+        let enrichmentIncomplete = false;
+        const ids = entries.slice(0, request.limit).map(item => string(item.identifier)).filter(Boolean);
+        if (!sequence && ids.length) {
+          try {
+            const response = await data('graphql', AbortSignal.any([request.signal, AbortSignal.timeout(2500)]), {}, {
+              query: 'query ($ids: [String!]!) { entries(entry_ids: $ids) { rcsb_id struct { title } exptl { method } rcsb_entry_info { resolution_combined } polymer_entities { rcsb_polymer_entity { pdbx_description } rcsb_entity_source_organism { ncbi_scientific_name } } } }',
+              variables: { ids },
+            });
+            for (const item of rows((response.data?.entries ?? []).filter(Boolean), 'RCSB 结构摘要')) details.set(string(item.rcsb_id).toUpperCase(), item);
+            enrichmentIncomplete = Boolean(response.errors?.length) || ids.some(key => !details.has(key.toUpperCase()));
+          } catch {
+            request.signal.throwIfAborted();
+            enrichmentIncomplete = true;
+          }
+        }
+        return results(request, id, entries.flatMap(item => {
+          const key = string(item.identifier), detail = details.get(key.toUpperCase());
+          if (!key) return [];
+          const entities: Row[] = Array.isArray(detail?.polymer_entities) ? detail.polymer_entities : [];
+          const names = [...new Set(entities.map(entity => string((entity.rcsb_polymer_entity as Row | undefined)?.pdbx_description)).filter(Boolean))].slice(0, 3);
+          const organisms = [...new Set(entities.flatMap(entity => Array.isArray(entity.rcsb_entity_source_organism) ? entity.rcsb_entity_source_organism.map((value: Row) => string(value.ncbi_scientific_name)).filter(Boolean) : []))].slice(0, 3);
+          const methods = Array.isArray(detail?.exptl) ? detail.exptl.map((experiment: Row) => string(experiment.method)).filter(Boolean).slice(0, 3) : [];
+          const resolution = (detail?.rcsb_entry_info as Row | undefined)?.resolution_combined;
+          const resolutionAngstrom = Array.isArray(resolution) ? resolution.filter(value => Number.isFinite(value)).slice(0, 3) : [];
+          return hit(id, {
+            title: string((detail?.struct as Row | undefined)?.title) || `PDB ${key}`, url: `https://www.rcsb.org/structure/${encodeURIComponent(key)}`,
+            snippet: [names.join(' / '), organisms.join(' / '), methods.join(' / '), resolutionAngstrom.length ? `${resolutionAngstrom.join(' / ')} Å` : '', `结构检索分数 ${item.score ?? ''}`].filter(Boolean).join(' · '),
+            locator: { kind: 'record', id: key }, metadata: { record: item, score: item.score, methods, resolutionAngstrom, organismSample: organisms },
+          });
+        }), 'structure-search', { truncated: more, nextCursor: more ? String(p.offset + entries.length) : undefined,
+          ...(enrichmentIncomplete ? { limitations: ['部分结构摘要未取得，可按 PDB ID 读取详情'] } : {}) });
       };
       return createStructuredSource(config, def, { search: { structures: search, sequence: search }, read: async (url, signal) => { const key = pathId(url, ['www.rcsb.org', 'rcsb.org'], /^\/structure\/([a-z\d_-]+)\/?$/i); const v = await data(`rest/v1/core/entry/${encodeURIComponent(key)}`, signal); return record(id, url, key, string(v.struct?.title) || key, v, { contentType: 'molecular-structure', units: 'PDB/mmCIF 字段定义', citation: v.rcsb_primary_citation }); } });
     }
@@ -110,8 +143,20 @@ export function createScienceSources(config: Config): Source[] {
         if (op === 'activities' && !p.target && !p.molecule) throw new Error('活性查询需要 params.target 或 params.molecule 的 ChEMBL ID');
         const raw = await client(op === 'activities' ? 'activity.json' : `${resource}/search.json`, request.signal, { limit: request.limit, offset: p.offset, ...(op === 'activities' ? { target_chembl_id: p.target, molecule_chembl_id: p.molecule } : { q: request.query }) });
         const entries = rows(raw[op === 'molecules' ? 'molecules' : op === 'targets' ? 'targets' : 'activities'], 'ChEMBL'), next = raw.page_meta?.next;
-        return results(request, id, entries.flatMap(item => { const key = String(item[resource === 'activity' ? 'activity_id' : `${resource}_chembl_id`] ?? ''); const url = resource === 'activity' ? `https://www.ebi.ac.uk/chembl/api/data/activity/${key}.json` : `https://www.ebi.ac.uk/chembl/explore/${resource === 'molecule' ? 'compound' : 'target'}/${key}`;
-          return hit(id, { title: string(item.pref_name) || key, url, snippet: resource === 'activity' ? `${item.standard_type ?? ''} ${item.standard_relation ?? ''} ${item.standard_value ?? ''} ${item.standard_units ?? ''}` : string(item.molecule_type) || string(item.target_type), locator: { kind: 'record', id: `${resource}:${key}` }, metadata: { record: item, sourceDocument: item.document_chembl_id } }); }), `chembl-${resource}`, { truncated: Boolean(next), nextCursor: next ? String(p.offset + entries.length) : undefined });
+        return results(request, id, entries.flatMap(item => {
+          const key = String(item[resource === 'activity' ? 'activity_id' : `${resource}_chembl_id`] ?? '');
+          if (!key) return [];
+          const url = resource === 'activity' ? `https://www.ebi.ac.uk/chembl/api/data/activity/${key}.json` : `https://www.ebi.ac.uk/chembl/explore/${resource === 'molecule' ? 'compound' : 'target'}/${key}`;
+          const properties = item.molecule_properties as Row | undefined;
+          const projected = resource === 'molecule' ? { moleculeType: item.molecule_type, formula: properties?.full_molformula, molecularWeight: properties?.full_mwt, maxPhase: item.max_phase } :
+            resource === 'target' ? { targetType: item.target_type, organism: item.organism, taxId: item.tax_id } :
+              { targetId: item.target_chembl_id, moleculeId: item.molecule_chembl_id, sourceDocument: item.document_chembl_id, assayId: item.assay_chembl_id };
+          const snippet = resource === 'activity' ? [item.standard_type, item.standard_relation, item.standard_value, item.standard_units].filter(value => value != null).join(' ') :
+            resource === 'molecule' ? [item.molecule_type, properties?.full_molformula, properties?.full_mwt != null && `${properties.full_mwt} g/mol`,
+              item.max_phase != null && `最高阶段 ${item.max_phase}`].filter(Boolean).join(' · ') : [item.target_type, item.organism].filter(Boolean).join(' · ');
+          return hit(id, { title: string(item.pref_name) || key, url, snippet, locator: { kind: 'record', id: `${resource}:${key}` },
+            metadata: { record: item, sourceDocument: item.document_chembl_id, [compactMetadata]: projected } });
+        }), `chembl-${resource}`, { truncated: Boolean(next), nextCursor: next ? String(p.offset + entries.length) : undefined });
       };
       return createStructuredSource(config, def, { search: { molecules: search, targets: search, activities: search }, read: async (url, signal, _options, client) => { const parsed = new URL(url); if (parsed.hostname !== 'www.ebi.ac.uk') throw new Error('需要 ChEMBL 记录链接'); const match = parsed.pathname.match(/^\/chembl\/explore\/(compound|target)\/(CHEMBL\d+)\/?$/i) ?? parsed.pathname.match(/^\/chembl\/api\/data\/(activity)\/(\d+)\.json$/); if (!match) throw new Error('需要化合物、靶点或活性记录链接'); const type = match[1] === 'compound' ? 'molecule' : match[1]!, key = match[2]!; const v = await client(`${type}/${key}.json`, signal); return record(id, url, `${type}:${key}`, string(v.pref_name) || key, v, { contentType: type === 'molecule' ? 'compound' : type === 'target' ? 'target' : 'bioactivity', license: 'CC BY-SA 3.0', contentScope: `chembl-${type}` }); } });
     }
@@ -124,11 +169,50 @@ export function createScienceSources(config: Config): Source[] {
     }
     if (id === 'hepdata') return createStructuredSource(config, def, { search: { datasets: async (request, p, client) => { const v = await client('search/', request.signal, { q: request.query, page: p.page, size: request.limit, format: 'json', collaboration: p.collaboration }), entries = rows(v.results ?? [], 'HEPData'), more = Number(v.total) > p.page * request.limit; return results(request, id, entries.flatMap(item => { const key = String(item.recid ?? item.id ?? ''); return hit(id, { title: string(item.title), url: `https://www.hepdata.net/record/${encodeURIComponent(key)}`, snippet: plain(item.abstract), locator: { kind: 'record', id: key }, metadata: { record: item } }); }), 'experimental-records', { truncated: more, nextCursor: more ? String(p.page + 1) : undefined }); } }, read: async (url, signal, _options, client) => { const parsed = new URL(url), key = pathId(url, ['www.hepdata.net', 'hepdata.net'], /^\/record\/([a-z\d]+)\/?$/i), version = parsed.searchParams.get('version') ?? undefined; const v = await client(`record/${key}`, signal, { format: 'json', version }); return record(id, url, key, string(v.record?.title) || string(v.title) || key, v, { contentType: 'experimental-dataset', license: 'CC0，个别数据集以各自声明为准', version }); } });
     if (id === 'gbif') {
-      const search = async (request: SearchRequest, p: Record<string, any>, client: StructuredClient) => { const occurrences = request.operation === 'occurrences', v = await client(occurrences ? 'occurrence/search' : 'species/search', request.signal, { limit: request.limit, offset: p.offset, ...(occurrences ? { taxonKey: p.taxonKey, country: p.country, eventDate: request.since || request.until ? `${request.since ?? '*'},${request.until ?? '*'}` : undefined } : { q: request.query }) }), entries = rows(v.results, 'GBIF'); const more = v.endOfRecords === false; return results(request, id, entries.flatMap(item => { const key = String(item.key), type = occurrences ? 'occurrence' : 'species'; return hit(id, { title: string(item.scientificName) || string(item.canonicalName) || key, url: `https://www.gbif.org/${type}/${key}`, snippet: occurrences ? `${item.country ?? ''} · ${item.eventDate ?? ''} · ${item.basisOfRecord ?? ''}` : `${item.rank ?? ''} · ${item.taxonomicStatus ?? ''}`, locator: { kind: 'record', id: `${type}:${key}` }, metadata: { record: item, datasetKey: item.datasetKey, license: item.license, eventDate: item.eventDate } }); }), occurrences ? 'public-occurrences' : 'taxon-catalog', { truncated: more, nextCursor: more ? String(p.offset + entries.length) : undefined }); };
+      const search = async (request: SearchRequest, p: Record<string, any>, client: StructuredClient) => {
+        const occurrences = request.operation === 'occurrences';
+        const v = await client(occurrences ? 'occurrence/search' : 'species/search', request.signal, {
+          limit: request.limit, offset: p.offset, ...(occurrences ? { taxonKey: p.taxonKey, country: p.country, eventDate: request.since || request.until ? `${request.since ?? '*'},${request.until ?? '*'}` : undefined } : { q: request.query }),
+        });
+        const entries = rows(v.results, 'GBIF'), more = v.endOfRecords === false, type = occurrences ? 'occurrence' : 'species';
+        return results(request, id, entries.flatMap(item => {
+          const key = String(item.key);
+          const projected = occurrences ? { taxonKey: item.taxonKey, eventDate: item.eventDate, country: item.country, basisOfRecord: item.basisOfRecord,
+            datasetKey: item.datasetKey, license: item.license, occurrenceStatus: item.occurrenceStatus } : {
+            rank: item.rank, taxonomicStatus: item.taxonomicStatus, acceptedKey: item.acceptedKey, kingdom: item.kingdom, class: item.class, order: item.order, family: item.family,
+          };
+          return hit(id, { title: string(item.scientificName) || string(item.canonicalName) || key, url: `https://www.gbif.org/${type}/${key}`,
+            snippet: (occurrences ? [item.country, item.eventDate, item.basisOfRecord] : [item.rank, item.order, item.family, item.taxonomicStatus]).filter(Boolean).join(' · '),
+            locator: { kind: 'record', id: `${type}:${key}` }, metadata: {
+              record: item, datasetKey: item.datasetKey, license: item.license, eventDate: item.eventDate, [compactMetadata]: projected,
+            } });
+        }), occurrences ? 'public-occurrences' : 'taxon-catalog', { truncated: more, nextCursor: more ? String(p.offset + entries.length) : undefined });
+      };
       return createStructuredSource(config, def, { search: { taxa: search, occurrences: search }, read: async (url, signal, _options, client) => { const parsed = new URL(url), match = ['www.gbif.org', 'gbif.org'].includes(parsed.hostname) ? parsed.pathname.match(/^\/(species|occurrence)\/(\d+)\/?$/) : undefined; if (!match) throw new Error('需要 GBIF 分类群或出现记录链接'); const key = match[2]!, type = match[1]!, v = await client(`${type}/${key}`, signal); return record(id, url, `${type}:${key}`, string(v.scientificName) || key, v, { contentType: type === 'occurrence' ? 'species-occurrence' : 'taxon', license: v.license, datasetKey: v.datasetKey, contentScope: type }); } });
     }
     if (id === 'inaturalist') {
-      const search = async (request: SearchRequest, p: Record<string, any>, client: StructuredClient) => { const observations = request.operation === 'observations', type = observations ? 'observations' : 'taxa'; const v = await client(type, request.signal, { per_page: request.limit, page: p.page, ...(observations ? { taxon_id: p.taxonId, d1: request.since, d2: request.until, quality_grade: p.quality } : { q: request.query }) }), entries = rows(v.results, 'iNaturalist'), more = Number(v.total_results) > p.page * request.limit; return results(request, id, entries.flatMap(item => hit(id, { title: string(item.name) || string((item.taxon as any)?.name) || `观察 ${item.id}`, url: `https://www.inaturalist.org/${type}/${item.id}`, snippet: string(item.preferred_common_name) || string(item.description), locator: { kind: 'record', id: `${type}:${item.id}` }, metadata: { record: item, observedOn: item.observed_on, license: item.license_code } })), `public-${type}`, { truncated: more, nextCursor: more ? String(p.page + 1) : undefined }); };
+      const search = async (request: SearchRequest, p: Record<string, any>, client: StructuredClient) => {
+        const observations = request.operation === 'observations', type = observations ? 'observations' : 'taxa';
+        const v = await client(type, request.signal, { per_page: request.limit, page: p.page,
+          ...(observations ? { taxon_id: p.taxonId, d1: request.since, d2: request.until, quality_grade: p.quality } : { q: request.query }),
+        });
+        const entries = rows(v.results, 'iNaturalist'), more = Number(v.total_results) > p.page * request.limit;
+        return results(request, id, entries.flatMap(item => {
+          const taxon = observations ? item.taxon as Row | undefined : item;
+          const projected = observations ? { taxonId: taxon?.id, observedOn: item.observed_on, qualityGrade: item.quality_grade,
+            place: item.place_guess, license: item.license_code, captive: item.captive } : {
+            rank: item.rank, iconicTaxon: item.iconic_taxon_name, observationCount: item.observations_count, active: item.is_active,
+          };
+          return hit(id, {
+            title: string(taxon?.name) || `观察 ${item.id}`, url: `https://www.inaturalist.org/${type}/${item.id}`,
+            snippet: (observations ? [item.observed_on, item.quality_grade, item.description] :
+              [item.preferred_common_name, item.rank, item.iconic_taxon_name, typeof item.observations_count === 'number' ? `${item.observations_count} 条观察` : undefined]).filter(Boolean).join(' · '),
+            locator: { kind: 'record', id: `${type}:${item.id}` }, metadata: {
+              record: item, observedOn: item.observed_on, license: item.license_code, [compactMetadata]: projected,
+            },
+          });
+        }), `public-${type}`, { truncated: more, nextCursor: more ? String(p.page + 1) : undefined });
+      };
       return createStructuredSource(config, def, { search: { taxa: search, observations: search }, read: async (url, signal, _options, client) => { const parsed = new URL(url), match = ['www.inaturalist.org', 'inaturalist.org'].includes(parsed.hostname) ? parsed.pathname.match(/^\/(taxa|observations)\/(\d+)(?:-[^/]*)?\/?$/) : undefined; if (!match) throw new Error('需要 iNaturalist 分类群或公开观察链接'); const type = match[1]!, key = match[2]!, v = await client(`${type}/${key}`, signal), item = rows(v.results, 'iNaturalist')[0]; if (!item) throw new Error('iNaturalist未返回该记录'); return record(id, url, `${type}:${key}`, string(item.name) || string((item.taxon as any)?.name) || key, item, { contentType: type === 'observations' ? 'species-occurrence' : 'taxon', license: item.license_code }); } });
     }
     if (id === 'earthdata-cmr') {

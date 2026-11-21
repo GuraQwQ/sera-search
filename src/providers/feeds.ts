@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { compactMetadata } from '../types.js';
 import type { ApiConfig, Config, Source } from '../types.js';
 import { date, decoded, document, endpoint, hit, htmlText, permitted, plain, response, textResponse } from './shared.js';
 
@@ -74,7 +75,10 @@ function googleNews(config: NonNullable<Config['google-news']>): Source {
       return items.filter(item => permitted(request.domains, new URL(item.publisherUrl ?? item.url).hostname)
         && (!since || Boolean(item.publishedAt && item.publishedAt >= since)))
         .slice(0, request.limit).flatMap(item => hit('google-news', { title: item.title, url: item.url, snippet: item.description || item.publisher,
-          publishedAt: item.publishedAt, metadata: metadata(item, url.href) }));
+          publishedAt: item.publishedAt, metadata: { ...metadata(item, url.href), [compactMetadata]: {
+            publisher: item.publisher, publisherUrl: item.publisherUrl, feedUrl: url.href, contentScope: 'rss-item', fullContentVerified: false,
+            linkResolution: new URL(item.url).hostname === 'news.google.com' ? 'google-aggregation-url' : 'rss-link',
+          } } }));
     },
     async read(url, signal) {
       const requested = new URL(url), saved = records.get(requested.href);

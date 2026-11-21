@@ -21,6 +21,8 @@ node dist/cli.js research "TypeScript 发行记录" --sources bing --read-source
 
 简明清单中的 `search`、`read`、`comments`、`images`、`backend` 仅在声明能力时返回。使用 `--sources` 或 `--full` 查看详细动作、访问条件与诊断。
 
+`channels`、`capabilities` 和 `connectors` 可用 `--query` 按来源、平台、标签、类别、动作和材料筛选。例如 `sera channels --query statistical-indicator --json`。多个词均须匹配，可与 `--sources` 及 `channels --platform` 组合。
+
 `connectors` 导出结构化检索连接器定义，包含协议、检索动作、输入 Schema、字段映射、认证、费用和限速；专用读取、评论和图片动作通过 `channels` 发现。只需相关来源时用 `--sources` 筛选。定义不包含账号凭据，实际可用状态继续查看 `capabilities` 与调用结果。
 
 ```bash

@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { sourceNames, platformIdPattern, intents } from './types.js';
 import type { Channel, Config, Source, SourceName, SearchOptions, SearchReport, SearchHit, AggregatedHit, SourceRun, ReadReport, ResearchReport, Evidence, CommentReport, ImageRequest, ReadOptions, BatchReadReport, ResearchOptions, ResearchState, SearchAttempt, Document, SourceOperation } from './types.js';
 import { canonicalUrl, retrievalKey, publisher, textPage, focusText, wikiLeadOffset, documentObservations, EvidenceStore } from './evidence.js';
-import { errorMessage } from './config.js';
+import { errorMessage, validationMessage } from './config.js';
 import { createHttpSources } from './providers/http.js';
 import { createPlatformSources, siteForUrl } from './providers/platform.js';
 import { withoutAuthentication, withRequestLimits } from './providers/shared.js';
@@ -102,6 +102,17 @@ export function mergeHits(hits: SearchHit[]): AggregatedHit[] {
   return [...merged.values()].sort((a, b) => b.rankScore - a.rankScore || a.url.localeCompare(b.url));
 }
 
+function discoveryTermsMatch(query: string | undefined, ...fields: unknown[]) {
+  if (!query?.trim()) return true;
+  const normalize = (value: string) => value.normalize('NFKC').toLowerCase();
+  const searchable = normalize(fields.flat(Infinity).filter((field): field is string => typeof field === 'string').join(' '));
+  return normalize(query).trim().split(/\s+/).every(term => searchable.includes(term));
+}
+
+function discoveryActions(operations?: SourceOperation[]) {
+  return operations?.map(({ name, description, contentTypes }) => [name, description, contentTypes]);
+}
+
 export class Engine {
   readonly store: EvidenceStore;
   readonly sources: Source[];
@@ -146,11 +157,18 @@ export class Engine {
 
   private availableAction(source: Source) { return source.capability.operations?.map(operation => accessState(this.config, source, operation.name)).find(state => state.automatic) ?? accessState(this.config, source); }
 
-  capabilities(names?: SourceName[]) { return this.sources.filter(source => !names || names.includes(source.capability.name)).map(source => { const state = this.availableAction(source); return { ...source.capability, priority: state.priority, automatic: state.automatic, status: source.capability.requiresLogin && !source.capability.loggedIn ? notLoggedIn : state.reason ?? (source.capability.configured ? '可调用' : '不可用'), availability: '调用时检查' }; }); }
+  capabilities(names?: SourceName[], query?: string) {
+    return this.sources.filter(({ capability, connector }) => (!names || names.includes(capability.name)) &&
+      discoveryTermsMatch(query, capability.name, capability.category, capability.platforms, capability.requirement, connector?.label, capability.contentTypes, discoveryActions(capability.operations)))
+      .map(source => { const state = this.availableAction(source); return { ...source.capability, priority: state.priority, automatic: state.automatic, status: source.capability.requiresLogin && !source.capability.loggedIn ? notLoggedIn : state.reason ?? (source.capability.configured ? '可调用' : '不可用'), availability: '调用时检查' }; });
+  }
 
-  connectors(names?: SourceName[]) { return this.sources.filter(source => !names || names.includes(source.capability.name)).flatMap(source => source.connector ? [source.connector] : []); }
+  connectors(names?: SourceName[], query?: string) {
+    return this.sources.flatMap(({ capability, connector }) => connector && (!names || names.includes(capability.name)) &&
+      discoveryTermsMatch(query, connector.id, connector.label, connector.type, connector.platforms, capability.category, capability.contentTypes, discoveryActions(capability.operations)) ? [connector] : []);
+  }
 
-  async channels(options: { sources?: SourceName[]; platform?: string; live?: boolean; signal?: AbortSignal } = {}) {
+  async channels(options: { sources?: SourceName[]; platform?: string; query?: string; live?: boolean; signal?: AbortSignal } = {}) {
     const names = options.sources ? [...new Set(options.sources)] : this.sources.filter(({ capability, channels }) =>
       !options.platform || capability.platforms?.includes(options.platform)
       || options.platform === 'academic' && capability.category === 'academic'
@@ -174,10 +192,13 @@ export class Engine {
           const operations = dynamic ? channel.operations ?? source.capability.operations : source.capability.operations ?? channel.operations;
           return { ...channel, comments: channel.comments ?? source.capability.comments, images: channel.images ?? source.capability.images, contentTypes: dynamic ? channel.contentTypes ?? source.capability.contentTypes : source.capability.contentTypes ?? channel.contentTypes, access: source.capability.access, priority: state.priority, automatic: channel.configured && state.automatic, operations, ...(state.reason ? { status: state.reason } : {}) };
         });
-        return { channels: selected, run: { source: name, status: selected.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: selected.length, network: networkReport(requests, this.config) } as SourceRun };
+        const matches = selected.filter(channel => discoveryTermsMatch(options.query, channel.source, channel.platform, channel.description,
+          source.capability.category, source.connector?.label, channel.contentTypes, discoveryActions(channel.operations)));
+        return { channels: matches, run: { source: name, status: matches.length ? 'ok' : 'empty', elapsedMs: Date.now() - started, returned: matches.length, network: networkReport(requests, this.config) } as SourceRun };
       } catch (error) { return { channels: [], run: { ...await this.failure(name, error, started, signal), network: networkReport(requests, this.config) } }; }
     }));
-    const runs = results.map(item => item.run), good = runs.some(run => ['ok', 'empty'].includes(run.status));
+    const runs = results.filter(item => !options.query?.trim() || item.channels.length || !['ok', 'empty'].includes(item.run.status)).map(item => item.run);
+    const good = runs.some(run => ['ok', 'empty'].includes(run.status));
     return { status: !runs.length ? 'empty' : !good ? 'error' : runs.some(run => !['ok', 'empty'].includes(run.status)) ? 'partial' : 'ok', channels: results.flatMap(item => item.channels), runs };
   }
 
@@ -362,6 +383,19 @@ export class Engine {
           newUrls: new Set(assessed.hits.map(hit => canonicalUrl(hit.url)).filter(url => !knownPages.has(url))).size, newItems: new Set(assessed.hits.filter(fresh).map(retrievalKey)).size, attempts, coverage, network: networkReport(requests, this.config),
            ...(partial ? { code: partial.code, message: partial.reason } : invalidUrls ? { code: 'PARTIAL_RESULT', message: `忽略 ${invalidUrls} 条无效 URL，保留有效候选` } : {}) } as SourceRun };
       } catch (error) {
+        if (error instanceof z.ZodError) {
+          const action = operationFor(source), schema = searchOperations(source)?.find(item => item.name === action)?.inputSchema;
+          if (schema) {
+            try {
+              const parameters = z.fromJSONSchema(schema as any).safeParse(settings.params ?? {});
+              if (!parameters.success) {
+                const keys = Object.keys((schema.properties as object | undefined) ?? {});
+                const hint = keys.length ? `可用参数：${keys.slice(0, 20).join('、')}` : schema.additionalProperties === false ? '此动作无需参数' : '可在 channels 查看参数定义';
+                error = Object.assign(new Error(`动作 ${action} 的 params 无效：${validationMessage(error)}；${hint}`), { code: 'BAD_INPUT', cause: error });
+              }
+            } catch { /* 保留原校验错误，以防只读动作声明无法转为运行时校验。 */ }
+          }
+        }
         const failure = await this.failure(name, error, started, signal);
         if (!attempts.length) attempts.push({ backend: name, query, status: failure.status === 'cancelled' ? 'cancelled' : 'error', elapsedMs: failure.elapsedMs, returned: 0, reason: failure.message, code: failure.code, retryAfterSeconds: failure.retryAfterSeconds });
         return { hits: [], run: { ...failure, attempts, coverage, network: networkReport(requests, this.config) } };

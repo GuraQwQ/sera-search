@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { compactMetadata } from '../types.js';
 import { createStructuredSource } from '../connectors.js';
 import type { ConnectorDefinition, ConnectorOperation, StructuredClient } from '../connectors.js';
 import { sourceConfig } from '../source-config.js';
@@ -59,6 +60,21 @@ function eurostatSummary(data: Record<string, any>) {
   return [title, '响应无数值观测'].filter(Boolean).join(' · ');
 }
 
+const worldBankSourceId = z.number().int().positive().max(9999);
+const worldBankPageSize = 2000;
+const worldBankDirectory = new Map<string, { entries: { id: string; title: string }[]; more: boolean; expires: number }>();
+
+function indicatorRank(query: string, id: string, title: string) {
+  const name = title.normalize('NFKC').toLowerCase();
+  if (name === query || id.toLowerCase() === query) return 0;
+  const term = query === 'gross domestic product' ? 'gdp' : query;
+  if (name.startsWith(term + ' (') || name.startsWith(term + ',')) return 1;
+  if (name.startsWith(term + ' ')) return 2;
+  if (name.includes(term)) return 3;
+  if (term.split(/\s+/).every(word => name.includes(word) || id.toLowerCase().includes(word))) return 4;
+  return Infinity;
+}
+
 const tradeParams = z.strictObject({ period: z.string().regex(/^\d{4}(?:\d{2})?$/), reporter: z.number().int().nonnegative(), partner: z.number().int().nonnegative().default(0), commodity: z.string().regex(/^(?:TOTAL|\d{2,6})$/).default('TOTAL'), flow: z.enum(['M', 'X', 'RM', 'RX']).default('X'), frequency: z.enum(['A', 'M']).default('A') });
 export const publicDataDefinitions: ConnectorDefinition[] = [
   definition('fred', 'https://api.stlouisfed.org/', 'FRED 指标、观测值与历史修订', 'https://fred.stlouisfed.org/docs/api/fred/', {
@@ -66,7 +82,8 @@ export const publicDataDefinitions: ConnectorDefinition[] = [
     observations: operation('按指标 ID 读取观测值，可选择实时修订日期', ['economic-timeseries'], z.strictObject({ series: value.optional(), offset: z.number().int().nonnegative().default(0), vintage: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() })),
   }, { auth: { type: 'api-key', query: 'api_key' }, access: { authentication: 'api-key', billing: 'free', quota: '免费Key；按当前服务限速和Retry-After响应重试', evidence: 'https://fred.stlouisfed.org/docs/api/api_key.html' }, limits: { min_interval_ms: 500 } }),
   definition('world-bank', 'https://api.worldbank.org/v2/', 'World Bank 国家与发展指标', 'https://datahelpdesk.worldbank.org/knowledgebase/articles/889392-about-the-indicators-api-documentation', {
-    indicators: operation('筛选当前指标目录页；完整发现可按 page 续查', ['statistical-indicator'], z.strictObject({ page })),
+    indicators: operation('按代码精确查找，或检索指定数据源的指标名称和代码；默认世界发展指标（2），按返回游标续查', ['statistical-indicator'],
+      z.strictObject({ sourceId: worldBankSourceId.optional(), page, resultOffset: z.number().int().min(0).max(worldBankPageSize).default(0) })),
     observations: operation('按指标代码、国家和年份查询统计序列，保留原单位与缺失值', ['statistical-timeseries'], z.strictObject({ indicator: value.optional(), country: z.string().regex(/^[A-Za-z\d;-]+$/).default('all'), page })),
   }),
   definition('un-comtrade', 'https://comtradeapi.un.org/', 'UN Comtrade 免费贸易统计', 'https://uncomtrade.org/docs/subscriptions/', {
@@ -104,10 +121,64 @@ export function createPublicDataSources(config: Config): Source[] {
       }, read: async (url, signal, _options, client) => { const parsed = new URL(url), key = pathId(url, ['fred.stlouisfed.org'], /^\/series\/([\w.-]+)\/?$/), meta = await seriesRecord(key, client, signal), vintage = parsed.searchParams.get('vintage') ?? undefined; const offset = z.coerce.number().int().nonnegative().max(100000).parse(parsed.searchParams.get('offset') ?? 0), limit = z.coerce.number().int().min(1).max(100).parse(parsed.searchParams.get('limit') ?? 100); const observations = await client('fred/series/observations', signal, { series_id: key, file_type: 'json', limit, offset, observation_start: parsed.searchParams.get('cosd') ?? undefined, observation_end: parsed.searchParams.get('coed') ?? undefined, realtime_start: vintage, realtime_end: vintage }); return record(id, url, key, string(meta.title), { series: meta, observations }, { units: meta.units, frequency: meta.frequency, seasonalAdjustment: meta.seasonal_adjustment, truncated: Number(observations.count) > offset + observations.observations.length, vintage }); } });
     }
     if (id === 'world-bank') {
+      const exactIndicator = async (code: string, sourceId: number | undefined, signal: AbortSignal, client: StructuredClient) => {
+        const response = await client(`indicator/${encodeURIComponent(code)}`, signal, { format: 'json', source: sourceId });
+        if (response?.[0]?.message?.some((message: { id?: string }) => message.id === '120')) return [];
+        if (!Array.isArray(response) || response.length < 2) throw new Error('World Bank 未返回指标详情');
+        return rows(response[1] ?? [], 'World Bank 指标').filter(item => string(item.id).toUpperCase() === code.toUpperCase());
+      };
       return createStructuredSource(config, def, { search: {
-        indicators: async (request, p, client) => { const raw = await client('indicator', request.signal, { format: 'json', page: p.page, per_page: request.limit }); if (!Array.isArray(raw)) throw new Error('World Bank 未返回分页数组'); const entries = rows(raw[1] ?? [], 'World Bank'), selected = entries.filter(item => `${item.id} ${item.name} ${item.sourceNote}`.toLowerCase().includes(request.query.toLowerCase())); return results(request, id, selected.flatMap(item => hit(id, { title: string(item.name), url: `https://data.worldbank.org/indicator/${item.id}`, snippet: string(item.sourceNote), locator: { kind: 'record', id: string(item.id) }, metadata: { record: item, units: item.unit, pagination: { page: p.page, perPage: Number(raw[0]?.per_page ?? request.limit), total: raw[0]?.total } } })), 'indicator-directory-page', { truncated: p.page < Number(raw[0]?.pages), nextCursor: p.page < Number(raw[0]?.pages) ? String(p.page + 1) : undefined, limitations: ['关键词只筛选当前指标目录页，不表示全文搜索'] }); },
+        indicators: async (request, p, client) => {
+          const query = request.query.normalize('NFKC').trim();
+          const indicatorHit = (code: string, title: string, sourceId: number | undefined, details?: Record<string, unknown>) => hit(id, {
+            title, url: queryUrl('https://data.worldbank.org/', `indicator/${encodeURIComponent(code)}`, { source: sourceId }),
+            snippet: string(details?.sourceNote) || code, locator: { kind: 'record', id: code },
+            metadata: { record: details, [compactMetadata]: { indicator: code, sourceId, unit: details?.unit } },
+          });
+          if (/^[a-z\d_-]+(?:\.[a-z\d_-]+)+$/i.test(query)) {
+            const entries = await exactIndicator(query, p.sourceId, request.signal, client);
+            return results(request, id, entries.flatMap(item => {
+              const sourceId = Number((item.source as { id?: string } | undefined)?.id) || p.sourceId;
+              return indicatorHit(string(item.id), string(item.name), sourceId, item);
+            }), 'indicator-code-lookup', { completeness: 'complete' });
+          }
+          const sourceId = p.sourceId ?? 2;
+          const cacheKey = config.connectors?.some(item => item.id === id) || settings.apiKey ? undefined
+            : JSON.stringify([config.home, settings.baseUrl ?? def.base_url, sourceId, p.page]);
+          let directory = cacheKey === undefined ? undefined : worldBankDirectory.get(cacheKey);
+          if (!directory || directory.expires <= Date.now()) {
+            const response = await client(`sources/${sourceId}/series/data`, request.signal, { format: 'json', page: p.page, per_page: worldBankPageSize });
+            const sources = rows(response.source, 'World Bank 数据源');
+            const series = sources.flatMap(source => rows(source.concept, 'World Bank 维度')).find(concept => string(concept.id).toLowerCase() === 'series');
+            if (!series) throw new Error('World Bank 未返回指标目录');
+            const entries = rows(series.variable ?? [], 'World Bank 指标目录').flatMap(item => {
+              const code = string(item.id), title = string(item.value);
+              return code && title ? [{ id: code, title }] : [];
+            });
+            directory = { entries, more: p.page < Number(response.pages), expires: Date.now() + 300_000 };
+            if (cacheKey !== undefined) {
+              worldBankDirectory.delete(cacheKey);
+              if (worldBankDirectory.size >= 8) worldBankDirectory.delete(worldBankDirectory.keys().next().value!);
+              worldBankDirectory.set(cacheKey, directory);
+            }
+          }
+          const matches = directory.entries.map(item => ({ ...item, rank: indicatorRank(query.toLowerCase(), item.id, item.title) }))
+            .filter(item => Number.isFinite(item.rank)).sort((a, b) => a.rank - b.rank || a.title.length - b.title.length || a.id.localeCompare(b.id));
+          const end = p.resultOffset + request.limit;
+          const next = end < matches.length ? { sourceId, page: p.page, resultOffset: end } : directory.more ? { sourceId, page: p.page + 1, resultOffset: 0 } : undefined;
+          return results(request, id, matches.slice(p.resultOffset, end).flatMap(item => indicatorHit(item.id, item.title, sourceId)), 'indicator-directory-page', {
+            completeness: !next && p.page === 1 && !p.resultOffset ? 'complete' : 'partial', truncated: Boolean(next),
+            nextCursor: next ? JSON.stringify(next) : undefined,
+            limitations: [`仅在数据源 ${sourceId} 的指标名称和代码中匹配；已扫描目录第 ${p.page} 页（${directory.entries.length} 条）`],
+          });
+        },
         observations: async (request, p, client) => { const indicator = p.indicator ?? request.query, span = request.since || request.until ? `${request.since?.slice(0, 4) ?? '1960'}:${request.until?.slice(0, 4) ?? new Date().getUTCFullYear()}` : undefined; const query = { format: 'json', date: span, page: p.page, per_page: request.limit }, path = `country/${encodeURIComponent(p.country)}/indicator/${encodeURIComponent(indicator)}`, v = await client(path, request.signal, query); if (!Array.isArray(v)) throw new Error('World Bank 未返回统计分页数组'); const url = queryUrl('https://api.worldbank.org/v2/', path, query), more = p.page < Number(v[0]?.pages); return results(request, id, hit(id, { title: `${indicator} · ${p.country}`, url, snippet: `${v[1]?.length ?? 0} 条观测；单位与缺失值见记录`, locator: { kind: 'record', id: url }, metadata: { record: v, indicator, country: p.country, timePrecision: 'year' } }), 'country-indicator-page', { truncated: more, nextCursor: more ? String(p.page + 1) : undefined, limitations: ['日期条件按年映射，年内精度不可由该序列保证'] }); },
-      }, read: async (url, signal, _options, client) => { const parsed = new URL(url); if (parsed.hostname === 'data.worldbank.org') { const key = pathId(url, ['data.worldbank.org'], /^\/indicator\/([\w.-]+)\/?$/); const v = await client(`indicator/${encodeURIComponent(key)}`, signal, { format: 'json' }); if (!Array.isArray(v) || !v[1]?.length) throw new Error('指标不存在'); return record(id, url, key, string(v[1][0].name), v[1][0], { units: v[1][0].unit }); }
+      }, read: async (url, signal, _options, client) => { const parsed = new URL(url); if (parsed.hostname === 'data.worldbank.org') {
+        const key = pathId(url, ['data.worldbank.org'], /^\/indicator\/([\w.-]+)\/?$/), source = parsed.searchParams.get('source');
+        const item = (await exactIndicator(key, source ? worldBankSourceId.parse(Number(source)) : undefined, signal, client))[0];
+        if (!item) throw new Error('指标不存在');
+        return record(id, url, key, string(item.name), item, { units: item.unit });
+      }
         if (parsed.hostname !== 'api.worldbank.org' || !/^\/v2\/country\/[^/]+\/indicator\/[^/]+$/.test(parsed.pathname)) throw new Error('需要 World Bank 指标或序列链接'); const v = await client(parsed.pathname.slice(4), signal, Object.fromEntries(parsed.searchParams)); return record(id, url, url, 'World Bank 统计序列', v, { contentScope: 'indicator-observation-page' }); } });
     }
     if (id === 'un-comtrade') {
