@@ -1,5 +1,5 @@
-import { readFile, mkdir, realpath, symlink } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { readFile, mkdir, lstat, readlink, realpath, symlink, unlink } from 'node:fs/promises';
+import { basename, dirname, join, resolve, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -129,13 +129,42 @@ export async function install(options: ConfigLocation & { skillDir?: string; com
     const target = join(resolve(options.skillDir), 'sera-search');
     const source = await realpath(fileURLToPath(new URL('../skills/sera-search', import.meta.url)));
     await mkdir(dirname(target), { recursive: true });
-    try {
-      const existing = await realpath(target);
-      if (existing !== source) throw new Error(`技能位置已被其他内容占用：${target}`);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      await symlink(source, target, process.platform === 'win32' ? 'junction' : 'dir');
-    }
+    await serializeFile(target, async () => {
+      const type = process.platform === 'win32' ? 'junction' : 'dir';
+      let entry: Awaited<ReturnType<typeof lstat>>;
+      try { entry = await lstat(target); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        options.signal?.throwIfAborted();
+        await symlink(source, target, type); return;
+      }
+      let existing: string | undefined;
+      try { existing = await realpath(target); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      if (existing && !relative(existing, source)) return;
+      if (!entry.isSymbolicLink()) throw new Error(`技能位置已被其他内容占用：${target}`);
+      const previous = await readlink(target), previousPath = resolve(dirname(target), previous);
+      const packageLayout = basename(previousPath) === 'sera-search' && basename(dirname(previousPath)) === 'skills';
+      let owned = !existing && packageLayout;
+      if (existing && packageLayout) {
+        try {
+          const manifest = JSON.parse(await readFile(join(dirname(dirname(existing)), 'package.json'), 'utf8'));
+          const skill = await readFile(join(existing, 'SKILL.md'), 'utf8');
+          const frontmatter = skill.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] ?? '';
+          owned = manifest.name === 'sera-search' && /^name:\s*(['"]?)sera-search\1\s*$/m.test(frontmatter);
+        } catch { /* 无法核实归属时保留原链接。 */ }
+      }
+      if (!owned) throw new Error(`技能链接归属无法确认，原链接已保留：${target} → ${previous}`);
+      options.signal?.throwIfAborted();
+      // 仅替换已识别的链接，原包内容保留；中断后可重新安装。
+      await unlink(target);
+      try { options.signal?.throwIfAborted(); await symlink(source, target, type); }
+      catch (error) {
+        try { await symlink(previous, target, type); }
+        catch (restoreError) { throw new AggregateError([error, restoreError], `技能链接更新未完成，请重试安装：${target}`); }
+        throw error;
+      }
+    });
     skill = target;
   }
   const components = options.components?.length ? await (await import('./components.js')).installComponents({ ...location, components: options.components, python: options.python, browser: options.browser, node: options.node, signal: options.signal }) : undefined;

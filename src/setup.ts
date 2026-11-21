@@ -236,7 +236,9 @@ export async function configureSetup(initial: Config, options: SetupOptions = {}
     ...(sources.some(item => item.status === 'needs-settings') ? ['补充 sources 中列出的账号 ID 或服务地址后重试；已有配置与凭据会保留。'] : []),
     ...(sources.some(item => item.status === 'needs-free-tier') ? ['核对免费档后使用 --confirm-free-tier 来源列表，或在交互向导中逐项选择。'] : []),
     ...(platforms.some(item => item.status === 'pending') ? ['平台待登录项可在就绪的浏览器桥接中运行 login <后端> --platform <平台>，完成扫码后重跑向导。'] : []),
-    ...(commands.some(item => item.status !== 'ready') ? ['缺失组件可用 install --components 选择安装；OpenCLI／Agent Reach 请先准备对应原生入口。'] : []),
+    ...(commands.some(item => item.status === 'missing') ? ['缺失组件可用 install --components 选择安装；OpenCLI／Agent Reach 请先准备对应原生入口。'] : []),
+    ...(commands.some(item => item.status === 'timeout') ? ['已有组件探测超时：调整配置 timeoutMs 后重跑 install --setup，现有入口保留。'] : []),
+    ...(commands.some(item => item.status === 'error') ? ['已有组件未通过探测：按 commands 中的诊断检查入口、运行时与依赖后重试。'] : []),
   ];
   return { status: signal.aborted ? 'cancelled' : issues.length || nextSteps.length ? 'partial' : 'ready', commands, credentials, platforms, sources, issues, nextSteps };
 }

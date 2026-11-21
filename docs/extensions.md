@@ -47,9 +47,13 @@ node dist/cli.js backend aliens-eye scan_username --input ./scan.json --timeout-
 | `match_profile_url` | 将已知主页链接反解为可能的站点和用户名 |
 | `extract_leads` | 从已读取文本提取外链与 @用户名，供下一轮选择 |
 | `correlate_profiles` | Aliens_eye：关联 `report` 中所选站点的资料，返回关系边与依据；`avatar_match` 控制头像抓取 |
-| `compare_avatars` | Aliens_eye：对指定 `avatar_urls` 计算图像 dHash 距离；取得失败的图片单独标记 |
+| `compare_avatars` | Aliens_eye：对指定 `avatar_urls` 计算图像 dHash 距离；逐图返回状态、HTTP 错误、网络异常类型或图像解码失败原因 |
 
 统一账号搜索也可使用 `search --sources aliens-eye --platform github`。目录中的平台标识统一为小写、连字符形式，原始上游站点名称保留在工具结果；先用 `channels --sources aliens-eye` 确认。也可按 `domains` 筛出目标站点。返回数量与实际扫描范围分别控制。
+
+Steam 商店作品使用 `steam` 来源；社区主页按原始 `steamcommunity.com/id/...` 或 `/profiles/...` 链接交给 `read`。用户名扫描按照站点 URL 模板检测给定 handle；展示名用于网页发现，主页 URL 与平台稳定 ID 用于核对具体记录。
+
+头像读取保留上游的连接、重定向与大小限制。单图失败的 `error` 区分 HTTP 状态、网络异常和 `IMAGE_DECODE_FAILED`；关联报告启用 `avatar_match` 时在 `avatarErrors` 中保留同样的逐图诊断。异常文本可能带代理凭据，因此输出异常类型及底层异常类型。
 
 Agent 先选择与问题相关的平台，读取候选主页，再按缺口比较简介、外链或头像，需要时选取新用户名继续查询。上游状态、检测分数、原报告和关联依据保留；账号存在、资料相似及属于同一主体分别核验。Sherlock 的规则目录与误报排除表版本信息随结果返回，刷新失败时保留可用缓存并报告警告。
 

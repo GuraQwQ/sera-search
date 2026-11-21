@@ -6,7 +6,7 @@
 node .\dist\cli.js install --home 'F:\tools\sera-data' --skill-dir 'F:\.agents\skills' --json
 ```
 
-Skill 指导 Agent 选择来源、使用 `research` 和读取证据。它属于项目提供的技能，源文件随包发布。`install --skill-dir` 链接到包内技能目录，需保留包的位置；目标已指向同一目录时重复执行保持不变，其他已有内容保留。
+Skill 指导 Agent 选择来源、使用 `research` 和读取证据。它属于项目提供的技能，源文件随包发布。`install --skill-dir` 链接到包内技能目录，需保留包的位置；目标已指向同一目录时重复执行保持不变。升级到新目录后重跑该命令，会更新可识别的旧 SERA 链接，包括指向包内 `skills/sera-search` 的失效链接；原包内容保留。实体目录和归属不明的链接保留并提示位置，更新中断后可重跑安装。
 
 ## 注册可选 MCP 服务
 

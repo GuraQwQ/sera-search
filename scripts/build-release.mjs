@@ -59,6 +59,7 @@ try {
   await npm(['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], join(full, 'extensions/gods-eye-view'));
   await writeFile(join(full, 'bundle.json'), JSON.stringify({ components }, null, 2) + '\n');
   for (const [directory, expected] of [[lite, []], [full, components]]) {
+    for (const entry of ['sera.ps1', 'sera.cmd', 'portable.mjs']) await access(join(directory, entry));
     const version = await run(process.execPath, [join(directory, 'dist/cli.js'), '--version'], directory);
     if (version !== manifest.version) throw new Error('发布包版本与 package.json 不符');
     const setup = JSON.parse(await readFile(join(directory, 'bundle.json'), 'utf8'));

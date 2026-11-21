@@ -111,6 +111,45 @@ const help = `SERA — Search, Extract, Research for Agents
   sera read https://github.com/morluto/rea
 `;
 
+const commandHelp: Record<string, [string, string]> = {
+  install: ['install [--skill-dir 目录] [--components 组件列表] [--mcp-client 客户端列表]',
+    '创建配置、链接 Skill 或注册 MCP。\n--yes 非交互补齐已有入口；--sources 限定配置范围。\n--components 显式安装组件；--python、--node、--browser 指定已有程序。'],
+  config: ['config [--sources 来源列表] [--input JSON文件]',
+    '省略 --input 查看配置；传文件时先校验再更新。JSON 可包含 updates、backends、connectors、connectorFiles。\n--sources 筛选展示的来源。'],
+  login: ['login <来源> [--from-env 变量名 | --stdin] [--platform 平台]',
+    '--stdin 接受 API Key 或凭据 JSON；--from-env 保留既有辅助字段。\n--session-only 配合 --platform 验证已有会话。'],
+  logout: ['logout <来源> [--platform 平台]', '清除指定来源或平台的登录记录。'],
+  auth: ['auth [来源] [--platform 平台]', '查看已记录的凭据及会话状态。'],
+  capabilities: ['capabilities [--sources 来源列表]', '查看相关来源的操作、材料类型和配置状态。'],
+  connectors: ['connectors [--sources 来源列表]', '导出连接器动作、输入 Schema、字段映射和访问策略。'],
+  backend: ['backend <来源> [工具] [--input JSON文件] [--timeout-ms 毫秒]',
+    '省略工具名发现工具与输入 Schema。实际调用的 JSON 文件就是该工具的 arguments 对象。\n来源：ghgrab、scrapling、aliens-eye、sherlock、gods-eye-view。\nmetadata-parser 使用 read URL --sources metadata-parser。'],
+  channels: ['channels [--sources 来源列表] [--platform 平台]', '发现平台与动作；查看 entrypoint、operation 及参数 Schema 后选择对应命令。'],
+  search: ['search <查询> [--sources 来源列表] [--operation 动作] [--params JSON]',
+    '--input JSON文件 可提供完整请求；--limit 默认5，--strategy fallback|cross-check。\n--domain、--since、--until、--at 按动作能力筛选；--content-type 选择材料。'],
+  comments: ['comments <URL> [--sources 来源列表] [--limit 数量] [--cursor 游标]',
+    '--limit 默认20，上限100；实际单页数量由来源决定。\n--parent 指定回复对象；--order 选择排序。按返回的 page.nextCursor 续页。'],
+  'image-search': ['image-search <查询> [--sources 来源列表] [--operation 动作] [--limit 数量]', '关键词图片发现；保留图片链接及原始来源页。'],
+  'reverse-image': ['reverse-image <图片URL> [--sources 来源列表] [--operation 动作] [--limit 数量]', '反向匹配图片或动画帧；按动作 Schema 选择来源。'],
+  research: ['research <查询> [--input JSON文件] [--goal 判据] [--state JSON文件]',
+    '--goal 可重复；JSON 可含 subjects、criteria、assessments 与 sourceOptions。\n--read-limit 默认5；--read-sources 指定读取来源。\n--discovery-query 控制本轮发现；--target-count 指定合格对象数量。'],
+  'migrate-state': ['migrate-state --state JSON文件', '迁移旧研究状态；原文件先原子备份，重复执行复用备份。'],
+  record: ['record --input JSON文件',
+    '必填：url、title、content、method、observedAt（ISO 时间）。\n可选：publishedAt、contentKind、metadata。\n示例：{"url":"https://example.org/","title":"示例","content":"原始内容","method":"实际读取方式","observedAt":"2026-01-01T00:00:00Z"}'],
+  read: ['read <URL或ID> [--sources 来源列表] [--operation 动作] [--params JSON]',
+    '--query、--keyword 定位片段；--length 默认2000。\n--refresh 重新获取；--max-age 限定缓存毫秒数；--raw 保留 HTML。\n--timeout-ms 设置本次预算；批量地址使用 read-many。'],
+  'read-many': ['read-many <URL或ID...> [--sources 来源列表] [--keyword 关键词]', '最多20个地址，三路并行；逐项返回结果，支持 read 的读取选项。'],
+  evidence: ['evidence <证据ID> [--offset 数量] [--length 数量] [--query 查询] [--keyword 关键词]',
+    '--offset 从0开始，按 Unicode 码点计数；--length 默认4000。\n分页使用返回的 nextOffset；--query、--keyword 返回匹配片段及原文坐标。'],
+  clean: ['clean', '清理项目管理的证据及组件缓存；保留依赖、凭据、会话和配置。'],
+  mcp: ['mcp', '启动 stdio MCP 服务，使用同一 --home 和 --config。注册已有客户端使用 install --mcp-client。'],
+};
+
+function usage(command?: string): string {
+  const entry = command && commandHelp[command];
+  return entry ? `SERA ${command}\n\n用法：sera ${entry[0]}\n\n${entry[1]}\n\n通用选项：--home 目录、--config 文件、--json、--help\n完整说明：docs/cli.md；sera --help 查看全部命令。\n` : help;
+}
+
 function integer(value: string | undefined, fallback: number) {
   if (value === undefined) return fallback;
   if (!/^\d+$/.test(value)) throw new Error('数量参数需要非负整数');
@@ -188,9 +227,10 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     'mcp-client': { type: 'string' }, 'mcp-command': { type: 'string' }, 'mcp-config': { type: 'string' },
     'session-only': { type: 'boolean' },
   } });
-  if (values.help || (!positionals.length && !values.version)) { process.stdout.write(help); return; }
+  if (values.help || (!positionals.length && !values.version)) { process.stdout.write(usage(positionals[0])); return; }
   if (values.version) { process.stdout.write(JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version + '\n'); return; }
   const command = positionals[0], text = positionals.slice(1).join(' ');
+  if (command === 'backend' && values.params !== undefined) throw new Error('backend 使用 --input JSON文件 传递工具参数；先运行 backend 来源 查看工具 Schema');
   if (command === 'read' && positionals.length !== 2) throw new Error('read 需要一个 URL；批量读取请使用 read-many');
   const location = { home: values.home, file: values.config, catalog: values.catalog, group: values.group === undefined ? undefined : z.enum(catalogGroups).parse(values.group) };
   if (command === 'install') {

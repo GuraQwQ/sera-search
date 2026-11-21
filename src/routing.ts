@@ -13,22 +13,36 @@ export function specificSource(value: string, config: Config): SourceName | unde
   if (declared) return declared.id;
   if (host === 'weixin.sogou.com') return url.searchParams.get('type') === '1' ? 'wechat-official-account' : 'wechat-article-history';
   if (host === 'ec.europa.eu' && url.pathname.startsWith('/eurostat/api/dissemination/statistics/1.0/data/')) return 'eurostat';
-  if (host === 'api.github.com' && url.pathname.startsWith('/repos/')) return 'github';
+  if (host === 'api.github.com') return url.hostname === host && /^\/repos\/[^/]+\/[^/]+\/releases\/\d+\/?$/.test(url.pathname) ? 'github' : undefined;
   if (host === 'www.ebi.ac.uk' || host === 'ebi.ac.uk') { if (url.pathname.includes('/chembl/')) return 'chembl'; if (url.pathname.includes('/europepmc/')) return 'europepmc'; }
   if (declaredReadHosts[host]) return declaredReadHosts[host];
   if (host === 'raw.githubusercontent.com' && /^\/Free-TV\/IPTV\//i.test(url.pathname) || config.iptv?.baseUrl && value.split('?')[0] === config.iptv.baseUrl.split('?')[0]) return 'iptv';
   if (host === 'news.google.com') return 'google-news';
   if (['gitlab.com', 'codeberg.org', 'gitea.com', 'git.disroot.org'].includes(host)) return 'ghgrab';
-  if (host === 'github.com' && url.pathname.startsWith('/advisories/')) return 'github-advisory';
-  if (host === 'github.com' || host === 'raw.githubusercontent.com') return 'github';
-  if (/(^|\.)bilibili\.com$/.test(host) || host === 'b23.tv') return 'bilibili';
+  if (host === 'github.com' || host === 'raw.githubusercontent.com') {
+    if (url.hostname !== host) return undefined;
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (host === 'github.com' && parts[0] === 'advisories') return /^\/advisories\/(GHSA-[\w-]+)\/?$/.test(url.pathname) ? 'github-advisory' : undefined;
+    if (parts.length < 2) return undefined;
+    if (host === 'raw.githubusercontent.com' || ['blob', 'raw'].includes(parts[2] ?? '')) {
+      let tail = parts.slice(host === 'raw.githubusercontent.com' ? 2 : 3);
+      if (tail[0] === 'refs' && tail[1] === 'heads') tail = tail.slice(2);
+      return tail.length >= 2 ? 'github' : undefined;
+    }
+    if (parts.length === 2 || ['issues', 'pull'].includes(parts[2] ?? '') && /^\d+$/.test(parts[3] ?? '')) return 'github';
+    if (parts[2] === 'releases' && (parts[3] === 'tag' && parts.length > 4 || parts.length === 4 && (parts[3] === 'latest' || /^\d+$/.test(parts[3] ?? '')))) return 'github';
+    return undefined;
+  }
+  if (/(^|\.)bilibili\.com$/.test(host)) return ['bilibili.com', 'www.bilibili.com', 'm.bilibili.com'].includes(url.hostname) && /\/video\/(BV[\da-z]+|av\d+)/i.test(url.pathname) ? 'bilibili' : undefined;
+  if (host === 'b23.tv') return url.hostname === host ? 'bilibili' : undefined;
+  if (host === 'web.archive.org') return url.hostname === host && /^\/web\/\d{14}(?:[a-z]{1,3}_)?\/https?:\/\/.+$/i.test(url.pathname) ? 'wayback' : undefined;
   if (/(^|\.)v2ex\.com$/.test(host)) return 'v2ex';
   if (['doi.org', 'dx.doi.org', 'api.crossref.org'].includes(host)) return 'crossref';
   if (['openalex.org', 'api.openalex.org'].includes(host)) return 'openalex';
   if (host === 'pubmed.ncbi.nlm.nih.gov') return 'pubmed';
   for (const [name, site] of Object.entries(specialistSites)) if (site.domains.some(domain => host === domain || host.endsWith(`.${domain}`))) return name as SourceName;
   if (Object.values({ ...defaultWikiSites, ...config.wiki?.sites }).some(site => new URL(site.pageBaseUrl).hostname === host)) return 'wiki';
-  return ({ 'web.archive.org': 'wayback', 'archive.org': 'archive', 'linux.do': 'linuxdo', 'xiaoheihe.cn': 'heybox', 'nicovideo.jp': 'nicovideo', 'skills.sh': 'skills', 'bgm.tv': 'bangumi', 'bangumi.tv': 'bangumi', 'anilist.co': 'anilist', 'myanimelist.net': 'jikan', 'mangadex.org': 'mangadex', 'vndb.org': 'vndb', 'musicbrainz.org': 'musicbrainz', 'youtube.com': 'youtube', 'youtu.be': 'youtube', 'music.163.com': 'netease', 'twitch.tv': 'twitch', 'discord.com': 'discord', 'instagram.com': 'instagram' } as Record<string, SourceName>)[host];
+  return ({ 'archive.org': 'archive', 'linux.do': 'linuxdo', 'xiaoheihe.cn': 'heybox', 'nicovideo.jp': 'nicovideo', 'skills.sh': 'skills', 'bgm.tv': 'bangumi', 'bangumi.tv': 'bangumi', 'anilist.co': 'anilist', 'myanimelist.net': 'jikan', 'mangadex.org': 'mangadex', 'vndb.org': 'vndb', 'musicbrainz.org': 'musicbrainz', 'youtube.com': 'youtube', 'youtu.be': 'youtube', 'music.163.com': 'netease', 'twitch.tv': 'twitch', 'discord.com': 'discord', 'instagram.com': 'instagram' } as Record<string, SourceName>)[host];
 }
 
 export function directTarget(query: string): string | undefined {
@@ -127,7 +141,10 @@ export function preferredSources(intent: Intent, query = '', types = materialTyp
   if (intent === 'images') return ['brave', 'serpapi', 'baidu-images', 'sogou-images', 'trace-moe', 'saucenao'];
   if (/\biptv\b|电视频道|直播频道/i.test(query)) return ['iptv', ...webSearchOrder];
   if (/新闻|快讯|\bnews\b/i.test(query)) return ['google-news', ...webSearchOrder];
-  if (/steam/i.test(query)) return ['steam', ...webSearchOrder];
+  if (/steam/i.test(query)) {
+    const people = /用户|玩家|社区|个人(?:主页|资料)|昵称|展示名|账号|账户|\b(?:profiles?|users?|steamid|community|players?)\b/i.test(query);
+    return people && !/在线人数|玩家(?:数量|人数|数)|player.?count|concurrent/i.test(query) ? [...webSearchOrder] : ['steam', ...webSearchOrder];
+  }
   if (/niconico|nicovideo|ニコニコ/i.test(query)) return ['nicovideo', ...webSearchOrder];
   return [...webSearchOrder, 'github', 'wiki'];
 }

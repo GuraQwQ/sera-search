@@ -43,4 +43,4 @@ CLI 用 `config --input` 校验更新设置、`login --from-env` 引用已有 Ke
 - [连接器](../../docs/connectors.md)：`sources`、`connectorFiles`、`connectors` 配置，动态来源与费用策略。
 - [扩展来源与后端](../../docs/integrations.md)／[账号与地理扩展](../../docs/extensions.md)：完整工具、会话、安装位置与报告范围。
 
-CLI 不在 PATH 时，解析技能目录真实路径，向上两级定位包根，运行 `node <包根>/dist/cli.js`；源码工作区可用 `<包根>/.sera` 作为数据目录。证据缓存沿用保留期与 `clean`，长期成果另行导出。`runs[].network` 的计数范围是 SERA 进程可观察 HTTP。
+CLI 不在 PATH 时，解析技能目录真实路径，向上两级定位包根。发布包含 `bundle.json`，运行 `node <包根>/portable.mjs` 以加载组件环境；源码或 npm 包运行 `node <包根>/dist/cli.js`。PowerShell 7.3+ 也可使用发布包内的 `sera.ps1`。源码工作区可用 `<包根>/.sera` 作为数据目录。证据缓存沿用保留期与 `clean`，长期成果另行导出。`runs[].network` 的计数范围是 SERA 进程可观察 HTTP。

@@ -1,6 +1,6 @@
 # Windows 发布包
 
-GitHub Releases 提供 Windows x64 ZIP，解压后在目录中运行 `sera.cmd`。启动时检测本机程序，缺失时显示所需版本与官方下载地址。配置、证据和运行缓存默认写入同目录的 `data/`，也可通过 `--home`／`SERA_HOME` 选择目录。
+GitHub Releases 提供 Windows x64 ZIP，解压后在 PowerShell 7.3+ 中运行 `.\sera.ps1`，在命令提示符中运行 `sera.cmd`。PowerShell 入口将 URL 与内联 JSON 按参数数组直接交给 Node.js，保留 `&` 和 JSON 双引号；也可直接运行 `node portable.mjs`。配置、证据和运行缓存默认写入同目录的 `data/`，也可通过 `--home`／`SERA_HOME` 选择目录。
 
 2.0 使用统一结构化连接器声明来源、动作、认证、费用与请求预算，CLI 和 MCP 共用多轮证据核验流程。升级时将新包解压到新目录，以 `--home` 指向原数据目录继续使用配置、凭据和证据；旧研究状态由 CLI 自动备份迁移，MCP 可使用 `sera_migrate_state`。通过代理客户端注册 MCP 的用户应在新目录重新运行 `install --mcp-client`，更新包入口路径。
 
@@ -14,13 +14,17 @@ GitHub Releases 提供 Windows x64 ZIP，解压后在目录中运行 `sera.cmd`�
 下载入口：[Node.js](https://nodejs.org/en/download)、[Python](https://www.python.org/downloads/windows/)、[Edge](https://www.microsoft.com/edge/download)。
 
 ```powershell
-.\sera.cmd --version
-.\sera.cmd --check-env
-.\sera.cmd capabilities --sources bing,web --json
-.\sera.cmd research "TypeScript 官方发布说明" --sources bing --read-sources web --json
+.\sera.ps1 --version
+.\sera.ps1 --check-env
+.\sera.ps1 capabilities --sources bing,web --json
+.\sera.ps1 research "TypeScript 官方发布说明" --sources bing --read-sources web --json
+.\sera.ps1 search "TypeScript" --sources github --operation releases --params '{"repository":"microsoft/TypeScript"}' --json
+.\sera.ps1 read "https://example.org/data?kind=release&format=json" --sources web --json
 ```
 
-完整版首次运行会准备组件入口；缺少程序时保留其他可用组件，补齐环境后再次启动即可检测。移动整个解压目录后再次运行 `sera.cmd`，启动器会更新由发布包生成的路径，保留用户自定义的组件设置与启用状态。MCP 客户端将 `command` 指向已有 `node.exe`，`args` 使用 `portable.mjs` 的绝对路径和 `mcp`，以获得同样的检测、依赖路径和配置准备。
+完整版首次运行会准备组件入口，并在数据目录的 `.sera-portable.json` 中记录探测结果。后续启动复用已验证的程序位置；包目录、PATH、环境覆盖值或程序文件发生变化时重新检测。缺项提示仅针对本次实际调用的组件，查看配置和能力等元数据命令复用已有状态；调用缺少环境的组件时会重新探测，补齐程序后可直接重试。`--check-env` 强制检查并列出全部缺项、所需版本与官方下载地址，轻量版只检查核心运行环境。
+
+移动整个解压目录后再次运行启动器，它会更新由发布包生成的路径，保留用户自定义的组件设置与启用状态；更新中断后可原命令重试。MCP 客户端将 `command` 指向已有 `node.exe`，`args` 使用 `portable.mjs` 的绝对路径和 `mcp`，以获得同样的检测、依赖路径和配置准备。
 
 完整版携带扩展依赖，数据查询仍按上游网络、覆盖、凭据及配额工作。API Key 经 `login` 或对应扩展的运行环境提供。来源和数据许可见 [THIRD_PARTY.md](../THIRD_PARTY.md) 与[地理扩展许可](../extensions/gods-eye-view/THIRD_PARTY.md)；随包依赖的版本和归属见 `DEPENDENCIES.json` 及包内许可。
 

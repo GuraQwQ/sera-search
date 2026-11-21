@@ -2,6 +2,8 @@
 
 账号与地理扩展使用同一 `install --components` 和 `backend` 命令。组件包括 `aliens-eye`、`sherlock`、`gods-eye-view`；先用 `backend 来源` 发现 Schema，再以 `--input JSON文件` 调用工具。`--timeout-ms` 设置外层预算，扫描范围、关联信号及地理区域由工具参数指定。完整示例见[账号与地理扩展](extensions.md)。
 
+使用 `sera 命令 --help` 查看该命令的参数、必填字段和输入示例，如 `sera record --help`。`backend` 的工具参数使用 `--input JSON文件`；`search`、`read`、`research` 的动作参数使用 `--params JSON`。
+
 安装为可执行包后，下面的 `node dist/cli.js` 可以替换为 `sera`。使用 `--help` 查看实际参数。
 
 `--sources` 选择提供者，`--platform` 选择目标平台，`--operation` 选择动作；`--params JSON` 的字段由 `channels` 的动作 Schema 给出，`--content-type` 选择材料。`search --input 文件` 可传每源独立的 `sourceOptions`；`--since/--until` 指定范围，`--strategy cross-check --max-sources 数量` 控制交叉核验。来源、分页和片段示例见[垂直来源](specialist-sources.md)。

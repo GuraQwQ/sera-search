@@ -20,6 +20,7 @@
     "dist",
     "portable.mjs",
     "sera.cmd",
+    "sera.ps1",
     "skills",
     "catalogs",
     "bridges",

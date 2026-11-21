@@ -79,7 +79,10 @@ async function bilibiliData(config: ApiConfig, path: string, params: Record<stri
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   const data = await json(url, { headers: { ...browserHeaders, Referer: 'https://www.bilibili.com/' }, signal }, 'B站评论');
   if (data.code === -101) throw new NotLoggedInError();
-  if (data.code !== 0) throw Object.assign(new Error(`B站接口返回错误码 ${id(data.code)}`), { code: `BILIBILI_${id(data.code)}` });
+  if (data.code !== 0) {
+    const message = string(data.message);
+    throw Object.assign(new Error(`B站接口返回错误码 ${id(data.code)}${message ? `：${message}` : ''}`), { code: `BILIBILI_${id(data.code)}` });
+  }
   return object(data.data, 'B站评论');
 }
 
@@ -91,7 +94,7 @@ export async function bilibiliComments(config: ApiConfig, request: CommentReques
   if (!video) throw new Error('B站评论链接缺少 BV 或 AV 视频号');
   const oid = /^av/i.test(video) ? video.slice(2) : id((await bilibiliData(config, 'x/web-interface/view', { bvid: video }, request.signal)).aid);
   if (!/^\d+$/.test(oid)) throw new Error('B站视频元数据未返回 AV 号');
-  const pageNo = cursorNumber(request.cursor, 1), pageSize = Math.min(request.limit, 49);
+  const pageNo = cursorNumber(request.cursor, 1), pageSize = Math.min(request.limit, 20);
   if (pageNo < 1) throw new Error('B站页码从 1 开始');
   const order = request.order ?? 'hot';
   if (!['time', 'hot', 'likes'].includes(order)) throw new Error('B站评论排序支持 time、hot 或 likes');

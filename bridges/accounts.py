@@ -86,15 +86,45 @@ def proxy_for(address: str, requested: str | None) -> str | None:
 
 
 async def hash_profiles(profiles: list, requested: str | None, timeout: float):
+    import aiohttp
     from aliens_eye.core import correlate
+    from aliens_eye.core.config import DEFAULT_HEADERS, ScannerConfig
+    from aliens_eye.core.scanner import build_connector
 
     if not 0.1 <= timeout <= 120:
         raise ValueError("request_timeout 需要介于 0.1 到 120 秒")
-    groups = {}
+    errors, groups = {}, {}
     for profile in profiles:
-        groups.setdefault(proxy_for(profile.avatar, requested), []).append(profile)
+        if profile.avatar:
+            groups.setdefault(proxy_for(profile.avatar, requested), []).append(profile)
+    if not correlate.pillow_available():
+        return {profile.key: {"code": "PILLOW_UNAVAILABLE", "message": "图像哈希需要 Pillow"}
+                for profile in profiles if profile.avatar}
     for proxy, group in groups.items():
-        await correlate.hash_avatars(group, proxy=proxy, timeout=timeout)
+        limit = min(20, len(group))
+        connector = build_connector(ScannerConfig(proxy=proxy), limit, correlate.netguard.PublicOnlyResolver())
+        http_proxy = proxy if proxy and urlsplit(proxy).scheme.lower() in ("http", "https") else None
+        semaphore = asyncio.Semaphore(limit)
+        async with aiohttp.ClientSession(headers=DEFAULT_HEADERS, connector=connector) as session:
+            async def download(profile):
+                async with semaphore:
+                    try:
+                        result = await correlate.netguard.guarded_get(session, profile.avatar, timeout=timeout,
+                                                                      max_bytes=2_000_000, allow_private=False, proxy=http_proxy)
+                        if result.status != 200:
+                            errors[profile.key] = {"code": f"HTTP_{result.status}", "httpStatus": result.status,
+                                                   "message": f"头像获取返回 HTTP {result.status}"}
+                            return
+                        profile.avatar_hash = correlate._dhash(result.body)
+                        if profile.avatar_hash is None:
+                            errors[profile.key] = {"code": "IMAGE_DECODE_FAILED", "message": "响应无法解码为图像"}
+                    except Exception as error:
+                        # 异常类型足以区分连接、TLS 与超时；异常文本可能包含代理凭据。
+                        cause = getattr(error, "os_error", None) or error.__cause__
+                        errors[profile.key] = {"code": type(error).__name__, "message": "头像获取失败",
+                                               **({"cause": type(cause).__name__} if cause else {})}
+            await asyncio.gather(*(download(profile) for profile in group))
+    return errors
 
 
 def match_url(engine: str, address: str, sites: dict) -> list[dict]:
@@ -180,7 +210,7 @@ async def worker(engine: str, request: dict, emit) -> None:
             if len(urls) < 2 or any(urlsplit(url).scheme not in ("http", "https") for url in urls):
                 raise ValueError("avatar_urls 需要至少两个 HTTP 或 HTTPS 图片 URL")
             profiles = [correlate.Profile(str(index), "avatar", "", "", url, url, "Found") for index, url in enumerate(urls)]
-            await hash_profiles(profiles, params.get("proxy"), params.get("request_timeout", 8))
+            errors = await hash_profiles(profiles, params.get("proxy"), params.get("request_timeout", 8))
             pairs = [{"left": left.avatar, "right": right.avatar,
                       "hammingDistance": (left.avatar_hash ^ right.avatar_hash).bit_count(),
                       "similar": (left.avatar_hash ^ right.avatar_hash).bit_count() <= correlate.AVATAR_MAX_HAMMING}
@@ -188,7 +218,8 @@ async def worker(engine: str, request: dict, emit) -> None:
                      if left.avatar_hash is not None and right.avatar_hash is not None]
             emit({"event": "result", "data": {"engine": engine, "method": "dhash-64", "threshold": correlate.AVATAR_MAX_HAMMING,
                  "pairs": pairs, "images": [{"url": profile.avatar, "hash": format(profile.avatar_hash, "016x") if profile.avatar_hash is not None else None,
-                                             "status": "ok" if profile.avatar_hash is not None else "unavailable"} for profile in profiles]}})
+                                             "status": "ok" if profile.avatar_hash is not None else "unavailable",
+                                             **({"error": errors[profile.key]} if profile.key in errors else {})} for profile in profiles]}})
             return
         report = params["report"]
         report = report.get("report", report)
@@ -211,15 +242,17 @@ async def worker(engine: str, request: dict, emit) -> None:
                 profile.links = set()
             if "handles" not in signals:
                 profile.handles = set()
+        errors = {}
         if params.get("avatar_match"):
-            await hash_profiles(profiles, params.get("proxy"), params.get("request_timeout", 8))
+            errors = await hash_profiles(profiles, params.get("proxy"), params.get("request_timeout", 8))
         common = correlate._common_names(profiles)
         edges = [{"from": left.key, "to": right.key, "reason": reason}
                  for index, left in enumerate(profiles) for right in profiles[index + 1:]
                  if (reason := correlate._pair_reason(left, right, common))]
         emit({"event": "result", "data": {"engine": engine, "signals": signals,
              "avatarMatch": params.get("avatar_match", False), "avatarHashingAvailable": correlate.pillow_available(),
-             "profiles": observed, "edges": edges, "clusters": correlate.cluster_profiles(profiles)}})
+             "profiles": observed, "edges": edges, "clusters": correlate.cluster_profiles(profiles),
+             **({"avatarErrors": errors} if errors else {})}})
     else:
         raise ValueError("未知账号操作")
 

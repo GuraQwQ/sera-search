@@ -176,7 +176,7 @@ function danmakus(config: ApiConfig): Source {
       const operation = selectOperation(request, operations); let values: SearchHit[], nextCursor: string | undefined, truncated = false, resultOffset = 0, taskId: string | undefined;
       if (operation === 'channels') {
         const params = channelsSchema.parse(request.params ?? {}), pn = params.page ?? 1;
-        const value = await data('api/v2/channel/filter', request.signal, { keyword: request.query, pageNum: pn, pageSize: params.pageSize ?? Math.min(request.limit, 100) });
+        const value = await data('api/v2/channel/filter', request.signal, { keyword: request.query, pageNum: pn - 1, pageSize: Math.min(params.pageSize ?? request.limit, request.limit, 100) });
         values = rows(value.data, 'Danmakus 直播间').flatMap(item => hit('danmakus', { title: string(item.uName), url: `https://danmakus.com/channel/${item.uId}`, snippet: string(item.title), metadata: { record: item, contentType: 'channel' } }));
         truncated = value.hasMore === true; if (truncated) nextCursor = String(pn + 1);
       } else if (operation === 'lives') {

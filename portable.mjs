@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -10,57 +10,89 @@ import { writeAtomic } from './dist/files.js';
 const root = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const locate = (candidates, probe) => {
-  for (const candidate of [...new Set(candidates.filter(Boolean))]) {
-    try { const path = probe(candidate); if (path) return path; } catch {}
+  const tried = new Set();
+  for (const group of candidates) {
+    for (const candidate of (typeof group === 'function' ? group() : [group]).filter(Boolean)) {
+      if (tried.has(candidate)) continue;
+      tried.add(candidate);
+      try { const path = probe(candidate); if (path) return path; } catch {}
+    }
   }
 };
 const execute = (command, parameters) => execFileSync(command, parameters, { encoding: 'utf8', windowsHide: true, timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const commands = name => {
   try { return execute('where.exe', [name]).split(/\r?\n/); } catch { return []; }
 };
+const programFiles = async programs => Promise.all([...new Set(Object.values(programs).filter(Boolean))].map(async path => {
+  try { const info = await stat(path); return { path, size: info.size, modified: info.mtimeMs }; } catch { return { path, missing: true }; }
+}));
+const componentPrograms = {
+  ghgrab: [], scrapling: ['python', 'browser'], 'metadata-parser': ['python'],
+  'aliens-eye': ['python'], sherlock: ['python'], 'gods-eye-view': ['node'],
+};
 
 async function main() {
-  const { values } = parseArgs({ args, allowPositionals: true, strict: false, options: {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: false, options: {
     home: { type: 'string' }, config: { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' },
+    'check-env': { type: 'boolean' }, sources: { type: 'string' }, 'read-sources': { type: 'string' }, components: { type: 'string' },
   } });
   if (values.help || values.version || !args.length) {
     return import('./dist/cli.js');
   }
   const manifest = JSON.parse(await readFile(resolve(root, 'bundle.json'), 'utf8'));
   const full = manifest.components.length > 0;
-  const node = locate([process.env.SERA_NODE, process.execPath, ...commands('node'), process.env.NODE_HOME && join(process.env.NODE_HOME, 'node.exe')], candidate => {
-    const result = JSON.parse(execute(candidate, ['-e', 'console.log(JSON.stringify({path:process.execPath,major:Number(process.versions.node.split(".")[0])}))']));
-    return result.major >= 24 ? result.path : undefined;
-  });
-  const python = full && locate([process.env.SERA_PYTHON, ...commands('python'), ...commands('python3'), ...commands('py')], candidate => {
-    const prefix = /(?:^|[\\/])py\.exe$/i.test(candidate) ? ['-3.13'] : [];
-    return execute(candidate, [...prefix, '-c', 'import sys,struct; assert sys.version_info[:2] == (3,13) and struct.calcsize("P") == 8; print(sys.executable)']);
-  });
-  const browser = full && locate([process.env.SERA_BROWSER, ...commands('msedge'), ...commands('chrome'), ...commands('chromium'),
-    ...[process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA].filter(Boolean).flatMap(base => [join(base, 'Microsoft/Edge/Application/msedge.exe'), join(base, 'Google/Chrome/Application/chrome.exe'), join(base, 'Chromium/Application/chrome.exe')])], candidate => existsSync(candidate) ? resolve(candidate) : undefined);
+  const home = resolve(values.home ?? process.env.SERA_HOME ?? resolve(root, 'data'));
+  const location = configLocation({ home, file: values.config });
+  const markerPath = resolve(home, '.sera-portable.json');
+  let previous = {};
+  try { previous = JSON.parse(await readFile(markerPath, 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const command = positionals[0];
+  const selected = [values.sources, values['read-sources'], values.components].filter(Boolean).flatMap(value => value.split(',').map(name => name.trim()));
+  const metadataOnly = ['capabilities', 'connectors', 'config', 'auth', 'evidence'].includes(command);
+  const components = metadataOnly ? [] : command === 'backend' ? [positionals[1]]
+    : command === 'mcp' || command === 'install' && !values.components || command === 'channels' && !values.sources ? manifest.components : selected;
+  const needed = new Set(components.flatMap(name => componentPrograms[name] ?? []));
+  const key = JSON.stringify([root, manifest.components, process.execPath, process.versions.node,
+    ...['PATH', 'NODE_HOME', 'SERA_NODE', 'SERA_PYTHON', 'SERA_BROWSER', 'ProgramFiles', 'ProgramFiles(x86)', 'LOCALAPPDATA'].map(name => process.env[name] ?? null)]);
+  let environment = previous.environment;
+  const cached = environment?.key === key && environment.programs && environment.files?.every(file => !file.missing)
+    && JSON.stringify(environment.files) === JSON.stringify(await programFiles(environment.programs));
+  const rediscover = values['check-env'] || !cached || [...needed].some(name => !environment.programs[name]);
+  if (rediscover) {
+    const node = full && locate([process.env.SERA_NODE, process.execPath, () => commands('node'), process.env.NODE_HOME && join(process.env.NODE_HOME, 'node.exe')], candidate => {
+      if (candidate === process.execPath) return Number(process.versions.node.split('.')[0]) >= 24 ? process.execPath : undefined;
+      const result = JSON.parse(execute(candidate, ['-e', 'console.log(JSON.stringify({path:process.execPath,major:Number(process.versions.node.split(".")[0])}))']));
+      return result.major >= 24 ? result.path : undefined;
+    });
+    const python = full && locate([process.env.SERA_PYTHON, () => commands('python'), () => commands('python3'), () => commands('py')], candidate => {
+      const prefix = /(?:^|[\\/])py\.exe$/i.test(candidate) ? ['-3.13'] : [];
+      return execute(candidate, [...prefix, '-c', 'import sys,struct; assert sys.version_info[:2] == (3,13) and struct.calcsize("P") == 8; print(sys.executable)']);
+    });
+    const browser = full && locate([process.env.SERA_BROWSER, () => commands('msedge'), () => commands('chrome'), () => commands('chromium'),
+      () => [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA].filter(Boolean).flatMap(base => [join(base, 'Microsoft/Edge/Application/msedge.exe'), join(base, 'Google/Chrome/Application/chrome.exe'), join(base, 'Chromium/Application/chrome.exe')])], candidate => existsSync(candidate) ? resolve(candidate) : undefined);
+    const programs = { node: node || null, python: python || null, browser: browser || null };
+    environment = { key, programs, files: await programFiles(programs) };
+  }
+  const { node, python, browser } = environment.programs;
   const missing = full ? [
     ...(!python ? [{ program: 'Python 3.13 x64', download: 'https://www.python.org/downloads/windows/', override: 'SERA_PYTHON' }] : []),
     ...(!browser ? [{ program: 'Chromium / Microsoft Edge / Google Chrome', download: 'https://www.microsoft.com/edge/download', override: 'SERA_BROWSER' }] : []),
     ...(!node ? [{ program: 'Node.js 24+', download: 'https://nodejs.org/en/download', override: 'SERA_NODE' }] : []),
   ] : [];
-  if (args.includes('--check-env')) {
+  if (values['check-env']) {
     process.stdout.write(JSON.stringify({ coreNode: process.execPath, node24: node || null, python: python || null, browser: browser || null, missing }, null, 2) + '\n');
     if (missing.length) process.exitCode = 1;
   } else {
-    if (missing.length) process.stderr.write(JSON.stringify({ missingPrograms: missing }) + '\n');
+    const relevant = missing.filter(item => needed.has({ SERA_NODE: 'node', SERA_PYTHON: 'python', SERA_BROWSER: 'browser' }[item.override]));
+    if (relevant.length) process.stderr.write(JSON.stringify({ missingPrograms: relevant }) + '\n');
     if (full) {
       process.env.PYTHONPATH = [resolve(root, 'dependencies/python'), process.env.PYTHONPATH].filter(Boolean).join(delimiter);
       process.env.PLAYWRIGHT_NODEJS_PATH = node || process.execPath;
     }
-    const home = resolve(values.home ?? process.env.SERA_HOME ?? resolve(root, 'data'));
-    const location = configLocation({ home, file: values.config });
     const initialized = await install(location);
     const config = JSON.parse(await readFile(location.file, 'utf8'));
     const template = JSON.parse(await readFile(resolve(root, 'config.example.json'), 'utf8'));
-    const markerPath = resolve(home, '.sera-portable.json');
-    let previous = {};
-    try { previous = JSON.parse(await readFile(markerPath, 'utf8')); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
     const defaults = {
       ghgrab: { command: resolve(root, 'components/ghgrab/ghgrab.exe'), args: ['mcp'], enabled: true },
       scrapling: { command: python || 'python', args: ['-c', 'from scrapling.cli import mcp; mcp()', ...(browser ? ['--executable-path', browser] : [])], enabled: Boolean(python && browser) },
@@ -69,7 +101,7 @@ async function main() {
       sherlock: { command: python || 'python', args: [resolve(root, 'bridges/accounts.py'), '--engine', 'sherlock'], enabled: Boolean(python) },
       'gods-eye-view': { command: node || process.execPath, args: [resolve(root, 'extensions/gods-eye-view/server.mjs')], enabled: Boolean(node) },
     };
-    const saved = { ...previous };
+    const saved = { ...previous, environment };
     let changed = false;
     for (const name of manifest.components) {
       const entry = defaults[name];

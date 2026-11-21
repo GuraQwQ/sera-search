@@ -7,7 +7,7 @@ import type { CommandConfig, Config } from './types.js';
 
 const names = ['ghgrab', 'scrapling', 'metadata-parser', 'aliens-eye', 'sherlock', 'gods-eye-view', 'opencli', 'agent-reach'] as const;
 type SetupCommandName = typeof names[number];
-export interface SetupCommandDiscoveryResult { name: SetupCommandName; command?: CommandConfig; status: 'ready' | 'missing' | 'error'; message: string }
+export interface SetupCommandDiscoveryResult { name: SetupCommandName; command?: CommandConfig; status: 'ready' | 'missing' | 'timeout' | 'cancelled' | 'error'; message: string }
 const root = fileURLToPath(new URL('../', import.meta.url));
 
 async function exists(path: string): Promise<boolean> {
@@ -123,7 +123,7 @@ async function candidates(name: SetupCommandName, config: Config, enabled: boole
 export async function discoverSetupCommands(config: Config, suppliedSignal?: AbortSignal, selectedNames?: string[]): Promise<SetupCommandDiscoveryResult[]> {
   const selected = names.filter(name => !selectedNames || selectedNames.includes(name));
   const discover = async (name: SetupCommandName): Promise<SetupCommandDiscoveryResult> => {
-    const signal = AbortSignal.any([AbortSignal.timeout(10000), ...(suppliedSignal ? [suppliedSignal] : [])]), current = configured(config, name);
+    const signal = AbortSignal.any([AbortSignal.timeout(config.timeoutMs), ...(suppliedSignal ? [suppliedSignal] : [])]), current = configured(config, name);
     try {
       signal.throwIfAborted();
       const explicit = current && !template(name, current), choices = explicit ? [current] : [...(current && !placeholder(current) ? [current] : []), ...await candidates(name, config, current?.enabled)];
@@ -138,7 +138,7 @@ export async function discoverSetupCommands(config: Config, suppliedSignal?: Abo
       }
       return { name, ...(current ? { command: current } : {}), status: present || explicit ? 'error' : 'missing', message: present || explicit ? '现有命令未通过本地验证，请检查入口、运行时与依赖' : '未找到已安装入口，可在安装步骤补齐' };
     } catch {
-      return { name, ...(current ? { command: current } : {}), status: 'error', message: suppliedSignal?.aborted ? '探测已取消' : signal.aborted ? '本地验证超过10秒预算，可检查后重试' : '本地入口探测失败，请检查现有配置' };
+      return { name, ...(current ? { command: current } : {}), status: suppliedSignal?.aborted ? 'cancelled' : signal.aborted ? 'timeout' : 'error', message: suppliedSignal?.aborted ? '探测已取消' : signal.aborted ? `本地验证超过 ${config.timeoutMs} 毫秒预算，可调整 timeoutMs 后重试` : '本地入口探测失败，请检查现有配置' };
     }
   };
   let next = 0; const results: SetupCommandDiscoveryResult[] = new Array(selected.length);
