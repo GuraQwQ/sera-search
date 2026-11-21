@@ -94,7 +94,9 @@ function twitch(config: ApiConfig): Source {
 }
 
 function discord(config: ApiConfig): Source {
-  const cap = capability('discord', config, { messages: ['post'] });
+  const paging = z.strictObject({ offset: z.number().int().min(0).max(9975).default(0),
+    sortBy: z.enum(['timestamp', 'relevance']).optional(), sortOrder: z.enum(['asc', 'desc']).optional() });
+  const cap = capability('discord', config, { messages: ['post'] }, { messages: paging });
   const get = async (path: string, params: Record<string, string>, signal: AbortSignal) => {
     requireKey(config);
     const url = endpoint(config, 'https://discord.com/api/v10/', path);
@@ -108,7 +110,10 @@ function discord(config: ApiConfig): Source {
       requireKey(config);
       const guild = id(config.guildId, 'Discord guildId');
       if (Array.from(request.query).length > 1024) throw new Error('Discord 查询最多 1024 字符');
-      const params: Record<string, string> = { content: request.query, limit: String(Math.min(request.limit, 25)) };
+      const page = paging.parse(request.params ?? {}), size = Math.min(request.limit, 25);
+      const params: Record<string, string> = { content: request.query, limit: String(size), offset: String(page.offset) };
+      if (page.sortBy) params.sort_by = page.sortBy;
+      if (page.sortOrder) params.sort_order = page.sortOrder;
       if (config.channelId) params.channel_id = id(config.channelId, 'Discord channelId');
       if (request.since) params.min_id = (BigInt(Math.max(0, Date.parse(request.since) - 1420070400000)) << 22n).toString();
       let result: Row | undefined;
@@ -122,13 +127,17 @@ function discord(config: ApiConfig): Source {
       }
       if (!Array.isArray(result?.messages)) throw new Error('Discord 未返回消息结果');
       const messages = result.messages.flatMap(group => rows(group, 'Discord 消息组')).filter(message => message.hit !== false);
+      const offset = page.offset + size, more = offset < Number(result.total_results);
+      const nextOffset = more && offset <= 9975 ? offset : undefined;
+      reportCoverage(request, 'Discord 授权服务器消息检索页', { completeness: 'partial', truncated: more,
+        ...(nextOffset !== undefined ? { nextCursor: JSON.stringify({ ...page, offset: nextOffset }) } : {}) });
       return filtered(messages.flatMap(item => {
         const messageId = id(item.id, 'Discord 消息'), channelId = id(item.channel_id, 'Discord 频道');
         const author = item.author && typeof item.author === 'object' ? item.author as Row : {};
         return hit('discord', { title: string(author.global_name) || string(author.username) || messageId,
           url: `https://discord.com/channels/${guild}/${channelId}/${messageId}`, snippet: string(item.content), publishedAt: date(item.timestamp),
           metadata: { messageId, channelId, guildId: guild, editedAt: item.edited_timestamp, reference: item.message_reference, contentAvailable: Boolean(item.content),
-            totalResults: result?.total_results, nextOffset: Math.min(request.limit, 25), contentScope: 'authorized-guild-messages' } });
+            totalResults: result?.total_results, nextOffset, contentScope: 'authorized-guild-messages' } });
       }), request);
     },
     async read(url, signal) {

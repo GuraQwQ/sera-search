@@ -21,7 +21,7 @@ function github(config: ApiConfig): Source {
     assets: Array.isArray(item.assets) ? rows(item.assets, 'GitHub 发布附件').map(asset => ({ id: asset.id, name: asset.name, size: asset.size, contentType: asset.content_type, digest: asset.digest, downloadUrl: asset.browser_download_url })) : [] });
   const releaseDocument = (item: Row, url: string) => {
     if (item.draft === true || !Number.isSafeInteger(item.id) || !string(item.tag_name)) throw new Error('GitHub 未返回公开发布记录');
-    const value = releaseRecord(item), body = string(item.body);
+    const { body: _body, ...value } = releaseRecord(item), body = string(item.body);
     return document('github', string(item.html_url) || url, string(item.name) || string(item.tag_name), body.trim() ? body : JSON.stringify(value, null, 2), {
       contentKind: body.trim() ? 'post' : 'metadata', publishedAt: date(item.published_at), locator: { kind: 'record', id: String(item.id) }, metadata: { contentType: 'release', contentScope: 'release-notes-and-assets', ...value } });
   };
@@ -62,7 +62,9 @@ function github(config: ApiConfig): Source {
         url: string(item.html_url),
         snippet: string(item.description) || string(item.body) || (Array.isArray(item.text_matches) ? rows(item.text_matches, 'GitHub 匹配片段').map((v) => string(v.fragment)).join('\n') : ''),
         publishedAt: type === 'issues' ? date(item.created_at) : undefined,
-        metadata: { kind: type, updatedAt: item.updated_at, pushedAt: item.pushed_at },
+        metadata: { kind: type, updatedAt: item.updated_at, pushedAt: item.pushed_at, stars: item.stargazers_count,
+          language: item.language, state: item.state, comments: item.comments,
+          labels: Array.isArray(item.labels) ? rows(item.labels, 'GitHub 标签').map(label => string(label.name)).filter(Boolean).slice(0, 12) : undefined },
       })).slice(0, request.limit);
     },
     async read(url, signal) {
@@ -181,7 +183,7 @@ export function createHttpSources(config: Config): Source[] {
       return rows(object(data.web, 'Brave').results, 'Brave').flatMap((item) => hit('brave', { title: string(item.title), url: string(item.url), snippet: [string(item.description), ...(Array.isArray(item.extra_snippets) ? item.extra_snippets.filter((v) => typeof v === 'string') : [])].join('\n'), metadata: { pageAge: item.page_age, age: item.age } })).slice(0, request.limit);
     },
   };
-  const bilibiliParams = z.strictObject({ page: z.number().int().min(1).default(1) });
+  const bilibiliParams = z.strictObject({ page: z.number().int().min(1).default(1), resultOffset: z.number().int().nonnegative().default(0) });
   const bilibiliOperations = [describeOperation('videos', '按关键词检索视频候选；page 选择结果页', ['video'], bilibiliParams)];
   const bilibili: Source = {
     capability: { name: 'bilibili', search: true, read: true, configured: config.bilibili.enabled !== false, platforms: ['bilibili'], operations: bilibiliOperations, contentTypes: ['video'], accessMethod: 'api', requirement: '视频关键词搜索和视频元数据，字幕需另选平台后端' },
@@ -194,10 +196,16 @@ export function createHttpSources(config: Config): Source[] {
       url.searchParams.set('page', String(params.page));
       const data = await json(url, { headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://www.bilibili.com/' }, signal: request.signal }, 'B站');
       if (data.code !== 0) throw new Error(`B站搜索失败，API code=${String(data.code)}`);
-      const groups = rows(object(data.data, 'B站').result, 'B站');
-      return groups.filter((group) => group.result_type === 'video').flatMap((group) => rows(group.data, 'B站视频')).filter((item) => !request.since || (epoch(item.pubdate) ?? '') >= request.since).flatMap((item) => hit('bilibili', {
-        title: string(item.title), url: string(item.bvid) ? `https://www.bilibili.com/video/${string(item.bvid)}` : string(item.arcurl), snippet: string(item.description), publishedAt: epoch(item.pubdate), metadata: { author: item.author, bvid: item.bvid },
-      })).slice(0, request.limit);
+      const result = object(data.data, 'B站'), groups = rows(result.result, 'B站');
+      const videos = groups.filter(group => group.result_type === 'video').flatMap(group => rows(group.data, 'B站视频'));
+      const hits = videos.filter((item) => !request.since || (epoch(item.pubdate) ?? '') >= request.since).flatMap((item) => hit('bilibili', {
+        title: string(item.title), url: string(item.bvid) ? `https://www.bilibili.com/video/${string(item.bvid)}` : string(item.arcurl), snippet: string(item.description), publishedAt: epoch(item.pubdate),
+        metadata: { author: item.author, bvid: item.bvid, views: item.play, danmakuCount: item.video_review, favorites: item.favorites, duration: item.duration },
+      }));
+      const end = params.resultOffset + request.limit;
+      const next = end < hits.length ? { ...params, resultOffset: end } : Number(result.numPages) > params.page ? { page: params.page + 1 } : undefined;
+      reportCoverage(request, 'B站视频检索页', { completeness: 'partial', truncated: Boolean(next), ...(next ? { nextCursor: JSON.stringify(next) } : {}) });
+      return hits.slice(params.resultOffset, end);
     },
     async read(url, signal) {
       let parsed = new URL(url);
@@ -262,13 +270,18 @@ export function createHttpSources(config: Config): Source[] {
         const decoded = await textResponse(page), text = decoded.text;
         const html = /html/i.test(type);
         const title = html ? text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? url : url;
-        const content = html && !options?.raw ? htmlText(text, actualUrl) : text;
         if (/json/i.test(type) || /\.json$/i.test(parsed.pathname)) {
           try { JSON.parse(text); } catch { throw Object.assign(new Error('公开 API 未返回有效 JSON'), { code: 'CONTENT_INVALID' }); }
         }
-        const body = html ? htmlText((text.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? text)
-          .replace(/<(?:head|header|nav|footer)\b[^>]*>[\s\S]*?<\/(?:head|header|nav|footer)>/gi, ''), actualUrl) : content;
-        const bodyAvailable = !html || hasBody(title, body);
+        const markup = html ? text.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? text : '';
+        const clean = (part: string) => part.replace(/<(head|nav|footer|aside|svg)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+        const main = markup.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)?.[1];
+        const extracted = main ? htmlText(clean(main), actualUrl, true) : '';
+        const hasText = (value: string) => hasBody(title, value.replace(/^#{1,6}\s+/gm, ''));
+        const body = html ? hasText(extracted) ? extracted
+          : htmlText(clean(markup).replace(/^\s*<header\b[^>]*>[\s\S]*?<\/header>/i, ''), actualUrl, true) : text;
+        const content = html && !options?.raw ? body : text;
+        const bodyAvailable = !html || hasText(body);
         let pageMetadata: Record<string, unknown> | undefined;
         if (html && config['metadata-parser'] && config['metadata-parser'].enabled !== false) {
           try { pageMetadata = { declaredMetadata: await extractMetadata(config, text, actualUrl, signal) }; }

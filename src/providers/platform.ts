@@ -140,7 +140,11 @@ function hits(rows: unknown[], source: SourceName, limit: number, platform: stri
     if (!row || !url) return [];
     const publicationTimeRaw = row.published_at ?? row.publish_time ?? row.published ?? row.created_at;
     const publishedAt = explicitDate(publicationTimeRaw);
-    return [{ source, url, title: text(row.title ?? row.name ?? row.desc) || url, snippet: text(row.text ?? row.summary ?? row.description ?? row.selftext ?? row.desc), ...(publishedAt ? { publishedAt } : {}), metadata: { platform, author: text(row.author ?? row.authors), ...(publicationTimeRaw !== undefined ? { publicationTimeRaw } : {}) } }];
+    const count = (...values: unknown[]) => values.find(value => typeof value === 'number' && Number.isFinite(value) || typeof value === 'string' && /^\d[\d,.]*[kKmM万亿]?$/.test(value));
+    return [{ source, url, title: text(row.title ?? row.name ?? row.desc) || url, snippet: text(row.text ?? row.summary ?? row.description ?? row.selftext ?? row.desc),
+      ...(publishedAt ? { publishedAt } : {}), metadata: { platform, author: text(row.author ?? row.authors),
+        views: count(row.views, row.view_count, row.play), likes: count(row.likes, row.like_count), comments: count(row.comments_count, row.comment_count, row.num_comments),
+        ...(publicationTimeRaw !== undefined ? { publicationTimeRaw } : {}) } }];
   }).slice(0, limit);
 }
 

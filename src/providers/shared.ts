@@ -106,7 +106,7 @@ export function plain(value: unknown): string {
   return decoded(string(value).replace(/<[^>]*>/g, ''));
 }
 
-export function htmlText(value: string, baseUrl: string): string {
+export function htmlText(value: string, baseUrl: string, headings = false): string {
   return decoded(value.replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
     .replace(/<a\b[^>]*href=(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi, (_tag, _quote, href: string, text: string) => {
       try { const target = new URL(decoded(href), baseUrl); return ['http:', 'https:'].includes(target.protocol) ? `${text} (${target.href})` : text; }
@@ -114,6 +114,7 @@ export function htmlText(value: string, baseUrl: string): string {
     })
     .replace(/<span\b[^>]*class=["'][^"']*glyphicon-ok[^"']*["'][^>]*>[\s\S]*?<\/span>/gi, ' ✓ ')
     .replace(/<img\b[^>]*alt=["']([^"']*)["'][^>]*>/gi, '$1')
+    .replace(/<h([1-6])\b[^>]*>/gi, (_, level: string) => headings ? '\n\n' + '#'.repeat(Number(level)) + ' ' : '')
     .replace(/<(?:br|\/p|\/div|\/li|\/h[1-6]|\/tr)\b[^>]*>/gi, '\n').replace(/<\/(?:td|th)>/gi, ' | ').replace(/<[^>]+>/g, ''));
 }
 

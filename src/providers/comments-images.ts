@@ -343,7 +343,7 @@ export function createActionSources(config: Config): Source[] {
         const nextCursor = string(data.nextPageToken) || undefined;
         reportCoverage(request, 'YouTube 关键词视频搜索单页', { completeness: 'partial', truncated: Boolean(nextCursor), ...(nextCursor ? { nextCursor } : {}), limitations: ['按关键词返回的视频元数据；搜索结果不能证明视频库或目标时期已完整枚举，续页将 nextCursor 作为 params.pageToken'] });
         return rows(data.items, 'YouTube 搜索').flatMap(item => { const snippet = object(item.snippet, 'YouTube 视频'), video = string(object(item.id, 'YouTube 视频 ID').videoId);
-          return hit('youtube', { title: string(snippet.title), url: `https://www.youtube.com/watch?v=${video}`, snippet: string(snippet.description), publishedAt: date(snippet.publishedAt), metadata: { videoId: video, channelId: snippet.channelId, contentKind: 'metadata' } }); }).slice(0, request.limit);
+          return hit('youtube', { title: string(snippet.title), url: `https://www.youtube.com/watch?v=${video}`, snippet: string(snippet.description), publishedAt: date(snippet.publishedAt), metadata: { videoId: video, channelId: snippet.channelId, channelTitle: snippet.channelTitle, contentKind: 'metadata' } }); }).slice(0, request.limit);
       },
       async read(url, signal) {
         const video = youtubeId(url), data = await youtubeApi(youtube, 'videos', { part: 'snippet,contentDetails,statistics', id: video }, signal);

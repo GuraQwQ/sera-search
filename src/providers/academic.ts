@@ -1,8 +1,17 @@
 import type { ApiConfig, Config, SearchRequest, Source, WikiSite } from '../types.js';
 import { object, rows, string, plain, date, hit, endpoint, json, response, document, permitted } from './shared.js';
 import type { Row } from './shared.js';
+import { z } from 'zod';
+import { describeOperation, reportCoverage } from './operations.js';
 
 const headers = { 'User-Agent': 'SERA academic-search', Accept: 'application/json' };
+const offsetParams = z.strictObject({ offset: z.number().int().min(0).max(9999).default(0) });
+const pageParams = z.strictObject({ page: z.number().int().min(1).max(10000).default(1) });
+const wikiParams = offsetParams.extend({ continuation: z.string().max(256).optional() });
+
+function pageCoverage(request: SearchRequest, scope: string, more: boolean, next?: Record<string, unknown>) {
+  reportCoverage(request, scope, { completeness: 'partial', truncated: more, ...(next ? { nextCursor: JSON.stringify(next) } : {}) });
+}
 
 function publishedParts(value: unknown): string | undefined {
   if (!value || typeof value !== 'object') return undefined;
@@ -25,18 +34,25 @@ function abstract(value: unknown): string {
 function crossref(config: ApiConfig): Source {
   const get = (path: string, signal: AbortSignal) => json(endpoint(config, 'https://api.crossref.org/', path), { headers, signal }, 'Crossref');
   return {
-    capability: { name: 'crossref', search: true, read: true, configured: config.enabled !== false, category: 'academic', requiresLogin: false, loggedIn: true, requirement: '公开 DOI 与书目元数据' },
+    capability: { name: 'crossref', search: true, read: true, configured: config.enabled !== false, category: 'academic', requiresLogin: false, loggedIn: true,
+      operations: [describeOperation('search', '搜索书目，按 offset 续页', ['paper'], offsetParams)], requirement: '公开 DOI 与书目元数据' },
     async search(request) {
+      const { offset } = offsetParams.parse(request.params ?? {});
+      const size = Math.min(request.limit, 10000 - offset);
       const url = endpoint(config, 'https://api.crossref.org/', 'works');
       url.searchParams.set('query', request.query);
-      url.searchParams.set('rows', String(request.limit));
+      url.searchParams.set('rows', String(size));
+      if (offset) url.searchParams.set('offset', String(offset));
       if (request.since) url.searchParams.set('filter', `from-pub-date:${request.since}`);
       const result = await json(url, { headers, signal: request.signal }, 'Crossref');
       const message = object(result.message, 'Crossref');
+      const next = offset + size, more = next < Number(message['total-results']);
+      pageCoverage(request, 'Crossref 书目检索页', more, more && next <= 9999 ? { offset: next } : undefined);
       return rows(message.items, 'Crossref').flatMap(item => {
         const doi = string(item.DOI), target = doi ? `https://doi.org/${doi}` : string(item.URL);
         if (!target || !accepted(request, target)) return [];
-        return hit('crossref', { title: firstTitle(item.title), url: target, snippet: plain(item.abstract) || [string(item.publisher), firstTitle(item['container-title'])].filter(Boolean).join(' · '), publishedAt: publishedParts(item.published), metadata: { doi, type: item.type, publisher: item.publisher, links: item.link } });
+        return hit('crossref', { title: firstTitle(item.title), url: target, snippet: plain(item.abstract) || [string(item.publisher), firstTitle(item['container-title'])].filter(Boolean).join(' · '), publishedAt: publishedParts(item.published),
+          metadata: { doi, type: item.type, publisher: item.publisher, citedByCount: item['is-referenced-by-count'], links: item.link } });
       });
     },
     async read(url, signal) {
@@ -60,13 +76,19 @@ function openalex(config: ApiConfig): Source {
     return url;
   };
   return {
-    capability: { name: 'openalex', search: true, read: true, configured: config.enabled !== false, category: 'academic', requiresLogin: false, loggedIn: true, requirement: '公开论文图谱；API Key 可提高预算' },
+    capability: { name: 'openalex', search: true, read: true, configured: config.enabled !== false, category: 'academic', requiresLogin: false, loggedIn: true,
+      operations: [describeOperation('search', '搜索论文，按 page 续页', ['paper'], pageParams)], requirement: '公开论文图谱；API Key 可提高预算' },
     async search(request) {
+      const { page } = pageParams.parse(request.params ?? {});
+      if ((page - 1) * request.limit >= 10000) throw new Error('OpenAlex 页码超过本次查询窗口，请缩小检索条件');
       const url = address('works');
       url.searchParams.set('search', request.query);
       url.searchParams.set('per_page', String(request.limit));
+      if (page > 1) url.searchParams.set('page', String(page));
       if (request.since) url.searchParams.set('filter', `from_publication_date:${request.since}`);
       const result = await json(url, { headers, signal: request.signal }, 'OpenAlex');
+      const more = page * request.limit < Number((result.meta as Row | undefined)?.count);
+      pageCoverage(request, 'OpenAlex 论文检索页', more, more && page * request.limit < 10000 ? { page: page + 1 } : undefined);
       return rows(result.results, 'OpenAlex').flatMap(item => {
         const target = string(item.id);
         if (!target || !accepted(request, target)) return [];
@@ -94,12 +116,17 @@ function pubmed(config: ApiConfig): Source {
     return url;
   };
   return {
-    capability: { name: 'pubmed', search: true, read: true, configured: config.enabled !== false, category: 'academic', requiresLogin: false, loggedIn: true, requirement: '公开医学书目与摘要；全文需要继续到 PMC 或出版者' },
+    capability: { name: 'pubmed', search: true, read: true, configured: config.enabled !== false, category: 'academic', requiresLogin: false, loggedIn: true,
+      operations: [describeOperation('search', '搜索医学书目，按 offset 续页', ['paper'], offsetParams)], requirement: '公开医学书目与摘要；全文需要继续到 PMC 或出版者' },
     async search(request) {
+      const { offset } = offsetParams.parse(request.params ?? {});
       if (request.domains?.length && !permitted(request.domains, 'pubmed.ncbi.nlm.nih.gov')) return [];
       const term = request.since ? `(${request.query}) AND ("${request.since.replaceAll('-', '/')}"[Date - Publication] : "3000"[Date - Publication])` : request.query;
-      const found = await json(address('esearch.fcgi', { term, retmode: 'json', retmax: String(request.limit), sort: 'relevance' }), { headers, signal: request.signal }, 'PubMed ESearch');
+      const size = Math.min(request.limit, 10000 - offset);
+      const found = await json(address('esearch.fcgi', { term, retmode: 'json', retmax: String(size), retstart: String(offset), sort: 'relevance' }), { headers, signal: request.signal }, 'PubMed ESearch');
       const search = object(found.esearchresult, 'PubMed ESearch');
+      const next = offset + size, more = next < Number(search.count);
+      pageCoverage(request, 'PubMed 医学书目检索页', more, more && next <= 9999 ? { offset: next } : undefined);
       if (!Array.isArray(search.idlist)) throw new Error('PubMed 未返回 PMID 列表');
       const ids = search.idlist.map(string).filter(id => /^\d+$/.test(id)).slice(0, request.limit);
       if (!ids.length) return [];
@@ -108,7 +135,9 @@ function pubmed(config: ApiConfig): Source {
         const value = summaries[id];
         if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
         const item = value as Row;
-        return hit('pubmed', { title: string(item.title), url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`, snippet: [string(item.fulljournalname), string(item.pubdate)].filter(Boolean).join(' · '), metadata: { pmid: id, publicationTimeRaw: item.pubdate, authors: item.authors, articleIds: item.articleids } });
+        const publicationTime = [item.pubdate, item.epubdate].map(string).find(value => /^\d{4} [A-Z][a-z]{2} \d{1,2}$/.test(value));
+        return hit('pubmed', { title: string(item.title), url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`, snippet: [string(item.fulljournalname), string(item.pubdate)].filter(Boolean).join(' · '),
+          publishedAt: publicationTime ? date(publicationTime) : undefined, metadata: { pmid: id, publicationTimeRaw: item.pubdate, authors: item.authors, articleIds: item.articleids } });
       });
     },
     async read(url, signal) {
@@ -143,16 +172,23 @@ function wiki(config: Config['wiki'] = {}): Source {
   };
   const pageUrl = (site: WikiSite, title: string) => site.pageBaseUrl + encodeURIComponent(title.replaceAll(' ', '_'));
   return {
-    capability: { name: 'wiki', search: true, read: true, configured: config.enabled !== false, category: 'wiki', requiresLogin: false, loggedIn: true, platforms: Object.keys(sites), requirement: '公开 MediaWiki 搜索与原始页面内容' },
+    capability: { name: 'wiki', search: true, read: true, configured: config.enabled !== false, category: 'wiki', requiresLogin: false, loggedIn: true, platforms: Object.keys(sites),
+      operations: [describeOperation('search', '搜索 Wiki 页面，按返回参数续页', ['page'], wikiParams)], requirement: '公开 MediaWiki 搜索与原始页面内容' },
     channels: async () => Object.entries(sites).map(([platform, site]) => ({ source: 'wiki', platform, search: true, read: true, configured: config.enabled !== false, browser: false, description: site.label || platform })),
     async search(request) {
+      const { offset, continuation } = wikiParams.parse(request.params ?? {});
       if (request.since) throw new Error('Wiki 的页面修改时间不是发布日期；请使用 Wiki 原生查询条件');
       const selected = request.platform ?? (request.domains?.length ? Object.keys(sites).find(name => permitted(request.domains, new URL(sites[name]!.pageBaseUrl).hostname)) : 'wikipedia-zh');
       const site = selected ? sites[selected] : undefined;
       if (!site) throw new Error('Wiki 平台未配置，请查看 channels 或 wiki.sites');
       if (!permitted(request.domains, new URL(site.pageBaseUrl).hostname)) return [];
-      const result = await json(address(site, { list: 'search', srsearch: request.query, srlimit: String(request.limit), ...(selected === 'commons' ? { srnamespace: '0|6|14' } : {}) }), { headers, signal: request.signal }, 'MediaWiki');
+      const result = await json(address(site, { list: 'search', srsearch: request.query, srlimit: String(request.limit),
+        ...(offset ? { sroffset: String(offset) } : {}), ...(continuation ? { continue: continuation } : {}),
+        ...(selected === 'commons' ? { srnamespace: '0|6|14' } : {}) }), { headers, signal: request.signal }, 'MediaWiki');
       if (result.error) throw new Error(`MediaWiki 搜索失败：${string(object(result.error, 'MediaWiki 错误').code)}`);
+      const cursor = result.continue as Row | undefined, next = Number(cursor?.sroffset);
+      const more = Number.isSafeInteger(next) && next > offset;
+      pageCoverage(request, 'MediaWiki 页面检索页', more, more && next <= 9999 ? { offset: next, continuation: string(cursor?.continue) || undefined } : undefined);
       return rows(object(result.query, 'MediaWiki').search, 'MediaWiki').filter(item => string(item.title).trim()).flatMap(item => hit('wiki', {
         title: string(item.title), url: pageUrl(site, string(item.title)), snippet: plain(item.snippet), metadata: { platform: selected, pageId: item.pageid, updatedAt: item.timestamp },
       }));

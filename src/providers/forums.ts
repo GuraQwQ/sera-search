@@ -4,6 +4,8 @@ import { NotLoggedInError } from '../credentials.js';
 import { date, document, endpoint, epoch, hit, json, object, permitted, plain, rows, string } from './shared.js';
 import type { Row } from './shared.js';
 import { createDiscoverySources } from './discovery.js';
+import { z } from 'zod';
+import { describeOperation, reportCoverage } from './operations.js';
 
 function numericId(value: unknown, name: string): string {
   const id = typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : string(value);
@@ -21,6 +23,7 @@ function topicUrl(value: string, config: ApiConfig) {
 }
 
 function linuxdo(config: ApiConfig): Source {
+  const paging = z.strictObject({ page: z.number().int().min(1).max(10).default(1), resultOffset: z.number().int().nonnegative().default(0) });
   const get = async (path: string | URL, params: Record<string, string>, signal: AbortSignal) => {
     const url = path instanceof URL ? path : endpoint(config, 'https://linux.do/', path);
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
@@ -36,19 +39,27 @@ function linuxdo(config: ApiConfig): Source {
   };
   return {
     capability: { name: 'linuxdo', search: true, read: true, comments: true, configured: config.enabled !== false, category: 'catalog',
-      requiresLogin: false, loggedIn: Boolean(config.apiKey), platforms: ['linuxdo'], requirement: 'Discourse 原生搜索、主题和楼层；可选 Api-Key / Api-Username，权限以站点响应为准' },
+      requiresLogin: false, loggedIn: Boolean(config.apiKey), platforms: ['linuxdo'], operations: [describeOperation('search', '搜索帖子，按返回参数续页', ['post'], paging)],
+      requirement: 'Discourse 原生搜索、主题和楼层；可选 Api-Key / Api-Username，权限以站点响应为准' },
     async search(request) {
-      const data = await get('search.json', { q: request.query + (request.since ? ` after:${request.since}` : '') }, request.signal);
-      const topics = rows(data.topics, 'LinuxDo 搜索主题');
-      return rows(data.posts, 'LinuxDo 搜索帖子').flatMap(post => {
-        const topic = topics.find(item => item.id === post.topic_id);
+      const page = paging.parse(request.params ?? {});
+      const data = await get('search.json', { q: request.query + (request.since ? ` after:${request.since}` : ''), page: String(page.page) }, request.signal);
+      const topics = new Map(rows(data.topics, 'LinuxDo 搜索主题').map(item => [item.id, item]));
+      const hits = rows(data.posts, 'LinuxDo 搜索帖子').flatMap(post => {
+        const topic = topics.get(post.topic_id);
         if (!topic) return [];
         const topicId = numericId(topic.id, 'LinuxDo 主题'), postNumber = numericId(post.post_number, 'LinuxDo 楼层');
         const url = `https://linux.do/t/${encodeURIComponent(string(topic.slug) || '-')}/${topicId}/${postNumber}`;
         if (!permitted(request.domains, 'linux.do')) return [];
         return hit('linuxdo', { title: string(topic.title), url, snippet: string(post.blurb) || plain(post.cooked), publishedAt: date(post.created_at),
-          metadata: { topicId, postId: post.id, postNumber: Number(postNumber), contentScope: 'matched-post-excerpt' } });
-      }).slice(0, request.limit);
+          metadata: { topicId, postId: post.id, postNumber: Number(postNumber), author: post.username, views: topic.views,
+            likes: post.like_count, tags: topic.tags, contentScope: 'matched-post-excerpt' } });
+      });
+      const end = page.resultOffset + request.limit, group = data.grouped_search_result as Row | undefined;
+      const more = group?.more_posts === true || group?.more_full_page_results === true;
+      const next = end < hits.length ? { ...page, resultOffset: end } : more && page.page < 10 ? { page: page.page + 1 } : undefined;
+      reportCoverage(request, 'LinuxDo 帖子检索页', { completeness: 'partial', truncated: Boolean(next || more), ...(next ? { nextCursor: JSON.stringify(next) } : {}) });
+      return hits.slice(page.resultOffset, end);
     },
     async read(url, signal) {
       const { topicId, postNumber } = topicUrl(url, config);

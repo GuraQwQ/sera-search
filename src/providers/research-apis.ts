@@ -219,7 +219,9 @@ function europePmc(config: ApiConfig): Source {
       return values.flatMap(item => {
         const id = string(item.id), source = string(item.source), target = `https://europepmc.org/article/${encodeURIComponent(source)}/${encodeURIComponent(id)}`;
         if (!id || !source || !accepted(request, target)) return [];
-        return hit('europepmc', { title: string(item.title), url: target, snippet: plain(item.abstractText), publishedAt: date(item.firstPublicationDate), locator: { kind: 'record', id: `${source}:${id}` }, metadata: { ...item, contentType: 'paper', contentScope: 'bibliography-and-abstract' } });
+        return hit('europepmc', { title: string(item.title), url: target, snippet: plain(item.abstractText), publishedAt: date(item.firstPublicationDate), locator: { kind: 'record', id: `${source}:${id}` },
+          metadata: { doi: item.doi, pmcid: item.pmcid, journal: item.journalTitle ?? (item.journalInfo as Row | undefined)?.journal,
+            authors: item.authorString, citedByCount: item.citedByCount, isOpenAccess: item.isOpenAccess, contentType: 'paper', contentScope: 'bibliography-and-abstract' } });
       });
     },
     async read(url, signal) {

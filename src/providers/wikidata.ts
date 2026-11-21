@@ -79,7 +79,10 @@ export function createWikidataSource(config: Config): Source {
       if (!permitted(request.domains, 'www.wikidata.org')) return [];
       const id = entityId.parse(params.id ?? request.query), value = await entity(client, id, params.language, request.signal);
       reportCoverage(request, 'wikidata:单个实体修订', { completeness: 'complete' });
-      return hit('wikidata', { title: label(value, 'labels', params.language) || id, url: entityUrl(id, params.language), snippet: label(value, 'descriptions', params.language), locator: { kind: 'record', id }, metadata: { ...metadata(value), record: value } });
+      const url = entityUrl(id, params.language), revision = String(value.lastrevid ?? '');
+      const recordUrl = /^[1-9]\d*$/.test(revision) ? `${url}&revision=${revision}` : url;
+      return hit('wikidata', { title: label(value, 'labels', params.language) || id, url, snippet: label(value, 'descriptions', params.language),
+        locator: { kind: 'record', id }, metadata: { entityId: id, recordUrl, ...metadata(value), record: value } });
     },
   }, read: async (url, signal, options, client) => {
     const selected = target(url);

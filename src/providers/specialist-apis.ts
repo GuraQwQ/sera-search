@@ -126,6 +126,7 @@ function openLibrary(config: ApiConfig): Source {
   return { capability: capability('open-library', config, '公开书目与作品／版本记录', operations, ['书目记录不表示已取得书内全文']),
     async search(request) { selectOperation(request, operations); const p = schema.parse(request.params ?? {});
       const data = object(await call('search.json', request.signal, { q: request.query, author: p.author, language: p.language, page: p.page, limit: request.limit,
+        fields: 'key,title,author_name,first_publish_year,edition_count,cover_i',
         ...(request.since || request.until ? { first_publish_year: `[${request.since?.slice(0, 4) ?? '*'} TO ${request.until?.slice(0, 4) ?? '*'}]` } : {}) }), 'Open Library');
       const items = rows(data.docs, 'Open Library');
       return finish(request, items.flatMap(item => hit('open-library', { title: string(item.title), url: `https://openlibrary.org${string(item.key)}`, snippet: [Array.isArray(item.author_name) ? item.author_name.join('、') : '', item.first_publish_year].filter(Boolean).join(' · '),

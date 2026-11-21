@@ -81,7 +81,10 @@ function steam(config: ApiConfig = {}): Source {
       const url = endpoint(config, 'https://store.steampowered.com/', 'api/storesearch/');
       url.searchParams.set('term', request.query); url.searchParams.set('l', params.language ?? 'english'); url.searchParams.set('cc', params.region ?? 'us');
       const result = await json(url, { headers, signal: request.signal }, 'Steam 商店搜索');
-      return rows(result.items, 'Steam 商店实体').filter(item => /^[1-9]\d*$/.test(String(item.id))).slice(0, request.limit).flatMap(item => hit('steam', { title: string(item.name), url: `https://store.steampowered.com/app/${item.id}/`, snippet: 'Steam 商店实体候选；名称与发行商需继续核对', metadata: { appId: item.id, imageUrl: item.tiny_image, contentScope: 'store-entity' } }));
+      return rows(result.items, 'Steam 商店实体').filter(item => /^[1-9]\d*$/.test(String(item.id))).slice(0, request.limit).flatMap(item => hit('steam', {
+        title: string(item.name), url: `https://store.steampowered.com/app/${item.id}/`, snippet: 'Steam 商店候选',
+        metadata: { appId: item.id, imageUrl: item.tiny_image, price: item.price, platforms: item.platforms, metascore: item.metascore, contentScope: 'store-entity' },
+      }));
     },
     async read(url, signal, options) {
       const target = steamTarget(url), address = new URL(url);

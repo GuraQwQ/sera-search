@@ -66,7 +66,7 @@ export const infrastructureDefinitions: ConnectorDefinition[] = [
 const definitions = new Map(infrastructureDefinitions.map(item => [item.id, item]));
 function accepted(request: SearchRequest, target: string): boolean { return permitted(request.domains, new URL(target).hostname); }
 function valueHit(source: string, url: string, title: string, value: unknown, type: string, id = url): SearchHit[] {
-  return hit(source, { url, title, snippet: JSON.stringify(value), locator: { kind: 'record', id }, metadata: { record: value, contentType: type, contentScope: 'structured-record' } });
+  return hit(source, { url, title, snippet: '', locator: { kind: 'record', id }, metadata: { record: value, contentType: type, contentScope: 'structured-record' } });
 }
 function dated(request: SearchRequest) {
   if (request.since || request.until) throw Object.assign(new Error('此操作不提供任意时间范围过滤；请使用有日期契约的操作'), { code: 'UNSUPPORTED_FILTER' });
