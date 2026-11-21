@@ -25,7 +25,7 @@ import { createEntitySources, steamDocumentMatches } from './providers/entities.
 import { directTarget, specificSource, taskRoute, preferredSources, materialTypes, webSearchOrder } from './routing.js';
 import { legacyContentTypes, specialistSites, relatedPlatforms, materialMatches } from './provider-catalog.js';
 import { assessRelevance, discoveryTerms } from './providers/relevance.js';
-import { researchStateSchema, subjectSchema, criterionSchema, prepareResearch, inspectResearch, assessmentKey } from './research.js';
+import { researchStateSchema, subjectSchema, criterionSchema, prepareResearch, inspectResearch, loadResearchEvidence, assessmentKey } from './research.js';
 export { researchStateSchema } from './research.js';
 import { httpTrace, networkReport } from './network.js';
 import type { NetworkRequest } from './types.js';
@@ -33,7 +33,7 @@ import { createFeedSources } from './providers/feeds.js';
 import { createMetadataSource } from './providers/metadata-parser.js';
 import { BackendPool, createBackendSources } from './backends.js';
 import { createExtensionSources } from './extensions.js';
-import { locatorSchema, describeOperation } from './providers/operations.js';
+import { dateTimeSchema, locatorSchema, describeOperation } from './providers/operations.js';
 import { createResearchApiSources } from './providers/research-apis.js';
 import { createSpecialistApiSources } from './providers/specialist-apis.js';
 import { createHistoryApiSources } from './providers/history-apis.js';
@@ -66,7 +66,7 @@ export const searchSchema = z.object({
 });
 
 export const focusSchema = z.object({ query: z.string().trim().min(1).max(4096).optional(), keywords: z.array(z.string().trim().min(1).max(256)).max(32).optional(), length: z.number().int().min(1).max(20000).default(2000) });
-export const recordSchema = z.object({ url: z.string().url(), title: z.string().min(1), content: z.string().refine(value => Boolean(value.trim()), '外部材料需要实际取得的内容'), method: z.string().min(1), observedAt: z.string().datetime({ offset: true }), publishedAt: z.string().datetime({ offset: true }).optional(), contentKind: z.enum(['page', 'post', 'subtitle', 'metadata']).default('page'), metadata: z.record(z.string(), z.unknown()).optional(), originSource: sourceNameSchema.optional(), locator: locatorSchema.optional() });
+export const recordSchema = z.object({ url: z.string().url(), title: z.string().min(1), content: z.string().refine(value => Boolean(value.trim()), '外部材料需要实际取得的内容'), method: z.string().min(1), observedAt: dateTimeSchema, publishedAt: dateTimeSchema.optional(), contentKind: z.enum(['page', 'post', 'subtitle', 'metadata']).default('page'), metadata: z.record(z.string(), z.unknown()).optional(), originSource: sourceNameSchema.optional(), locator: locatorSchema.optional() });
 const readSettings = { timeoutMs: z.number().int().min(100).max(300000).optional(), browser: z.string().min(1).optional(), raw: z.boolean().default(false) };
 export const readSchema = focusSchema.extend({ sources: z.array(sourceNameSchema).min(1).optional(), refresh: z.boolean().default(false), maxAgeMs: z.number().finite().nonnegative().optional(), locator: locatorSchema.optional(), contentTypes: searchSchema.shape.contentTypes, operation: searchSchema.shape.operation, params: searchSchema.shape.params, ...readSettings });
 export const researchSchema = searchSchema.extend({
@@ -150,8 +150,12 @@ export class Engine {
 
   connectors(names?: SourceName[]) { return this.sources.filter(source => !names || names.includes(source.capability.name)).flatMap(source => source.connector ? [source.connector] : []); }
 
-  async channels(options: { sources?: SourceName[]; platform?: string; signal?: AbortSignal } = {}) {
-    const names = options.sources ? [...new Set(options.sources)] : this.sources.map(source => source.capability.name);
+  async channels(options: { sources?: SourceName[]; platform?: string; live?: boolean; signal?: AbortSignal } = {}) {
+    const names = options.sources ? [...new Set(options.sources)] : this.sources.filter(({ capability, channels }) =>
+      !options.platform || capability.platforms?.includes(options.platform)
+      || options.platform === 'academic' && capability.category === 'academic'
+      || !capability.platforms?.length && (Boolean(channels) || capability.name === options.platform),
+    ).map(source => source.capability.name);
     const results = await Promise.all(names.map(async name => {
       const source = this.sources.find(item => item.capability.name === name);
       const started = Date.now(), signal = this.signal(options.signal), requests: NetworkRequest[] = [];
@@ -159,7 +163,7 @@ export class Engine {
       try {
         signal.throwIfAborted();
         const dynamic = source.capability.backend || ['agent-reach', 'opencli'].includes(name);
-        const channels: Channel[] = source.channels && source.capability.configured && (dynamic || !this.config.connectors?.find(item => item.id === name)?.platforms) ? await httpTrace.run(requests, () => source.channels!(signal)) : (source.capability.platforms ?? [name]).map(platform => ({ source: name,
+        const channels: Channel[] = source.channels && source.capability.configured && (!dynamic || options.live !== false) && (dynamic || !this.config.connectors?.find(item => item.id === name)?.platforms) ? await httpTrace.run(requests, () => source.channels!(signal)) : (source.capability.platforms ?? [name]).map(platform => ({ source: name,
           platform,
           search: source.capability.search && (!source.capability.searchPlatforms || source.capability.searchPlatforms.includes(platform)), read: source.capability.read, configured: source.capability.configured,
           comments: source.capability.comments, images: source.capability.images,
@@ -174,7 +178,7 @@ export class Engine {
       } catch (error) { return { channels: [], run: { ...await this.failure(name, error, started, signal), network: networkReport(requests, this.config) } }; }
     }));
     const runs = results.map(item => item.run), good = runs.some(run => ['ok', 'empty'].includes(run.status));
-    return { status: !good ? 'error' : runs.some(run => !['ok', 'empty'].includes(run.status)) ? 'partial' : 'ok', channels: results.flatMap(item => item.channels), runs };
+    return { status: !runs.length ? 'empty' : !good ? 'error' : runs.some(run => !['ok', 'empty'].includes(run.status)) ? 'partial' : 'ok', channels: results.flatMap(item => item.channels), runs };
   }
 
   private signal(signal?: AbortSignal, timeoutMs = this.config.timeoutMs) { return AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]); }
@@ -444,7 +448,7 @@ export class Engine {
     return { status: 'error', runs };
   }
 
-  async read(url: string, options: ReadOptions = {}): Promise<ReadReport> {
+  async read(url: string, options: ReadOptions = {}, acceptCached?: (evidence: Evidence) => boolean): Promise<ReadReport> {
     const input = readSchema.parse(options);
     url = canonicalUrl(directTarget(url) ?? url);
     if (options.signal?.aborted) return { status: 'error', runs: [{ source: input.sources?.[0] ?? 'web', status: 'cancelled', elapsedMs: 0, returned: 0, code: 'CANCELLED', message: '操作已取消' }] };
@@ -466,7 +470,8 @@ export class Engine {
           const source = this.sources.find(item => item.capability.name === evidence.source);
           const record = this.config.credentials?.[authKey(evidence.source, siteForUrl(url))] ?? this.config.credentials?.[evidence.source];
           return Boolean(source && record?.status !== 'invalid' && !this.accessFailure(source, this.selectedReadOperation(source, input) ?? 'read')
-            && evidence.metadata?.bodyAvailable !== false && this.matchesRead(evidence, input) && (evidence.source !== 'steam' || steamDocumentMatches(url, evidence)));
+            && evidence.metadata?.bodyAvailable !== false && this.matchesRead(evidence, input) && (evidence.source !== 'steam' || steamDocumentMatches(url, evidence))
+            && (!acceptCached || acceptCached(evidence)));
         }, input.locator);
         if (cached && cached.source !== 'external') {
           if (input.operation) await this.readOperation(this.sources.find(source => source.capability.name === cached.source)!, url, input, this.signal(options.signal, input.timeoutMs));
@@ -572,7 +577,13 @@ export class Engine {
   async research(options: ResearchOptions): Promise<ResearchReport> {
     const input = researchSchema.parse(options), state = prepareResearch(input);
     if (input.since && input.until && input.since > input.until) throw new Error('since 不能晚于 until');
-    const existing = await inspectResearch(state, this.store);
+    const loaded = new Map<string, Promise<Evidence>>();
+    const loadEvidence = (id: string) => {
+      const entry = loaded.get(id) ?? this.store.load(id);
+      loaded.set(id, entry);
+      return entry;
+    };
+    const existing = await loadResearchEvidence(state, loadEvidence);
     const requestedMaterials = input.contentTypes ?? materialTypes(input.query);
     const readDeclarations = new Map<SourceName, SourceOperation[]>(), readDiscoveryFailures: SourceRun[] = [];
     const addresses = [taskRoute(input.query).directUrl, taskRoute(input.discoveryQuery).directUrl,
@@ -619,17 +630,25 @@ export class Engine {
       }
       return evidence.metadata?.bodyAvailable !== false;
     };
-    const acceptedEvidence = (evidence: Evidence) => documentObservations(evidence).find(acceptObservation);
+    const acceptedObservations = new WeakMap<Evidence, Evidence | null>();
+    const acceptedEvidence = (evidence: Evidence) => {
+      if (!acceptedObservations.has(evidence)) acceptedObservations.set(evidence, documentObservations(evidence).find(acceptObservation) ?? null);
+      return acceptedObservations.get(evidence) ?? undefined;
+    };
     const accepted = (document: Document) => documentObservations(document).some(acceptObservation);
-    const initial = await inspectResearch(state, this.store, acceptedEvidence);
+    const initial = await inspectResearch(state, loadEvidence, acceptedEvidence);
     for (const assessment of state.assessments) if (assessment.status === 'supported' && assessment.citations.some(citation => {
       const evidence = initial.evidence.get(citation.evidenceId);
       return evidence && !acceptedEvidence(evidence);
     })) assessment.status = 'pending';
     const excluded = new Set(initial.coverage.excluded);
     const unresolved = state.assessments.filter(item => !initial.verified.has(assessmentKey(item)) && !excluded.has(item.subjectId));
+    const criterionOrder = new Map(state.criteria.map((item, index) => [item.id, { index, required: item.kind === 'required' }]));
+    const subjectOrder = new Map(state.subjects.map((item, index) => [item.id, index]));
     unresolved.sort((a, b) => Number(b.status === 'conflict') - Number(a.status === 'conflict')
-      || Number(state.criteria.find(item => item.id === b.criterionId)?.kind === 'required') - Number(state.criteria.find(item => item.id === a.criterionId)?.kind === 'required'));
+      || Number(Boolean(criterionOrder.get(b.criterionId)?.required)) - Number(Boolean(criterionOrder.get(a.criterionId)?.required))
+      || (subjectOrder.get(a.subjectId) ?? Infinity) - (subjectOrder.get(b.subjectId) ?? Infinity)
+      || (criterionOrder.get(a.criterionId)?.index ?? Infinity) - (criterionOrder.get(b.criterionId)?.index ?? Infinity));
     const focus = unresolved[0] ?? (input.refresh ? state.assessments[0] : undefined);
     if (input.refresh && focus) focus.status = 'pending';
     const subject = state.subjects.find(item => item.id === focus?.subjectId);
@@ -709,20 +728,21 @@ export class Engine {
           const readers = input.readSources ?? input.sources ?? [...new Set<SourceName>([...native, specificSource(hit.url, this.config) ?? 'web', 'web', 'exa', 'tavily', 'scrapling', 'agent-reach', 'opencli'])];
           const settings = { signal: options.signal, locator: hit.locator, contentTypes: requestedMaterials.length ? requestedMaterials : undefined,
             query: criterion?.description ?? input.query, keywords: input.keywords ?? criterion?.keywords, length: input.length,
-            refresh: input.refresh || Boolean(input.since || input.until || input.at), timeoutMs: input.timeoutMs, browser: input.browser, raw: input.raw };
+            refresh: input.refresh, timeoutMs: input.timeoutMs, browser: input.browser, raw: input.raw };
+          const cacheFilter = input.since || input.until || input.at ? acceptObservation : undefined;
           if (readers.some(name => readRequest(name))) {
             const runs: SourceRun[] = [];
             let result: ReadReport | undefined;
             for (const name of readers) {
               const unavailable = readDiscoveryFailures.find(run => run.source === name);
               if (unavailable) { runs.push(unavailable); continue; }
-              const value = await this.read(hit.url, { ...settings, sources: [name], ...readOptionsFor(name) });
+              const value = await this.read(hit.url, { ...settings, sources: [name], ...readOptionsFor(name) }, cacheFilter);
               runs.push(...value.runs);
               if (!result || value.status === 'ok' || !result.content && value.content) result = value;
               if (value.status === 'ok' || options.signal?.aborted) break;
             }
             read[index] = { ...(result ?? { status: 'error' as const }), runs };
-          } else read[index] = await this.read(hit.url, { ...settings, sources: readers });
+          } else read[index] = await this.read(hit.url, { ...settings, sources: readers }, cacheFilter);
         }
       }));
       for (const [index, document] of read.entries()) {
@@ -739,7 +759,11 @@ export class Engine {
         documents.push(document);
         const url = hit.url, key = retrievalKey(hit);
         const material = document.evidence ?? document.document;
-        if (document.evidence) state.evidenceIds.push(document.evidence.id);
+        if (document.evidence) {
+          state.evidenceIds.push(document.evidence.id);
+          // 新观测可能沿用原证据 ID，完成检查应以更新后的文件为准。
+          if (!document.cacheHit || input.at) loaded.delete(document.evidence.id);
+        }
         if (document.content !== undefined && material && material.metadata?.bodyAvailable !== false && accepted({ ...material, content: document.content })) {
           examined.add(url); examinedItems.add(key); failures.delete(url);
           if (document.evidence) { examined.add(document.evidence.url); addCandidate(document.evidence); }
@@ -756,7 +780,7 @@ export class Engine {
     state.discoveredItems = [...discoveredItems]; state.examinedItems = [...examinedItems];
     state.evidenceIds = [...new Set([...state.evidenceIds, ...initial.evidence.keys()])];
     state.candidates = candidates; state.accessFailures = [...failures.values()];
-    const inspected = await inspectResearch(state, this.store, acceptedEvidence);
+    const inspected = await inspectResearch(state, loadEvidence, acceptedEvidence);
     const progress = { query, sources: [...new Set(search.runs.map(run => run.source))], newUrls: new Set(newUrls.filter(url => !discovered.has(url))).size, newItems: new Set(newHits.map(retrievalKey)).size,
       newEvidence: state.evidenceIds.filter(id => !knownEvidence.has(id) && inspected.evidence.has(id)).length,
       resolved: Math.max(0, inspected.coverage.verified.length - state.resolvedCount) };

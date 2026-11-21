@@ -1,6 +1,7 @@
 import { sourceNameSchema } from './source-schema.js';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
+import { dateTimeSchema } from './providers/operations.js';
 import { canonicalUrl } from './evidence.js';
 import type { EvidenceStore } from './evidence.js';
 import { intents, sourceNames } from './types.js';
@@ -24,7 +25,7 @@ export const researchStateSchema = z.object({
   evidenceIds: z.array(evidenceId).default([]), discoveredUrls: z.array(z.string().url()).default([]), examinedUrls: z.array(z.string().url()).default([]),
   candidates: z.array(z.object({ subjectId: id, criterionId: id, evidenceId, url: z.string().url(), itemKey: z.string().optional() })).default([]),
   discoveredItems: z.array(z.string()).optional(), examinedItems: z.array(z.string()).optional(),
-  accessFailures: z.array(z.object({ url: z.string().url(), codes: z.array(z.string()), retryAt: z.string().datetime({ offset: true }).optional() })).default([]),
+  accessFailures: z.array(z.object({ url: z.string().url(), codes: z.array(z.string()), retryAt: dateTimeSchema.optional() })).default([]),
   history: z.array(z.object({ query: z.string(), sources: z.array(sourceNameSchema), newUrls: z.number().int().nonnegative(), newItems: z.number().int().nonnegative().optional(), newEvidence: z.number().int().nonnegative(), resolved: z.number().int().nonnegative() })).max(100).default([]),
   resolvedCount: z.number().int().nonnegative().default(0),
   nextAction: z.enum(['continue', 'review-evidence', 'change-query', 'change-source', 'waiting', 'complete']).optional(),
@@ -108,13 +109,18 @@ export function migrateResearchState(value: unknown): { state: ResearchState; ch
   return { state: researchStateSchema.parse(state), changed: true, warnings };
 }
 
-export async function inspectResearch(state: ResearchState, store: EvidenceStore, accept?: (evidence: Evidence) => Evidence | undefined) {
+export async function loadResearchEvidence(state: ResearchState, load: (id: string) => Promise<Evidence>) {
   const evidence = new Map<string, Evidence>(), warnings: string[] = [];
   const ids = new Set([...state.evidenceIds, ...state.candidates.map(item => item.evidenceId), ...state.assessments.flatMap(item => item.citations.map(cite => cite.evidenceId))]);
   for (const id of ids) {
-    try { evidence.set(id, await store.load(id)); }
+    try { evidence.set(id, await load(id)); }
     catch (error) { warnings.push(`${id}：${error instanceof Error ? error.message : String(error)}`); }
   }
+  return { evidence, warnings };
+}
+
+export async function inspectResearch(state: ResearchState, store: EvidenceStore | ((id: string) => Promise<Evidence>), accept?: (evidence: Evidence) => Evidence | undefined) {
+  const { evidence, warnings } = await loadResearchEvidence(state, typeof store === 'function' ? store : id => store.load(id));
   const coverage: NonNullable<ResearchReport['coverage']> = { qualified: [], excluded: [], unresolved: [], verified: [], gaps: [], complete: false };
   const verified = new Set<string>();
   const duplicate = (items: { id: string }[]) => new Set(items.filter((item, index) => items.findIndex(other => other.id === item.id) !== index).map(item => item.id));
@@ -122,7 +128,7 @@ export async function inspectResearch(state: ResearchState, store: EvidenceStore
   const subjects = new Map(state.subjects.map(item => [item.id, item])), criteria = new Map(state.criteria.map(item => [item.id, item]));
   const assessments = new Map<string, ResearchAssessment>(), counts = new Map<string, number>();
   for (const item of state.assessments) { const key = assessmentKey(item); assessments.set(key, item); counts.set(key, (counts.get(key) ?? 0) + 1); }
-  const characters = new Map([...evidence].map(([id, item]) => [id, Array.from(item.content)]));
+  const characters = new Map<string, string[]>();
   for (const assessment of state.assessments) {
     const subject = subjects.get(assessment.subjectId), criterion = criteria.get(assessment.criterionId);
     const gap = (reason: string) => coverage.gaps.push({ subjectId: assessment.subjectId, criterionId: assessment.criterionId, reason });
@@ -136,7 +142,8 @@ export async function inspectResearch(state: ResearchState, store: EvidenceStore
       const stored = evidence.get(citation.evidenceId), document = stored && (accept ? accept(stored) : stored);
       if (stored && !document) { gap('引用材料尚未满足本轮读取条件或时间范围'); valid = false; continue; }
       if (!document || document.metadata?.bodyAvailable === false) { gap('引用的目标材料不存在或尚未取得'); valid = false; continue; }
-      const text = characters.get(citation.evidenceId)!;
+      const text = characters.get(citation.evidenceId) ?? Array.from(document.content);
+      characters.set(citation.evidenceId, text);
       if (citation.offset === undefined || citation.endOffset === undefined || citation.offset >= citation.endOffset || citation.endOffset > text.length
         || !text.slice(citation.offset, citation.endOffset).join('').trim()) { gap('引用缺少有效的原文片段坐标'); valid = false; }
     }

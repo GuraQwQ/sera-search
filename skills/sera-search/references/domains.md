@@ -72,8 +72,4 @@ sera search "Linux" --sources wiki --platform wikipedia-ja --json
 3. 读取公开 `llms.txt`、Markdown、sitemap 或静态搜索索引可帮助定位页面；它们是资料发现路径，并非完整站内搜索保证。
 4. 对代码示例保留原始空白，确认版本；对教程核对它是否对应用户所用版本。
 
-[Context7 官方 API 指南](https://context7.com/docs/api-guide)当前提供需要 Bearer Key 的 `/api/v3/search` 和 `/api/v3/fetch`，适合作为下一批文档专用来源；本模块尚未接入。`/api/v3/search` 可直接搜索文档，通常不必先解析库 ID。
-
 [ReadTheDocs](https://docs.readthedocs.io/en/stable/api/v3.html)的管理 API v3 使用项目权限和认证，不能等同为全部托管站点的匿名全文搜索。公开文档可以使用站点搜索、域名检索及其 [llms.txt](https://docs.readthedocs.io/en/stable/reference/llms-txt.html)、[Agent Markdown](https://docs.readthedocs.io/en/stable/reference/markdown-for-agents.html) 和 [Agent Skill](https://docs.readthedocs.io/en/stable/reference/agent-skills.html) 入口。
-
-观察日期：2026-11-01。SERA 已支持环境代理，英文 Wikipedia、Wayback 和 Internet Archive 的公开调用取得真实响应；学术、部分作品数据库、游戏 Wiki 及论坛也有有界结果。不同实例、权限、媒体格式和网络条件仍影响可用性，登录平台及完整覆盖未逐一验证。

@@ -62,6 +62,8 @@ MCP 提供 18 个工具：`sera_setup`、`sera_config`、`sera_connectors`、`se
 
 ## 配置与会话
 
+常用检索客户端可以在 MCP 启动参数加 `--profile search`，只加载 12 个查询、证据与后端工具。默认 `full` 模式同时提供设置、登录和状态迁移。已确认宿主会读取 `structuredContent` 时，可为该服务设置 `SERA_MCP_OUTPUT=structured`，成功结果可省去重复的文本载荷。
+
 先按任务查看 `sera_capabilities`，需要入口或账号设置时查看 `sera_config`。`sera_setup` 在服务器固定的 `home/config` 中执行非交互配置：探测已有本地入口、从服务器环境补齐 Key、验证已有平台会话，缺项返回待办。例如：
 
 ```json
@@ -94,7 +96,7 @@ MCP 提供 18 个工具：`sera_setup`、`sera_config`、`sera_connectors`、`se
 
 主配置中的 `catalogFile` 会随工具调用重新加载；启动时显式传入的 `--catalog` 则固定用于该服务连接。
 
-`sera_channels` 返回每个动作的参数 Schema，`entrypoint` 为 `search`、`read`、`comments` 或 `images`，分别使用对应工具。`sera_read`／`sera_read_many` 支持 `operation`、`params`、`contentTypes`：URL 独立传递，动作 Schema 描述 `params`。例如读取已知公开视频的实际字幕：
+发现接口无筛选时返回清单。按 `platform` 查实时渠道和动作，指定 `sources` 或 `full:true` 查看完整 Schema。`entrypoint` 为 `search`、`read`、`comments` 或 `images`，分别使用对应工具。`sera_read`／`sera_read_many` 支持 `operation`、`params`、`contentTypes`：URL 独立传递，动作 Schema 描述 `params`。例如读取已知公开视频的实际字幕：
 
 ```json
 {"url":"https://www.youtube.com/watch?v=VIDEO_ID","sources":["opencli"],"operation":"transcript","params":{"lang":"en","mode":"raw"},"contentTypes":["subtitle"]}
@@ -134,7 +136,7 @@ CLI Agent 通过 Skill 与 `--help` 获得调用指引，MCP Agent 还会取得�
 
 `sera_search` 的 `terms` 是发现用词，`excludeUrls` 标记已知链接；默认来源继续取得足量新命中，显式来源保留原始候选。`relevance` 是词面排序诊断，`sera_research` 允许部分匹配取证；`readLimit:0` 可先发现来源。
 
-`sera_read`、`sera_read_many` 与 `sera_research` 的 `timeoutMs` 设置单次读取预算，`browser` 传已有 Chromium／Edge 路径，`raw:true` 让 `web` 保留原始 HTML。外部工具取得的内容用 `sera_record` 传 `url/title/content/method/observedAt` 保存，返回 `source:external` 的证据。
+`sera_read`、`sera_read_many` 与 `sera_research` 的 `timeoutMs` 设置单次读取预算，`browser` 传已有 Chromium／Edge 路径，`raw:true` 让 `web` 保留原始 HTML。外部工具取得的内容用 `sera_record` 传 `url/title/content/method/observedAt` 保存，返回 `source:external` 的证据。检索、读取、研究和后端工具支持 `full:true` 展开详细结果。默认投影及回读方式见[证据指南](evidence.md)。
 
 先按任务缩小能力查询，例如 `sera_capabilities` 传 `sources:["bing","web","steam","wayback"]`；只需要站点或平台选择时再查询相应 `sera_channels`。账号状态与实际请求的权限、额度分别由 `runs` 确认。
 

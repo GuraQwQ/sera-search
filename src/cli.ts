@@ -15,6 +15,7 @@ import { componentNames, cleanIntegrationCache } from './components.js';
 import { migrateResearchState } from './research.js';
 import { contentHash } from './evidence.js';
 import { configureSources } from './configuration.js';
+import { backendView, batchReadView, capabilityView, channelView, commentView, connectorView, readReportView, recordView, researchView, searchView, storedEvidenceView } from './output.js';
 
 const help = `SERA — Search, Extract, Research for Agents
 
@@ -49,6 +50,7 @@ const help = `SERA — Search, Extract, Research for Agents
   --catalog <文件>     独立站点目录，如 catalogs/galgame.json
   --group <分组>       default、game-wikis、galgame，按需加载目录
   --json               输出机器可读 JSON
+  --full               展开动作定义、证据历史、完整命中及诊断
   --help               显示帮助
   --version            显示版本
   --stdin              login 从标准输入读取凭据 JSON 或 API Key
@@ -142,7 +144,7 @@ const commandHelp: Record<string, [string, string]> = {
   evidence: ['evidence <证据ID> [--offset 数量] [--length 数量] [--query 查询] [--keyword 关键词]',
     '--offset 从0开始，按 Unicode 码点计数；--length 默认4000。\n分页使用返回的 nextOffset；--query、--keyword 返回匹配片段及原文坐标。'],
   clean: ['clean', '清理项目管理的证据及组件缓存；保留依赖、凭据、会话和配置。'],
-  mcp: ['mcp', '启动 stdio MCP 服务，使用同一 --home 和 --config。注册已有客户端使用 install --mcp-client。'],
+  mcp: ['mcp [--profile full|search]', '启动 stdio MCP 服务。search 仅加载查询、读取、证据和后端工具；full 另提供运维工具。注册已有客户端使用 install --mcp-client。'],
 };
 
 function usage(command?: string): string {
@@ -181,6 +183,7 @@ function display(value: unknown): string {
     return `${source.name}: 搜索=${source.search ? '支持' : '—'}，读取=${source.read ? '支持' : '—'}${source.backend ? '，扩展工具=支持' : ''}，配置=${source.configured ? '已配置；调用时检查可用性' : source.requirement ?? '待配置'}`;
   }).join('\n');
   const report = value as Record<string, any>;
+  if (Number.isInteger(report.duplicateOf)) return `与第 ${report.duplicateOf + 1} 项相同`;
   if (report.runs?.length && !report.hits?.length && !report.content && report.runs.every((run: any) => run.code === 'NOT_LOGGED_IN')) return notLoggedIn;
   if (report.channels) return [
     ...report.channels.map((channel: any) => `${channel.source} / ${channel.platform}: 搜索=${channel.search ? '支持' : '—'}，读取=${channel.read ? '支持' : '—'}，状态=${channel.status ?? (channel.configured ? '可调用' : '待配置')}${channel.browser === undefined ? '' : `，搜索浏览器=${channel.browser ? '需要' : '不需要'}`}`),
@@ -215,7 +218,7 @@ function display(value: unknown): string {
 
 async function main(args = process.argv.slice(2)): Promise<void> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
-    home: { type: 'string' }, config: { type: 'string' }, catalog: { type: 'string' }, group: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' },
+    home: { type: 'string' }, config: { type: 'string' }, catalog: { type: 'string' }, group: { type: 'string' }, json: { type: 'boolean' }, full: { type: 'boolean' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' },
     query: { type: 'string' }, keyword: { type: 'string', multiple: true }, alias: { type: 'string', multiple: true }, intent: { type: 'string' }, goal: { type: 'string', multiple: true }, state: { type: 'string' }, refresh: { type: 'boolean' }, raw: { type: 'boolean' }, 'max-age': { type: 'string' },
     term: { type: 'string', multiple: true }, 'exclude-url': { type: 'string', multiple: true }, 'discovery-query': { type: 'string' }, 'target-count': { type: 'string' },
     cursor: { type: 'string' }, parent: { type: 'string' }, order: { type: 'string' },
@@ -225,7 +228,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     components: { type: 'string' }, python: { type: 'string' }, browser: { type: 'string' }, node: { type: 'string' }, input: { type: 'string' }, 'timeout-ms': { type: 'string' },
     setup: { type: 'boolean' }, yes: { type: 'boolean' }, 'confirm-free-tier': { type: 'string' },
     'mcp-client': { type: 'string' }, 'mcp-command': { type: 'string' }, 'mcp-config': { type: 'string' },
-    'session-only': { type: 'boolean' },
+    'session-only': { type: 'boolean' }, profile: { type: 'string' },
   } });
   if (values.help || (!positionals.length && !values.version)) { process.stdout.write(usage(positionals[0])); return; }
   if (values.version) { process.stdout.write(JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version + '\n'); return; }
@@ -279,7 +282,10 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     return;
   }
   const config = await (command === 'mcp' || command === 'config' ? loadConfigBootstrap(location) : loadConfig(location));
-  if (command === 'mcp') { const { startMcp } = await import('./mcp.js'); await startMcp(config); return; }
+  if (command === 'mcp') {
+    const { startMcp } = await import('./mcp.js');
+    await startMcp(config, z.enum(['full', 'search']).parse(values.profile ?? process.env.SERA_MCP_PROFILE ?? 'full')); return;
+  }
   if (command === 'config') {
     try {
       const selected = sources(values.sources);
@@ -299,6 +305,8 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     const search = { ...task, query: text || task.query, sources: selected ?? task.sources, platform: values.platform ?? task.platform, limit: integer(values.limit, task.limit ?? 5), githubType: values['github-type'] ?? task.githubType, domains: values.domain ?? task.domains, since: values.since ?? task.since, until: values.until ?? task.until, at: values.at ?? task.at, aliases: values.alias ?? task.aliases, terms: values.term ?? task.terms, excludeUrls: values['exclude-url'] ?? task.excludeUrls, intent: values.intent === undefined ? task.intent : z.enum(intents).parse(values.intent),
       operation: values.operation ?? task.operation, params: values.params === undefined ? task.params : JSON.parse(values.params), contentTypes: values['content-type'] ?? task.contentTypes, maxSources: values['max-sources'] === undefined ? task.maxSources : integer(values['max-sources'], 1), strategy: values.strategy ?? task.strategy, signal: controller.signal };
     const read = { sources: selected, query: values.query, keywords: values.keyword, length: integer(values.length, 2000), refresh: values.refresh, maxAgeMs: values['max-age'] === undefined ? undefined : integer(values['max-age'], 0), timeoutMs: values['timeout-ms'] === undefined ? undefined : integer(values['timeout-ms'], 20000), browser: values.browser, raw: values.raw, locator: values.locator === undefined ? undefined : JSON.parse(values.locator), contentTypes: values['content-type'], operation: values.operation, params: search.params, signal: controller.signal };
+    const detailedDiscovery = values.full || Boolean(selected);
+    const hitLimit = Math.min(100, search.limit * (selected?.length ?? 1));
     switch (command) {
       case 'login': {
         const source = sourceNameSchema.parse(text);
@@ -321,19 +329,40 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       }
       case 'logout': result = await logout(config, sourceNameSchema.parse(text), values.platform, controller.signal); break;
       case 'auth': result = await authStatus(config, text ? sourceNameSchema.parse(text) : undefined, values.platform); break;
-      case 'capabilities': result = engine.capabilities(selected); break;
-      case 'connectors': result = { connectors: engine.connectors(selected) }; break;
+      case 'capabilities': {
+        const capabilities = engine.capabilities(selected);
+        result = detailedDiscovery ? capabilities : capabilities.map(capabilityView); break;
+      }
+      case 'connectors': {
+        const connectors = engine.connectors(selected);
+        result = { connectors: detailedDiscovery ? connectors : connectors.map(connectorView) }; break;
+      }
       case 'backend': {
         const input = values.input ? JSON.parse(await readFile(values.input, 'utf8')) : undefined;
         const request = backendSchema.parse({ source: positionals[1], tool: positionals[2], arguments: input, timeoutMs: values['timeout-ms'] === undefined ? undefined : integer(values['timeout-ms'], 20000) });
-        result = await engine.backends.run(config, request, controller.signal);
+        const response = await engine.backends.run(config, request, controller.signal);
+        result = values.full ? response : backendView(response);
         break;
       }
-      case 'channels': result = await engine.channels({ sources: selected, platform: values.platform, signal: controller.signal }); break;
-      case 'search': result = await engine.search(search); break;
-      case 'comments': result = await engine.comments({ url: text, sources: selected, limit: integer(values.limit, 20), cursor: values.cursor, parentId: values.parent, order: values.order, signal: controller.signal }); break;
-      case 'image-search': result = await engine.images({ query: text, sources: selected, platform: values.platform, operation: values.operation, limit: integer(values.limit, 5), signal: controller.signal }); break;
-      case 'reverse-image': result = await engine.images({ imageUrl: text, sources: selected, platform: values.platform, operation: values.operation, limit: integer(values.limit, 5), signal: controller.signal }); break;
+      case 'channels': {
+        const report = await engine.channels({ sources: selected, platform: values.platform, live: detailedDiscovery || Boolean(values.platform), signal: controller.signal });
+        result = detailedDiscovery ? report : channelView(report, Boolean(values.platform)); break;
+      }
+      case 'search': {
+        const report = await engine.search(search);
+        result = values.full ? report : searchView(report, hitLimit); break;
+      }
+      case 'comments': {
+        const report = await engine.comments({ url: text, sources: selected, limit: integer(values.limit, 20), cursor: values.cursor, parentId: values.parent, order: values.order, signal: controller.signal });
+        result = values.full ? report : commentView(report); break;
+      }
+      case 'image-search':
+      case 'reverse-image': {
+        const limit = integer(values.limit, 5);
+        const report = await engine.images({ ...(command === 'image-search' ? { query: text } : { imageUrl: text }),
+          sources: selected, platform: values.platform, operation: values.operation, limit, signal: controller.signal });
+        result = values.full ? report : searchView(report, limit); break;
+      }
       case 'research': {
         const task = values.input ? JSON.parse(await readFile(values.input, 'utf8')) : {};
         let state = task.state, migrationWarnings: string[] = [];
@@ -354,7 +383,8 @@ async function main(args = process.argv.slice(2)): Promise<void> {
           try { await writeAtomic(values.state, JSON.stringify(report.state, null, 2) + '\n'); }
           catch (error) { if (report.status !== 'error') report.status = 'partial'; report.stateWarnings = [`状态文件未保存：${errorMessage(error, config)}`]; }
         }
-        result = report; break;
+        result = values.full ? report : researchView(report, hitLimit, values.state && report.state && report.state.assessments.length > 100
+          && !report.stateWarnings?.some(message => message.startsWith('状态文件未保存')) ? values.state : undefined); break;
       }
       case 'migrate-state': {
         if (!values.state) throw new Error('migrate-state 需要 --state JSON文件');
@@ -362,13 +392,23 @@ async function main(args = process.argv.slice(2)): Promise<void> {
         if (!migration) throw new Error('研究状态文件尚不存在，首次研究会创建状态');
         result = { status: 'ok', ...migration }; break;
       }
-      case 'read': result = await engine.read(text, read); break;
-      case 'read-many': result = await engine.readMany(positionals.slice(1), read); break;
+      case 'read': {
+        const report = await engine.read(text, read);
+        result = values.full ? report : readReportView(report); break;
+      }
+      case 'read-many': {
+        const report = await engine.readMany(positionals.slice(1), read);
+        result = values.full ? report : batchReadView(report); break;
+      }
       case 'record': {
         if (!values.input) throw new Error('record 需要 --input JSON文件');
-        result = await engine.record(JSON.parse(await readFile(values.input, 'utf8'))); break;
+        const report = await engine.record(JSON.parse(await readFile(values.input, 'utf8')));
+        result = values.full ? report : recordView(report); break;
       }
-      case 'evidence': result = await engine.store.get(text, integer(values.offset, 0), integer(values.length, 4000), { query: values.query, keywords: values.keyword }); break;
+      case 'evidence': {
+        const evidence = await engine.store.get(text, integer(values.offset, 0), integer(values.length, 4000), { query: values.query, keywords: values.keyword });
+        result = values.full ? evidence : storedEvidenceView(evidence); break;
+      }
       case 'clean': {
         const evidence = await engine.store.clean();
         try { result = { ...evidence, integrations: await cleanIntegrationCache(config.home) }; }
@@ -377,7 +417,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       }
       default: throw new Error(`未知命令：${command}，使用 sera --help 查看用法`);
     }
-    process.stdout.write((values.json ? JSON.stringify(result, null, 2) : display(result)) + '\n');
+    process.stdout.write((values.json ? JSON.stringify(result) : display(result)) + '\n');
     if (controller.signal.aborted) process.exitCode = 130;
     else if ((result as { status?: string }).status === 'error' || (result as { isError?: boolean }).isError) process.exitCode = 1;
   } catch (error) {

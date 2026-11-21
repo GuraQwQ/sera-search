@@ -9,11 +9,9 @@ description: 使用 SERA CLI 或 MCP 跨来源发现资料、读取原文，并�
 
 `source` 是提供者、`platform` 是目标平台、`operation` 是动作。按 `channels --platform 平台 --json` 发现 YouTube、Twitch 或 B站等同平台的多个入口，再按公开作品任务所需材料、预算和缺口选择。第三方关联不证明主体相同或数据独立；未指定材料或动作时不会自动逐一查询。缺少必填参数看 `search.plan.pendingActions`，按 `source/operation/entrypoint/required` 补齐；`entrypoint` 区分 `search`、`read`、`comments`、`images`，使用对应 CLI／MCP 入口。
 
-首次配置先选 `--home`；源码可用 `./.sera`。真实终端 `install` 默认向导；Agent 非交互可用 `install --yes --sources 来源列表 --json` 补齐已有入口和环境凭据，按需保留待办。下载组件用 `--components`，已有平台记录自动复核，新平台用显式 `--platform 后端:平台` 或交互选择，免费档用独立 `--confirm-free-tier`；`--yes` 不代替费用确认或发起网页登录。详情见[登录与配置](references/auth.md)。
+首次配置、登录及费用策略见[登录与配置](references/auth.md)。需要在 Agent 注册 MCP 时，使用安装命令并按[客户端指南](../../docs/mcp.md)验证。
 
-CLI 用 `config --input` 校验更新设置、`login --from-env` 引用已有 Key，`login --platform 平台 --session-only` 仅验证已有会话。MCP 对应 `sera_setup`、`sera_config` 与 `sera_login`；`fromEnv` 读取服务器进程环境，平台传 `sessionOnly:true` 仅验证已有会话。需要网页验证时由用户完成官方流程。可选 MCP 通过 `install --mcp-client 客户端ID` 注册已有客户端，目录和工具契约见[Agent 接入](../../docs/mcp.md)。
-
-优先匿名免费、认证免费，再选周期免费配额；认证加配额的来源进一步降权。付费必需动作和一次性试用排除。混合计费或计费未确认时，先核对账号免费档，再配置 `sources.<来源>.freeTierConfirmed: true`；该声明不控制服务端账单，保留实际配额和非商业限制。
+发现结果默认简洁。先按平台看渠道，指定来源查看动作 Schema。需要完整结果、原文坐标或历史诊断时，使用 `--full`／`full:true`，或按证据 ID 分页回读。
 
 ## 选择入口
 

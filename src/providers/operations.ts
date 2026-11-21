@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import type { DataCoverage, SearchRequest, SourceOperation } from '../types.js';
 
-export const locatorSchema = z.object({ kind: z.enum(['segment', 'event', 'record']), id: z.string().min(1).max(1024), parentUrl: z.string().url().optional(), startSeconds: z.number().finite().nonnegative().optional(), endSeconds: z.number().finite().nonnegative().optional(), occurredAt: z.string().datetime({ offset: true }).optional() }).refine(value => value.endSeconds === undefined || value.startSeconds === undefined || value.endSeconds >= value.startSeconds, '片段结束时间不能早于开始时间');
+const dateTime = z.iso.datetime({ offset: true });
+export const dateTimeSchema = z.string().refine(value => dateTime.safeParse(value).success, '需要有效的 ISO 8601 日期时间').meta({ format: 'date-time' });
+
+export const locatorSchema = z.object({ kind: z.enum(['segment', 'event', 'record']), id: z.string().min(1).max(1024), parentUrl: z.string().url().optional(), startSeconds: z.number().finite().nonnegative().optional(), endSeconds: z.number().finite().nonnegative().optional(), occurredAt: dateTimeSchema.optional() }).refine(value => value.endSeconds === undefined || value.startSeconds === undefined || value.endSeconds >= value.startSeconds, '片段结束时间不能早于开始时间');
 
 export function describeOperation(name: string, description: string, contentTypes: string[], schema: z.ZodType, accessMethod: SourceOperation['accessMethod'] = 'api'): SourceOperation {
   return { name, description, contentTypes, inputSchema: z.toJSONSchema(schema), accessMethod, entrypoint: 'search' };

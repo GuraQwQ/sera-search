@@ -1,5 +1,7 @@
 # CLI
 
+`--json` 输出紧凑 JSON。发现命令默认列出来源和动作名称，指定 `--sources` 或加 `--full` 查看完整定义。无筛选的 `channels` 查看本地清单，按平台或明确来源查看实时渠道。检索、读取和取证默认提供摘要，加 `--full` 可查看完整结果与诊断。可通过证据 ID 回读保存的原文。
+
 账号与地理扩展使用同一 `install --components` 和 `backend` 命令。组件包括 `aliens-eye`、`sherlock`、`gods-eye-view`；先用 `backend 来源` 发现 Schema，再以 `--input JSON文件` 调用工具。`--timeout-ms` 设置外层预算，扫描范围、关联信号及地理区域由工具参数指定。完整示例见[账号与地理扩展](extensions.md)。
 
 使用 `sera 命令 --help` 查看该命令的参数、必填字段和输入示例，如 `sera record --help`。`backend` 的工具参数使用 `--input JSON文件`；`search`、`read`、`research` 的动作参数使用 `--params JSON`。

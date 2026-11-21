@@ -68,8 +68,6 @@ Reddit、Twitch、Discord、Instagram、评论、图片及作品资料的当前�
 
 统一配置中的 `sources` 保存每源设置，`connectorFiles` 加载外部定义，`connectors` 内联定义；动态来源沿用 `search`、`read` 与取证接口，先发现动作再调用。
 
-2026-10-31 的本机渠道发现快照匹配到 86 个 OpenCLI 搜索入口，其中 29 个不需要浏览器，57 个需要浏览器。Google 的 `keyword` 参数已被识别。快照表示签名匹配；运行状态和质量通过实际请求确认，后续以 `sera channels` 为准。
-
 无浏览器例：`arxiv`、`openalex`、`pubmed`、`dblp`、`npm`、`crates`、`maven`、`wikipedia`。浏览器例：`google`、`weixin`、`zhihu`、`xiaohongshu`、`douyin`、`reddit`、`boss`、`cnki`。对需要不同正文路径的站点，使用 `research --read-sources web` 或其他已配置读取源。
 
 浏览器要求与登录要求分别判断：公开 OpenCLI 渠道直接查询，账号渠道需对应平台登录记录。用 `login opencli --platform 平台` 验证官方登录流程；Agent Reach 用 `login agent-reach --platform 平台` 同步已有会话。API Key／API 账号经 `login --stdin` 或 `--from-env` 登记。需要凭据但未登记或认证失效时返回“未登录，不可用”；额度和网络错误保留实际原因。
@@ -89,21 +87,6 @@ Exa 的查询适合描述想找到的材料；Brave 等关键词检索可使用�
 [GitHub 代码搜索语法](https://docs.github.com/en/search-github/github-code-search/understanding-github-code-search-syntax)包含 `repo:`、`org:`、`path:`、`language:`、`symbol:` 和正则表达式。网页代码搜索与 REST／CLI 的支持范围可能不同；`symbol:` 主要查定义，调用关系需要继续阅读代码。
 
 [OpenAlex 搜索说明](https://docs.openalex.org/api-entities/works/search-works)采用自己的短语、布尔表达式和字段过滤。论文去重优先使用 DOI 或数据库论文 ID；[Crossref REST API](https://www.crossref.org/documentation/retrieve-metadata/rest-api/)可核对书目信息与更新元数据。科学结论仍需要正文证据。本包的 Crossref、OpenAlex、PubMed 公开查询无需 Key；OpenAlex 匿名路径使用免费每日预算，带 Key 路径按混合账单处理，需确认免费档。读取结果明确为元数据记录，需要全文时继续到开放访问链接或出版者。
-
-## 可扩展的获取路径
-
-- [RSS／Atom](https://www.rssboard.org/rss-specification)用于近期条目和增量发现。
-- [Sitemap](https://www.sitemaps.org/protocol.html)用于站点 URL 发现；`lastmod` 表示更新线索。
-- [CKAN API](https://docs.ckan.org/en/latest/api/)可发现数据集和原始资源，页面说明、CSV／JSON 等资源应分别记录。
-- 标准、法规和专利应记录有效版本与状态；[IETF Datatracker](https://datatracker.ietf.org/api/)和 [EPO OPS](https://www.epo.org/en/searching-for-patents/data/web-services/ops)是后续适配候选。
-
-## 后续搜索引擎候选
-
-[Mojeek](https://www.mojeek.com/about/technology.html)使用自建索引，可增加不同索引的召回结果；命中的文章依然可能属于同一原始来源。
-
-[SearXNG](https://docs.searxng.org/dev/search_api.html)可自托管聚合其他引擎。结构化输出需要实例启用，结果应保留实际上游，便于识别与直接搜索的来源重合。
-
-[Yandex Search API](https://yandex.cloud/en/docs/search-api/concepts/web-search)是地域检索的候选，需要在接入时核对当前参数与额度。上述候选由后续适配器接入；当前可调用源由 SERA 的能力列表给出。
 
 ## 已接入 API 的实际范围
 
@@ -127,21 +110,10 @@ Exa 的查询适合描述想找到的材料；Brave 等关键词检索可使用�
 
 `steam` 的 `reviews` 通过免 Key 公开接口按 `params.appId` 获取游戏评价页，`languages`、排序和购买类型分别筛选；query 不作评价全文搜索。VNDB `releases` 按 `vnId`、`releaseId`、`steamAppId` 或 `externalUrl` 查发行版本，也可按发行标题发现；发行语言、平台与商店关系和主作品条目分别核对。Wikidata 实体、GitHub 发布说明及这些动作的完整调用与续页例子见[垂直来源](../../../docs/specialist-sources.md#实体发行版本与公开评价)。
 
-`nicovideo` 使用 [Snapshot API](https://site.nicovideo.jp/search-api-docs/snapshot) 与公开 ThumbInfo 元数据，`sm8628149` 可直接读取。商店语言字段与投稿元数据不等于游戏文件、完整视频、字幕或评论。2026-11-01 本机已取得 Terraria 商店规格和 Bad Apple 原投稿元数据。
+`nicovideo` 使用 [Snapshot API](https://site.nicovideo.jp/search-api-docs/snapshot) 与公开 ThumbInfo 元数据，`sm8628149` 可直接读取。商店语言字段与投稿元数据不等于游戏文件、完整视频、字幕或评论。
 
 默认搜索的顺序由 `intent` 决定，有有效候选后停止；显式 `sources` 并行取全部指定来源。空或无关结果继续换源，`aliases` 同时帮助词面相关性判断；初始后端耗尽后最多检索首个不同别名。过程见 `runs[].attempts`，别名重试跳过已确认未登录或限流的后端。
 
 智谱和 SerpAPI 在命中记录中保存 `searchEngine`。API 入口不同不表示索引或原始材料独立。搜索后需要正文时，显式使用 `research --read-sources web` 或其他正文源。
 
 智谱与豆包入口的免费档需按当前账号核对，豆包[计费](https://www.volcengine.com/docs/87772/2272951)区分按量和订阅，当前适配 Custom 网页搜索专用 Key；IAM 和方舟模型联网路径按各自接口处理。SerpAPI 的图片动作与网页自然搜索分别选路；混合计费来源确认免费档后仍需检查账号额度，新闻、地图等垂直服务按实际适配状态确认。
-
-## 后续 API 优先级
-
-1. [Context7](https://context7.com/docs/api-guide)：需要 Bearer Key 的文档 `/api/v3/search`／`fetch`，补文档版本与相关片段定位。
-2. CKAN、IETF Datatracker／EPO OPS：补数据集、标准与专利的结构化查询。Europe PMC 已接入，其开放全文读取范围见[垂直来源](../../../docs/specialist-sources.md)。
-3. Mojeek／SearXNG：分别补不同索引、可自管聚合；依据新增有效来源和维护成本选择。
-4. [Firecrawl Search](https://docs.firecrawl.dev/features/search.md)／[Parallel Search](https://docs.parallel.ai/search/search-quickstart.md)：先评估搜索到相关正文的成功率和费用，再决定接入。
-
-新增 API 应返回同一套命中和原文契约，保留提供者、原始发布者、内容类型和失败原因。中文平台的账号开放 API、发布 API 与全站搜索授权范围不同，接入前核对实际可读数据。
-
-SERA HTTP 请求支持环境代理与 `NO_PROXY`。2026-11-01 的有界检查中，Node.js 22.17 下已通过代理取得英文 Wikipedia、Wayback 与馆藏查询响应；公开网页、学术、作品数据库、部分游戏 Wiki、B站评论、小黑盒原生帖／评论也取得结果。该观察不代表后来新增连接器均已完成在线验证；实际 Key、社交授权和完整覆盖仍按具体调用核验，SEC 保留为扩展候选。
